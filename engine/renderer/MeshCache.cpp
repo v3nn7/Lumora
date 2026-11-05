@@ -26,20 +26,28 @@ MeshCache::MeshCache(rhi::UploadQueue& uploads) : uploads_(uploads) {
     log::debug("Renderer", "uploaded {} primitive meshes", primitives_.size());
 }
 
-const GpuMesh* MeshCache::asset(AssetLibrary& library, const std::string& key) {
+const GpuMesh* MeshCache::asset(AssetLibrary& library, const std::string& key, bool block) {
     auto canonical = library.canonicalKey(key);
     if (!canonical) return nullptr;
     if (auto it = assets_.find(*canonical); it != assets_.end()) return &it->second;
     if (failed_.contains(*canonical)) return nullptr;
-    auto mesh = library.mesh(key);
-    if (!mesh || (*mesh)->data.indices.empty()) {
-        if (mesh) log::warn("Renderer", "mesh '{}' has no triangles", key);
+    const ImportedMesh* mesh = nullptr;
+    if (block) {
+        auto loaded = library.mesh(key);
+        if (loaded) mesh = *loaded;
+    } else {
+        const auto request = library.requestMesh(key);
+        if (request.state == AssetState::Pending) return nullptr;  // try again next frame
+        mesh = request.value;
+    }
+    if (mesh == nullptr || mesh->data.indices.empty()) {
+        if (mesh != nullptr) log::warn("Renderer", "mesh '{}' has no triangles", key);
         failed_.insert(*canonical);
         return nullptr;
     }
-    const MeshData& data = (*mesh)->data;
+    const MeshData& data = mesh->data;
     GpuMesh gpu;
-    const std::string name = (*mesh)->name;
+    const std::string name = mesh->name;
     gpu.vertices = uploads_.uploadBuffer(std::as_bytes(std::span(data.vertices)), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                                          (name + ".vertices").c_str());
     gpu.indices = uploads_.uploadBuffer(std::as_bytes(std::span(data.indices)), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,

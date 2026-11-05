@@ -18,6 +18,7 @@ lumora_engine_module(core
         core/Log.cpp
         core/Uuid.cpp
         core/FileSystem.cpp
+        core/JobSystem.cpp
         platform/Paths.cpp
     DEPS Threads::Threads)
 

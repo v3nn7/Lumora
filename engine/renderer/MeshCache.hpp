@@ -33,8 +33,9 @@ class MeshCache {
 public:
     explicit MeshCache(rhi::UploadQueue& uploads);
     [[nodiscard]] const GpuMesh& primitive(MeshPrimitive p) const;
-    /// nullptr if the reference cannot be resolved or loaded (reported once by the library).
-    [[nodiscard]] const GpuMesh* asset(AssetLibrary& library, const std::string& key);
+    /// nullptr if the reference cannot be resolved/loaded (reported once by the library) or,
+    /// when not blocking, while it is still loading in the background.
+    [[nodiscard]] const GpuMesh* asset(AssetLibrary& library, const std::string& key, bool block);
     [[nodiscard]] std::size_t assetCount() const noexcept { return assets_.size(); }
 
 private:

@@ -666,6 +666,7 @@ void EditorWindow::saveThumbnail() {
         editScene_->updateWorldTransforms();
         render::RenderSettings settings;
         settings.assets = &assets_;
+        settings.blockOnAssets = true;  // thumbnails must show every model
         auto image = renderer->capture(*editScene_, client_->camera().view(16.0f / 9.0f), {640, 360}, settings);
         if (!image) {
             log::warn("Editor", "thumbnail capture failed: {}", image.error().message);

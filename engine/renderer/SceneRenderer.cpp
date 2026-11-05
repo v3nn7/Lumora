@@ -179,9 +179,9 @@ VkPipeline SceneRenderer::overlayPipeline(VkFormat outputFormat) {
         .first->second.get();
 }
 
-const GpuMesh* SceneRenderer::meshFor(const MeshRendererComponent& mesh, AssetLibrary* assets) {
+const GpuMesh* SceneRenderer::meshFor(const MeshRendererComponent& mesh, AssetLibrary* assets, bool block) {
     if (mesh.meshAsset.empty()) return &ctx_.meshes().primitive(mesh.mesh);
-    return assets != nullptr ? ctx_.meshes().asset(*assets, mesh.meshAsset) : nullptr;
+    return assets != nullptr ? ctx_.meshes().asset(*assets, mesh.meshAsset, block) : nullptr;
 }
 
 void SceneRenderer::ensureObjectCapacity(FrameResources& frame, std::uint32_t count) {
@@ -266,8 +266,8 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     const Frustum frustum = Frustum::fromViewProjection(fc.viewProjection);
     for (auto [e, mesh, world] : reg.view<MeshRendererComponent, WorldTransformComponent>().each()) {
         if (!mesh.visible) continue;
-        const GpuMesh* gpuMeshPtr = meshFor(mesh, settings.assets);
-        if (gpuMeshPtr == nullptr) continue;  // unresolved asset (already reported)
+        const GpuMesh* gpuMeshPtr = meshFor(mesh, settings.assets, settings.blockOnAssets);
+        if (gpuMeshPtr == nullptr) continue;  // still loading, or unresolved (already reported)
         const GpuMesh& gpuMesh = *gpuMeshPtr;
         if (settings.frustumCulling) {
             const glm::vec3 localCenter = (gpuMesh.bounds.min + gpuMesh.bounds.max) * 0.5f;
@@ -289,10 +289,11 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         obj.flags = glm::vec4(e == settings.selected ? 1.0f : 0.0f, static_cast<float>(mesh.pattern), 0.0f, 0.0f);
         if (settings.assets != nullptr) {
             TextureCache& textures = ctx_.textures();
-            obj.textures = glm::uvec4(textures.index(*settings.assets, mesh.baseColorTexture, TextureColorSpace::Srgb),
-                                      textures.index(*settings.assets, mesh.metallicRoughnessTexture, TextureColorSpace::Linear),
-                                      textures.index(*settings.assets, mesh.emissiveTexture, TextureColorSpace::Srgb),
-                                      textures.index(*settings.assets, mesh.normalTexture, TextureColorSpace::Linear));
+            const bool block = settings.blockOnAssets;
+            obj.textures = glm::uvec4(textures.index(*settings.assets, mesh.baseColorTexture, TextureColorSpace::Srgb, block),
+                                      textures.index(*settings.assets, mesh.metallicRoughnessTexture, TextureColorSpace::Linear, block),
+                                      textures.index(*settings.assets, mesh.emissiveTexture, TextureColorSpace::Srgb, block),
+                                      textures.index(*settings.assets, mesh.normalTexture, TextureColorSpace::Linear, block));
         }
         draws.push_back({gpuMeshPtr, static_cast<std::uint32_t>(objects.size())});
         objects.push_back(obj);

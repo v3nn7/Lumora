@@ -10,7 +10,9 @@
 
 #include <glm/gtc/quaternion.hpp>
 
+#include <chrono>
 #include <clocale>
+#include <thread>
 #include <string>
 
 using namespace lumora;
@@ -171,4 +173,65 @@ TEST(AssetLibrary, LoadsStandaloneImageTextures) {
     EXPECT_FALSE(library.texture("Content/Textures/broken.png").has_value());
     EXPECT_FALSE(library.texture("Content/Textures/a.txt").has_value());
     EXPECT_FALSE(library.texture("../a.png").has_value());
+}
+
+TEST(AssetLibrary, BackgroundRequestsCompleteAndShareOneLoad) {
+    test::TempDir dir;
+    std::filesystem::create_directories(dir.path() / "Content" / "Models");
+    test::writeCubeGltf(dir.path() / "Content" / "Models" / "textured.gltf", false, true);
+    AssetLibrary library(dir.path());
+    const std::string mesh = "Content/Models/textured.gltf#0";
+    const std::string tex = "Content/Models/textured.gltf#tex0";
+
+    auto first = library.requestMesh(mesh);
+    EXPECT_NE(first.state, AssetState::Failed);
+    auto texture = library.requestTexture(tex);
+    library.waitIdle();
+    first = library.requestMesh(mesh);
+    texture = library.requestTexture(tex);
+    ASSERT_EQ(first.state, AssetState::Ready);
+    ASSERT_EQ(texture.state, AssetState::Ready);
+    EXPECT_EQ(texture.value->width, 8u);
+
+    // Blocking access returns the very same objects: each asset is loaded once.
+    auto blocking = library.mesh(mesh);
+    ASSERT_TRUE(blocking.has_value());
+    EXPECT_EQ(*blocking, first.value);
+    EXPECT_EQ(*library.texture(tex), texture.value);
+
+    // Failures are reported as Failed, not Pending forever.
+    auto missing = library.requestMesh("Content/Models/nope.glb#0");
+    library.waitIdle();
+    EXPECT_EQ(library.requestMesh("Content/Models/nope.glb#0").state, AssetState::Failed);
+    (void)missing;
+    EXPECT_EQ(library.requestTexture("../escape.png").state, AssetState::Failed);
+}
+
+TEST(AssetLibrary, ConcurrentRequestsFromManyThreads) {
+    test::TempDir dir;
+    std::filesystem::create_directories(dir.path() / "Content" / "Models");
+    test::writeCubeGltf(dir.path() / "Content" / "Models" / "textured.gltf", false, true);
+    AssetLibrary library(dir.path());
+    std::vector<std::thread> threads;
+    std::vector<const ImageData*> seen(8, nullptr);
+    for (int t = 0; t < 8; ++t) {
+        threads.emplace_back([&, t] {
+            if (t % 2 == 0) {
+                auto r = library.texture("Content/Models/textured.gltf#tex0");
+                if (r) seen[static_cast<std::size_t>(t)] = *r;
+            } else {
+                for (int i = 0; i < 1000; ++i) {
+                    auto r = library.requestTexture("Content/Models/textured.gltf#tex0");
+                    if (r.state == AssetState::Ready) {
+                        seen[static_cast<std::size_t>(t)] = r.value;
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+            }
+        });
+    }
+    for (auto& t : threads) t.join();
+    for (const ImageData* p : seen) EXPECT_EQ(p, seen[0]);
+    EXPECT_NE(seen[0], nullptr);
 }

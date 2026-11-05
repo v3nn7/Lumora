@@ -77,6 +77,7 @@ int renderProject(const AppOptions& o, const Project& project, Scene& scene) {
         AssetLibrary assets(project.rootDir());
         render::RenderSettings settings;
         settings.assets = &assets;
+        settings.blockOnAssets = true;
         auto image = renderer.capture(scene, sceneCameraView(scene, aspect), {o.renderWidth, o.renderHeight}, settings);
         if (!image) {
             log::error("Headless", "render failed: {}", image.error().message);

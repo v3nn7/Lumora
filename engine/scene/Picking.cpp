@@ -68,9 +68,10 @@ entt::entity pickEntity(const Scene& scene, const Ray& ray, AssetLibrary* assets
         local.direction /= scale;
         Aabb box = primitiveBounds()[static_cast<std::size_t>(mesh.mesh)];
         if (!mesh.meshAsset.empty()) {
-            auto asset = assets != nullptr ? assets->mesh(mesh.meshAsset) : Result<const ImportedMesh*>(makeError("no assets"));
-            if (!asset) continue;
-            box = (*asset)->data.bounds;
+            // Non-blocking: a model still loading is not drawn yet, so it is not pickable either.
+            const auto asset = assets != nullptr ? assets->requestMesh(mesh.meshAsset) : AssetRequest<ImportedMesh>{AssetState::Failed};
+            if (asset.state != AssetState::Ready) continue;
+            box = asset.value->data.bounds;
         }
         // Give flat meshes a little thickness so planes remain clickable edge-on.
         box.min -= glm::vec3(1e-3f);

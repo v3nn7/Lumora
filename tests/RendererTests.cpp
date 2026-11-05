@@ -155,6 +155,7 @@ TEST_F(RendererTest, RendersImportedGltfModel) {
     cam.lookAt({0.0f, 0.0f, 0.0f});
     RenderSettings settings;
     settings.assets = &assets;
+    settings.blockOnAssets = true;
     auto image = renderer_->capture(*scene, cam.view(1.0f), {96, 96}, settings);
     ASSERT_TRUE(image.has_value()) << image.error().message;
     const auto center = pixel(*image, 48, 48);
@@ -184,6 +185,7 @@ TEST_F(RendererTest, SamplesMaterialTextures) {
     cam.lookAt({0.0f, 0.0f, 0.0f});
     RenderSettings settings;
     settings.assets = &assets;
+    settings.blockOnAssets = true;
     auto image = renderer_->capture(*scene, cam.view(1.0f), {96, 96}, settings);
     ASSERT_TRUE(image.has_value()) << image.error().message;
     const auto center = pixel(*image, 48, 48);

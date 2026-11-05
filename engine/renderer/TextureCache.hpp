@@ -30,8 +30,9 @@ public:
     TextureCache(const TextureCache&) = delete;
     TextureCache& operator=(const TextureCache&) = delete;
 
-    /// Bindless index, or UINT32_MAX when the key is empty or cannot be loaded.
-    [[nodiscard]] std::uint32_t index(AssetLibrary& library, const std::string& key, TextureColorSpace space);
+    /// Bindless index, or UINT32_MAX when the key is empty, cannot be loaded or (when not
+    /// blocking) is still decoding in the background.
+    [[nodiscard]] std::uint32_t index(AssetLibrary& library, const std::string& key, TextureColorSpace space, bool block);
     [[nodiscard]] std::size_t size() const noexcept { return textures_.size(); }
 
 private:

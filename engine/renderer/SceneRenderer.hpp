@@ -32,6 +32,8 @@ struct RenderSettings {
     entt::entity selected = entt::null;
     const OverlayGeometry* overlay = nullptr;  // drawn on top after tone mapping (gizmos)
     AssetLibrary* assets = nullptr;            // resolves MeshRenderer::meshAsset; null = primitives only
+    /// Wait for assets instead of skipping/untexturing them while they load (captures, headless).
+    bool blockOnAssets = false;
 };
 
 struct SceneDrawStats {
@@ -70,7 +72,7 @@ public:
 
 private:
     void ensureObjectCapacity(FrameResources& frame, std::uint32_t count);
-    [[nodiscard]] const struct GpuMesh* meshFor(const MeshRendererComponent& mesh, AssetLibrary* assets);
+    [[nodiscard]] const struct GpuMesh* meshFor(const MeshRendererComponent& mesh, AssetLibrary* assets, bool block);
     VkPipeline tonemapPipeline(VkFormat outputFormat);
     VkPipeline overlayPipeline(VkFormat outputFormat);
 

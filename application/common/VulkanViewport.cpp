@@ -228,9 +228,11 @@ QImage VulkanViewport::captureFrame(QSize pixels) {
     if (scene == nullptr) scene = emptyScene_.get();
     const float aspect = static_cast<float>(pixels.width()) / static_cast<float>(pixels.height());
     try {
+        render::RenderSettings settings = client_.viewportSettings();
+        settings.blockOnAssets = true;  // a snapshot shows the finished frame
         auto image = renderer->capture(*scene, client_.viewportCamera(aspect),
                                        {static_cast<std::uint32_t>(pixels.width()), static_cast<std::uint32_t>(pixels.height())},
-                                       client_.viewportSettings());
+                                       settings);
         if (!image) return {};
         return QImage(image->rgba.data(), static_cast<int>(image->width), static_cast<int>(image->height),
                       QImage::Format_RGBA8888)

@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <span>
+#include <string>
 
 namespace lumora::render {
 
@@ -134,6 +135,18 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     shadow.layout = ctx_.pipelineLayout();
     shadow.debugName = "SunShadow";
     shadow_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), shadow);
+
+    for (int up = 0; up < 2; ++up) {
+        rhi::GraphicsPipelineDesc bloom;
+        bloom.vertexShader = shaders.get("bloom.vert");
+        bloom.fragmentShader = shaders.get(up ? "bloom.up.frag" : "bloom.down.frag");
+        bloom.fragmentEntry = up ? "PSUpsample" : "PSDownsample";
+        bloom.blend = up ? rhi::BlendMode::Additive : rhi::BlendMode::Opaque;
+        bloom.colorFormats = {hdr};
+        bloom.layout = ctx_.pipelineLayout();
+        bloom.debugName = up ? "BloomUpsample" : "BloomDownsample";
+        bloom_.emplace(up, rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), bloom));
+    }
 }
 
 VkPipeline SceneRenderer::tonemapPipeline(VkFormat outputFormat) {
@@ -187,6 +200,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     fc.skyHorizon = glm::vec4(env.skyHorizonColor, env.exposure);
     fc.groundColor = glm::vec4(env.groundColor, 0.0f);
     fc.gridParams = glm::vec4(settings.showGrid ? 1.0f : 0.0f, settings.gridCellSize, settings.gridFadeDistance, 0.0f);
+    fc.fogParams = glm::vec4(std::max(env.fogDensity, 0.0f), std::max(env.fogHeightFalloff, 1e-4f), 0.97f, 0.0f);
 
     std::uint32_t lightCount = 0;
     bool haveSun = false;
@@ -249,7 +263,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         obj.normalMatrix = glm::mat4(glm::transpose(glm::inverse(glm::mat3(world.matrix))));
         obj.baseColorMetallic = glm::vec4(mesh.baseColor, mesh.metallic);
         obj.emissiveRoughness = glm::vec4(mesh.emissive * mesh.emissiveStrength, mesh.roughness);
-        obj.flags = glm::vec4(e == settings.selected ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+        obj.flags = glm::vec4(e == settings.selected ? 1.0f : 0.0f, static_cast<float>(mesh.pattern), 0.0f, 0.0f);
         draws.push_back({mesh.mesh, static_cast<std::uint32_t>(objects.size())});
         objects.push_back(obj);
     }
@@ -358,14 +372,78 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             });
     }
 
+    // ---- Bloom: downsample chain, then additive tent upsample back to the half-res level.
+    const std::uint32_t sampler = ctx_.linearClampSampler();
+    std::vector<RGImage> bloomChain;
+    if (settings.bloom && env.bloomIntensity > 0.0f) {
+        VkExtent2D size = extent;
+        while (bloomChain.size() < 6 && size.width >= 16 && size.height >= 16) {
+            size = {size.width / 2, size.height / 2};
+            bloomChain.push_back(graph.createImage("Bloom" + std::to_string(bloomChain.size()), {ctx_.hdrFormat(), size}));
+        }
+    }
+    const VkPipeline bloomDown = bloom_.at(0).get();
+    const VkPipeline bloomUp = bloom_.at(1).get();
+    for (std::size_t i = 0; i < bloomChain.size(); ++i) {
+        const RGImage source = i == 0 ? hdr : bloomChain[i - 1];
+        const RGImage target = bloomChain[i];
+        graph.addRasterPass(
+            "BloomDown" + std::to_string(i),
+            [&](PassBuilder& b) {
+                b.sample(source);
+                b.writeColor(target, LoadOp::DontCare);
+            },
+            [=](PassContext& ctx) {
+                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bloomDown);
+                bindSets(ctx.cmd);
+                PushConstants pc;
+                pc.index0 = ctx.bindlessIndex(source);
+                pc.index1 = sampler;
+                pc.flags = i == 0 ? 1u : 0u;
+                vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(pc), &pc);
+                vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
+            });
+    }
+    for (std::size_t i = bloomChain.size(); i-- > 1;) {
+        const RGImage source = bloomChain[i];
+        const RGImage target = bloomChain[i - 1];
+        const VkExtent2D sourceSize = {std::max(extent.width >> (i + 1), 1u), std::max(extent.height >> (i + 1), 1u)};
+        const float radius = 1.0f / static_cast<float>(std::max(sourceSize.width, 1u));
+        graph.addRasterPass(
+            "BloomUp" + std::to_string(i),
+            [&](PassBuilder& b) {
+                b.sample(source);
+                b.writeColor(target, LoadOp::Load);
+            },
+            [=](PassContext& ctx) {
+                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bloomUp);
+                bindSets(ctx.cmd);
+                PushConstants pc;
+                pc.index0 = ctx.bindlessIndex(source);
+                pc.index1 = sampler;
+                pc.param0 = radius;
+                vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(pc), &pc);
+                vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
+            });
+    }
+    stats.drawCalls += static_cast<std::uint32_t>(bloomChain.empty() ? 0 : bloomChain.size() * 2 - 1);
+
     const VkPipeline tonemap = tonemapPipeline(outputFormat);
     const bool shaderSrgb = !rhi::isSrgbFormat(outputFormat);
+    const bool haveBloom = !bloomChain.empty();
+    const RGImage bloomResult = haveBloom ? bloomChain.front() : RGImage{};
+    // Bloom is a lerp towards the blurred image; normalise for the summed chain levels.
+    const float bloomStrength = haveBloom ? std::clamp(env.bloomIntensity, 0.0f, 1.0f) : 0.0f;
+    const float bloomNormalisation = haveBloom ? 1.0f / static_cast<float>(bloomChain.size()) : 1.0f;
     const float exposure = env.exposure;
-    const std::uint32_t sampler = ctx_.linearClampSampler();
+    const float vignette = std::clamp(env.vignette, 0.0f, 1.0f);
     graph.addRasterPass(
         "Tonemap",
         [&](PassBuilder& b) {
             b.sample(hdr);
+            if (haveBloom) b.sample(bloomResult);
             b.writeColor(output, LoadOp::DontCare);
         },
         [=](PassContext& ctx) {
@@ -374,8 +452,12 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             PushConstants pc;
             pc.index0 = ctx.bindlessIndex(hdr);
             pc.index1 = sampler;
+            pc.index2 = haveBloom ? ctx.bindlessIndex(bloomResult) : 0u;
+            pc.flags = (shaderSrgb ? 1u : 0u) | (haveBloom ? 2u : 0u);
             pc.param0 = exposure;
-            pc.flags = shaderSrgb ? 1u : 0u;
+            pc.param1 = bloomStrength;
+            pc.param2 = vignette;
+            pc.param3 = bloomNormalisation;
             vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                sizeof(pc), &pc);
             vkCmdDraw(ctx.cmd, 3, 1, 0, 0);

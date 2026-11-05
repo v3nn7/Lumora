@@ -94,6 +94,10 @@ json SceneSerializer::toJson(const Scene& scene) {
         {"groundColor", vec3ToJson(env.groundColor)},
         {"ambientIntensity", env.ambientIntensity},
         {"exposure", env.exposure},
+        {"fogDensity", env.fogDensity},
+        {"fogHeightFalloff", env.fogHeightFalloff},
+        {"bloomIntensity", env.bloomIntensity},
+        {"vignette", env.vignette},
     };
     json entities = json::array();
     // Depth-first order guarantees parents precede children and preserves sibling order.
@@ -120,6 +124,10 @@ Result<std::unique_ptr<Scene>> SceneSerializer::fromJson(const json& root) {
         if (auto v = j.contains("groundColor") ? vec3FromJson(j["groundColor"]) : std::nullopt) env.groundColor = *v;
         env.ambientIntensity = j.value("ambientIntensity", env.ambientIntensity);
         env.exposure = j.value("exposure", env.exposure);
+        env.fogDensity = j.value("fogDensity", env.fogDensity);
+        env.fogHeightFalloff = j.value("fogHeightFalloff", env.fogHeightFalloff);
+        env.bloomIntensity = j.value("bloomIntensity", env.bloomIntensity);
+        env.vignette = j.value("vignette", env.vignette);
     }
 
     const auto entitiesIt = root.find("entities");

@@ -24,6 +24,33 @@ VSOutput VSMain(VSInput input) {
     return o;
 }
 
+/// Antialiased line mask for a world-space grid with the given cell size (1 on a line).
+float gridMask(float2 coord, float cell) {
+    float2 c = coord / cell;
+    float2 width = max(fwidth(c), 1e-5.xx);
+    float2 g = abs(frac(c - 0.5) - 0.5) / width;
+    float onLine = 1.0 - saturate(min(g.x, g.y) / 1.2);
+    // Fade out once cells approach pixel size to avoid moire.
+    return onLine * saturate(1.0 - max(width.x, width.y) * 3.0);
+}
+
+/// Procedural prototyping patterns, projected along the dominant normal axis (world metres).
+float surfacePattern(float3 p, float3 n, uint pattern) {
+    if (pattern == 0u) {
+        return 1.0;
+    }
+    float3 an = abs(n);
+    float2 coord = (an.y >= an.x && an.y >= an.z) ? p.xz : (an.x >= an.z ? p.zy : p.xy);
+    if (pattern == 1u) {
+        float minor = gridMask(coord, 1.0);
+        float major = gridMask(coord, 10.0);
+        return 1.0 - 0.16 * minor - 0.28 * major;
+    }
+    float2 cell = floor(coord);
+    float parity = abs(fmod(cell.x + cell.y, 2.0));
+    return lerp(0.72, 1.0, parity);
+}
+
 /// Sun visibility from the shadow map: 3x3 hardware-filtered PCF taps (bilinear compare each),
 /// normal-offset to fight acne, faded out towards the edge of the shadow region.
 float sunShadow(float3 worldPosition, float3 normal) {
@@ -58,7 +85,7 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     s.position = input.worldPosition;
     s.normal = normalize(input.normal) * (frontFace ? 1.0 : -1.0);
     s.view = normalize(gFrame.cameraPositionTime.xyz - input.worldPosition);
-    s.albedo = object.baseColorMetallic.rgb;
+    s.albedo = object.baseColorMetallic.rgb * surfacePattern(input.worldPosition, s.normal, (uint)object.flags.y);
     s.metallic = saturate(object.baseColorMetallic.w);
     s.roughness = clamp(object.emissiveRoughness.w, 0.02, 1.0);
 
@@ -82,6 +109,7 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
         }
     }
     color += object.emissiveRoughness.rgb;
+    color = applyFog(color, s.position);
 
     if (object.flags.x > 0.5) {
         // Selection highlight: warm rim plus a faint tint.

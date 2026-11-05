@@ -30,6 +30,7 @@ struct FrameData {
     uint4 counts;               // x light count, y shadowed sun index (0xFFFFFFFF = none)
     column_major float4x4 lightViewProjection;
     float4 shadowParams;        // x enabled, y comparison sampler, z texel size (uv), w normal offset
+    float4 fogParams;           // x density, y height falloff, z max opacity
     GpuLight lights[MAX_LIGHTS];
 };
 
@@ -38,7 +39,7 @@ struct GpuObject {
     column_major float4x4 normalMatrix;
     float4 baseColorMetallic;   // rgb base color, w metallic
     float4 emissiveRoughness;   // rgb emissive radiance, w roughness
-    float4 flags;               // x selected
+    float4 flags;               // x selected, y surface pattern (0 none, 1 grid, 2 checker)
 };
 
 [[vk::binding(0, 0)]] cbuffer FrameCB { FrameData gFrame; };
@@ -51,8 +52,12 @@ struct GpuObject {
 struct PushConstants {
     uint index0;
     uint index1;
-    float param0;
+    uint index2;
     uint flags;
+    float param0;
+    float param1;
+    float param2;
+    float param3;
 };
 // Note: glslang only honours vk::push_constant on ConstantBuffer<T>/cbuffer declarations; a
 // plain struct global silently lands in the $Global uniform block instead.
@@ -65,12 +70,51 @@ float3 viewRay(float2 uv) {
     return normalize(nearPoint.xyz / nearPoint.w - gFrame.cameraPositionTime.xyz);
 }
 
-/// Procedural sky radiance (no sun disk). Also used as a crude environment for ambient light.
+/// Procedural sky radiance without the sun disk: zenith/horizon gradient, a bright haze band
+/// at the horizon and a forward-scattering glow around the sun. Below the horizon it starts at
+/// the horizon colour, so infinitely distant fogged ground meets the sky without a seam.
 float3 skyGradient(float3 dir) {
     float y = dir.y;
-    float3 sky = lerp(gFrame.skyHorizon.rgb, gFrame.skyZenith.rgb, pow(saturate(y), 0.4));
-    float3 ground = lerp(gFrame.skyHorizon.rgb * 0.6, gFrame.groundColor.rgb, saturate(-y * 6.0));
-    return y >= 0.0 ? sky : ground;
+    float3 horizon = gFrame.skyHorizon.rgb;
+    float3 sky = lerp(horizon, gFrame.skyZenith.rgb, pow(saturate(y), 0.45));
+    sky += horizon * 0.25 * exp(-max(y, 0.0) * 14.0);
+    float3 below = lerp(horizon * 1.05, gFrame.groundColor.rgb, saturate(-y * 2.5));
+    float3 color = y >= 0.0 ? sky : below;
+    if (gFrame.sunDirection.w > 0.0) {
+        float cosSun = saturate(dot(dir, gFrame.sunDirection.xyz));
+        float3 sun = gFrame.sunColor.rgb;
+        color += sun * (pow(cosSun, 6.0) * 0.035 + pow(cosSun, 48.0) * 0.08);
+    }
+    return color;
+}
+
+/// Exponential height fog (aerial perspective) between the camera and a world-space point,
+/// coloured by the sky in that direction so distant geometry dissolves into the horizon.
+float fogAmount(float3 worldPosition) {
+    float density = gFrame.fogParams.x;
+    if (density <= 0.0) {
+        return 0.0;
+    }
+    float falloff = max(gFrame.fogParams.y, 1e-4);
+    float3 origin = gFrame.cameraPositionTime.xyz;
+    float3 delta = worldPosition - origin;
+    float distance = length(delta);
+    float3 dir = delta / max(distance, 1e-4);
+    float k = dir.y * distance * falloff;
+    // Integral of density * exp(-falloff * height) along the ray; (1 - e^-k) / k -> 1 as k -> 0.
+    float shape = abs(k) > 1e-4 ? (1.0 - exp(-k)) / k : 1.0;
+    float opticalDepth = density * exp(-origin.y * falloff) * distance * shape;
+    return min(1.0 - exp(-opticalDepth), gFrame.fogParams.z);
+}
+
+float3 applyFog(float3 color, float3 worldPosition) {
+    float amount = fogAmount(worldPosition);
+    if (amount <= 0.0) {
+        return color;
+    }
+    float3 dir = normalize(worldPosition - gFrame.cameraPositionTime.xyz);
+    float3 fogColor = skyGradient(float3(dir.x, max(dir.y, 0.02), dir.z));
+    return lerp(color, fogColor, amount);
 }
 
 #endif

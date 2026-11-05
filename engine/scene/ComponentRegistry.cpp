@@ -57,6 +57,8 @@ ComponentRegistry makeBuiltin() {
             ranged(R::field(&MeshRendererComponent::roughness, "roughness", "Roughness", FieldKind::Float), 0.02f, 1.0f, 0.01f),
             R::field(&MeshRendererComponent::emissive, "emissive", "Emissive", FieldKind::Color),
             ranged(R::field(&MeshRendererComponent::emissiveStrength, "emissiveStrength", "Emissive Strength", FieldKind::Float), 0.0f, 1000.0f, 0.1f),
+            enumerated(R::field(&MeshRendererComponent::pattern, "pattern", "Pattern", FieldKind::Enum),
+                       {"None", "Grid", "Checker"}),
             R::field(&MeshRendererComponent::visible, "visible", "Visible", FieldKind::Bool),
         };
         reg.add(std::move(d));

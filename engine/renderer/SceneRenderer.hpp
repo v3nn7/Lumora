@@ -23,6 +23,7 @@ struct RenderSettings {
     float gridFadeDistance = 150.0f;
     bool frustumCulling = true;
     bool shadows = true;
+    bool bloom = true;
     float shadowDistance = 35.0f;          // metres covered by the sun shadow map
     std::uint32_t shadowResolution = 2048;
     entt::entity selected = entt::null;
@@ -71,6 +72,7 @@ private:
     rhi::UniquePipeline opaque_;
     rhi::UniquePipeline grid_;
     rhi::UniquePipeline shadow_;
+    std::unordered_map<int, rhi::UniquePipeline> bloom_;  // 0 = downsample, 1 = upsample
     std::unordered_map<VkFormat, rhi::UniquePipeline> tonemap_;
 };
 

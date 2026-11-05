@@ -1,7 +1,9 @@
 #include "common.hlsli"
 #include "fullscreen.hlsli"
 
-// gPush.index0 = HDR texture, index1 = sampler, param0 = exposure, flags bit0 = encode sRGB in shader.
+// gPush: index0 = HDR scene, index1 = sampler, index2 = bloom texture, flags bit0 = encode sRGB,
+//        bit1 = bloom present; param0 = exposure, param1 = bloom strength, param2 = vignette,
+//        param3 = bloom normalisation (1 / number of summed chain levels).
 
 FullscreenOut VSMain(uint id : SV_VertexID) {
     return fullscreenTriangle(id);
@@ -30,7 +32,13 @@ float gradientNoise(float2 pixel) {
 
 float4 PSMain(FullscreenOut input) : SV_Target0 {
     float3 hdr = gTextures[gPush.index0].SampleLevel(gSamplers[gPush.index1], input.uv, 0.0).rgb;
-    float3 color = acesFilm(hdr * gPush.param0);
+    if ((gPush.flags & 2u) != 0u) {
+        float3 bloom = gTextures[gPush.index2].SampleLevel(gSamplers[gPush.index1], input.uv, 0.0).rgb;
+        hdr = lerp(hdr, bloom * gPush.param3, gPush.param1);
+    }
+    float2 centered = input.uv - 0.5;
+    float vignette = saturate(1.0 - gPush.param2 * pow(dot(centered, centered) * 2.2, 1.3));
+    float3 color = acesFilm(hdr * gPush.param0 * vignette);
     if ((gPush.flags & 1u) != 0u) {
         color = linearToSrgb(color);
     }

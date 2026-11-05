@@ -143,6 +143,14 @@ UniquePipeline createGraphicsPipeline(const Device& device, const PipelineCache&
             b.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
             b.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
             b.alphaBlendOp = VK_BLEND_OP_ADD;
+        } else if (d.blend == BlendMode::Additive) {
+            b.blendEnable = VK_TRUE;
+            b.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            b.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            b.colorBlendOp = VK_BLEND_OP_ADD;
+            b.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            b.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            b.alphaBlendOp = VK_BLEND_OP_ADD;
         }
     }
     VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};

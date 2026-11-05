@@ -46,6 +46,8 @@ GridOutput PSMain(FullscreenOut input) {
     float fade = 1.0 - saturate(t / max(gFrame.gridParams.z, 1.0));
     fade *= saturate(abs(dir.y) * 6.0);
     alpha *= fade * fade;
+    // Lines vanish into the same aerial perspective as the scene.
+    alpha *= 1.0 - fogAmount(p);
     if (alpha < 0.002) {
         discard;
     }

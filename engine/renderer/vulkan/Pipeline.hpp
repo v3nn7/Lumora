@@ -45,7 +45,7 @@ private:
     VkPipelineCache cache_ = VK_NULL_HANDLE;
 };
 
-enum class BlendMode { Opaque, Alpha };
+enum class BlendMode { Opaque, Alpha, Additive };
 
 struct GraphicsPipelineDesc {
     VkShaderModule vertexShader = VK_NULL_HANDLE;

@@ -35,6 +35,7 @@ struct FrameConstants {
     glm::uvec4 counts{0u};                  // x light count, y index of the shadowed sun (or ~0u)
     glm::mat4 lightViewProjection{1.0f};    // sun shadow map transform
     glm::vec4 shadowParams{0.0f};           // x enabled, y comparison sampler, z texel size (uv), w normal offset (m)
+    glm::vec4 fogParams{0.0f};              // x density, y height falloff, z max opacity
     GpuLight lights[kMaxLights]{};
 };
 
@@ -49,8 +50,12 @@ struct GpuObject {
 struct PushConstants {
     std::uint32_t index0 = 0;
     std::uint32_t index1 = 0;
-    float param0 = 0.0f;
+    std::uint32_t index2 = 0;
     std::uint32_t flags = 0;
+    float param0 = 0.0f;
+    float param1 = 0.0f;
+    float param2 = 0.0f;
+    float param3 = 0.0f;
 };
 
 // Offsets verified against the SPIR-V produced from common.hlsli.
@@ -59,10 +64,11 @@ static_assert(offsetof(FrameConstants, cameraPositionTime) == 256);
 static_assert(offsetof(FrameConstants, counts) == 384);
 static_assert(offsetof(FrameConstants, lightViewProjection) == 400);
 static_assert(offsetof(FrameConstants, shadowParams) == 464);
-static_assert(offsetof(FrameConstants, lights) == 480);
-static_assert(sizeof(FrameConstants) == 480 + 48 * kMaxLights);
+static_assert(offsetof(FrameConstants, fogParams) == 480);
+static_assert(offsetof(FrameConstants, lights) == 496);
+static_assert(sizeof(FrameConstants) == 496 + 48 * kMaxLights);
 static_assert(sizeof(GpuObject) == 176);
 static_assert(offsetof(GpuObject, flags) == 160);
-static_assert(sizeof(PushConstants) == 16);
+static_assert(sizeof(PushConstants) == 32);
 
 } // namespace lumora::render

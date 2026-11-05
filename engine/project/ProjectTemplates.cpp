@@ -10,11 +10,11 @@ entt::entity addSun(Scene& scene) {
     const entt::entity sun = scene.createEntity("Sun");
     auto& t = scene.registry().get<TransformComponent>(sun);
     t.position = {0.0f, 10.0f, 0.0f};
-    t.rotationDeg = {-50.0f, 35.0f, 0.0f};
+    t.rotationDeg = {-38.0f, 40.0f, 0.0f};
     auto& light = scene.registry().emplace<LightComponent>(sun);
     light.type = LightType::Directional;
-    light.color = {1.0f, 0.96f, 0.90f};
-    light.intensity = 3.5f;
+    light.color = {1.0f, 0.93f, 0.84f};
+    light.intensity = 3.6f;
     return sun;
 }
 
@@ -40,8 +40,9 @@ entt::entity addMesh(Scene& scene, std::string_view name, MeshPrimitive prim, gl
 }
 
 entt::entity addGround(Scene& scene, float size) {
-    const entt::entity ground = addMesh(scene, "Ground", MeshPrimitive::Plane, {0, 0, 0}, {0.30f, 0.30f, 0.31f}, 0.0f, 0.9f);
+    const entt::entity ground = addMesh(scene, "Ground", MeshPrimitive::Plane, {0, 0, 0}, {0.42f, 0.42f, 0.43f}, 0.0f, 0.85f);
     scene.registry().get<TransformComponent>(ground).scale = {size, 1.0f, size};
+    scene.registry().get<MeshRendererComponent>(ground).pattern = SurfacePattern::Grid;
     return ground;
 }
 
@@ -58,7 +59,7 @@ std::unique_ptr<Scene> createTemplateScene(ProjectTemplate templ) {
         case ProjectTemplate::BasicScene: {
             addSun(*scene);
             addCamera(*scene, {0.0f, 2.5f, 7.0f}, {-15.0f, 0.0f, 0.0f});
-            addGround(*scene, 20.0f);
+            addGround(*scene, 1000.0f);
             const entt::entity group = scene->createEntity("Props");
             const entt::entity cube = addMesh(*scene, "Cube", MeshPrimitive::Cube, {-1.8f, 0.5f, 0.0f},
                                               {0.85f, 0.25f, 0.18f}, 0.0f, 0.4f, group);
@@ -82,7 +83,7 @@ std::unique_ptr<Scene> createTemplateScene(ProjectTemplate templ) {
         case ProjectTemplate::MaterialShowcase: {
             addSun(*scene);
             addCamera(*scene, {0.0f, 3.2f, 9.5f}, {-14.0f, 0.0f, 0.0f});
-            addGround(*scene, 30.0f);
+            addGround(*scene, 1000.0f);
             const entt::entity grid = scene->createEntity("Material Grid");
             constexpr int kCount = 6;
             for (int row = 0; row < 2; ++row) {

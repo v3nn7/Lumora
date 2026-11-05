@@ -42,6 +42,9 @@ struct HierarchyComponent {
     std::vector<entt::entity> children;
 };
 
+/// Procedural world-space surface pattern multiplied into the base colour (prototyping material).
+enum class SurfacePattern : std::int32_t { None = 0, Grid = 1, Checker = 2 };
+
 struct MeshRendererComponent {
     MeshPrimitive mesh = MeshPrimitive::Cube;
     glm::vec3 baseColor{0.8f};
@@ -49,6 +52,7 @@ struct MeshRendererComponent {
     float roughness = 0.5f;
     glm::vec3 emissive{0.0f};
     float emissiveStrength = 0.0f;
+    SurfacePattern pattern = SurfacePattern::None;
     bool visible = true;
 };
 
@@ -76,11 +80,15 @@ struct RotatorComponent {
 
 /// Scene-wide settings stored alongside entities.
 struct EnvironmentSettings {
-    glm::vec3 skyZenithColor{0.11f, 0.26f, 0.62f};
-    glm::vec3 skyHorizonColor{0.52f, 0.64f, 0.80f};
+    glm::vec3 skyZenithColor{0.07f, 0.20f, 0.56f};
+    glm::vec3 skyHorizonColor{0.56f, 0.67f, 0.82f};
     glm::vec3 groundColor{0.16f, 0.14f, 0.12f};
     float ambientIntensity = 0.5f;
     float exposure = 0.9f;
+    float fogDensity = 0.008f;        // extinction per metre at height 0
+    float fogHeightFalloff = 0.12f;   // fog thins out with altitude
+    float bloomIntensity = 0.05f;     // fraction of the blurred image mixed back in
+    float vignette = 0.35f;
 };
 
 } // namespace lumora

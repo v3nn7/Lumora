@@ -91,21 +91,24 @@
   <section id="download">
     <div class="wrap">
       <h2>Download</h2>
-      <p class="sub">Install the Hub; it downloads and updates editor versions for you. Builds for
-        Linux are verified on every release; Windows builds are on their way.</p>
+      <p class="sub">Install the Hub; it downloads and updates editor versions for you. Linux
+        builds are tested on every release; Windows support is new, so please report problems.</p>
       <div class="download">
         <div class="card">
           <h3>Lumora Hub for Linux</h3>
           <p class="note">x86-64, glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40, Arch).
             Needs a GPU and driver with Vulkan 1.4.</p>
-          <a class="button primary" href="https://pub-dd139ac9b37f45229727e7708dd46000.r2.dev/hub/latest/lumora-hub-linux-x64.zip">Download .zip</a>
-          <p class="note">Unzip anywhere and run <code>bin/lumora-hub</code>.</p>
+          <a class="button primary" href="https://pub-dd139ac9b37f45229727e7708dd46000.r2.dev/hub/latest/lumora-hub-x86_64.AppImage">Download AppImage</a>
+          <p class="note">Make it executable (<code>chmod +x lumora-hub-x86_64.AppImage</code>) and run it.
+            Prefer a folder? <a href="https://pub-dd139ac9b37f45229727e7708dd46000.r2.dev/hub/latest/lumora-hub-linux-x64.zip">Portable .zip</a>.</p>
         </div>
         <div class="card">
-          <h3>Windows</h3>
-          <p class="note">The release pipeline builds Windows packages; they will be offered here
-            once they have been verified.</p>
-          <a class="button" href="https://github.com/v3nn7/Lumora/actions/workflows/release.yml">Release builds</a>
+          <h3>Lumora Hub for Windows</h3>
+          <p class="note">Windows 10 or 11, x86-64. Needs a GPU and driver with Vulkan 1.4.</p>
+          <a class="button primary" href="https://pub-dd139ac9b37f45229727e7708dd46000.r2.dev/hub/latest/lumora-hub-setup.exe">Download installer</a>
+          <p class="note">Installs for your user, no administrator rights needed. The installer is not
+            code-signed yet, so SmartScreen may ask you to confirm (<em>More info → Run anyway</em>).
+            <a href="https://pub-dd139ac9b37f45229727e7708dd46000.r2.dev/hub/latest/lumora-hub-windows-x64.zip">Portable .zip</a>.</p>
         </div>
         <div class="card">
           <h3>Build from source</h3>

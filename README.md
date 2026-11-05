@@ -177,7 +177,8 @@ checked over the encrypted connection.
 
 ## Releases and installing editors
 
-Users install only the **Hub**. It installs editor versions next to each other
+Users install only the **Hub**: an AppImage on Linux, an installer (`lumora-hub-setup.exe`, NSIS,
+per user, no administrator rights) on Windows, or a portable ZIP. It installs editor versions next to each other
 (`~/.local/share/Lumora/Editors/<version>/`, `%LOCALAPPDATA%\Lumora\Editors\<version>\` on Windows)
 and opens each project in the version it was made with, as a separate process. The Hub's
 *Editors* page lists installed versions, the releases in the feed and local builds (*Add Local
@@ -300,7 +301,7 @@ site/          project website (GitHub Pages)
 ```
 
 A step-by-step user guide is in [docs/GUIDE.md](docs/GUIDE.md) and on the
-[website](https://v3nn7.github.io/Lumora/docs.html). The module boundaries, frame flow and the reasons behind key decisions are in
+[website](https://lumoraengine.xyz/docs.html). The module boundaries, frame flow and the reasons behind key decisions are in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Platform notes

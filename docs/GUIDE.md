@@ -11,13 +11,19 @@ running it, and editing it together with other people. For how the engine is bui
 The Hub is a small launcher. It installs editor versions next to each other, keeps them up to
 date and opens every project in the version it was made with.
 
-1. Download the Hub for your platform from the [website](https://v3nn7.github.io/Lumora/#download).
-2. Unzip it anywhere, for example `~/Applications/LumoraHub`.
-3. Run `bin/lumora-hub`.
-4. Open **Editors** and click **Install Latest**.
+1. Download the Hub from the [website](https://lumoraengine.xyz/#download):
+   - **Linux:** `lumora-hub-x86_64.AppImage`. Make it executable (`chmod +x lumora-hub-x86_64.AppImage`)
+     and run it.
+   - **Windows:** `lumora-hub-setup.exe`. It installs for your user into
+     `%LOCALAPPDATA%\Programs\Lumora Hub` without administrator rights and adds Start menu and
+     desktop shortcuts. The installer is not code-signed yet, so SmartScreen may ask you to
+     confirm (*More info → Run anyway*). Uninstall it from *Settings → Apps*.
+   - A portable `.zip` of the Hub exists for both: unzip it anywhere and run `bin/lumora-hub`.
+2. Open **Editors** and click **Install Latest**.
 
 Editors go to `~/.local/share/Lumora/Editors/<version>/` (Linux) or
-`%LOCALAPPDATA%\Lumora\Editors\<version>\` (Windows). Each download is checked against a signed
+`%LOCALAPPDATA%\Lumora\Editors\<version>\` (Windows). Uninstalling the Hub leaves them and your projects
+in place. Each download is checked against a signed
 release feed before anything is unpacked. Updates download only the files that changed, usually
 a few modules.
 

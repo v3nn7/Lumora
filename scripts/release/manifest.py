@@ -47,7 +47,8 @@ def version_key(version: str):
 
 
 def private_key(module):
-    seed = os.environ.get("LUMORA_SIGNING_KEY", "")
+    # Whitespace never belongs to base64 here, but a pasted or file-fed secret often ends in a newline.
+    seed = "".join(os.environ.get("LUMORA_SIGNING_KEY", "").split())
     try:
         raw = base64.b64decode(seed, validate=True)
     except ValueError:

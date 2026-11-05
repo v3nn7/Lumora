@@ -32,9 +32,9 @@ public:
     [[nodiscard]] static Channel preferredChannel();
     static void setPreferredChannel(Channel channel);
 
-    /// Default feed: the Hub setting, else the URL this build was configured with.
+    /// The release feed this build was configured with (LUMORA_RELEASE_FEED). Not user-editable:
+    /// a Hub only installs editors from the feed it was built for.
     [[nodiscard]] static QString feedUrl();
-    static void setFeedUrl(const QString& url);
 
     /// Arguments that make an editor open a project / join a session.
     [[nodiscard]] static QStringList openProjectArguments(const QString& projectPath);

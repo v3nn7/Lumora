@@ -8,7 +8,6 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QLineEdit>
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
@@ -101,15 +100,9 @@ EditorsPage::EditorsPage(QWidget* parent)
                                         : tr(", whose Ed25519 signature must match Lumora's release key")),
                            feedContent));
     auto* feedRow = new QHBoxLayout;
-    feed_ = new QLineEdit(launcher::EditorRegistry::feedUrl());
-    feed_->setPlaceholderText(tr("https://<your bucket>.r2.dev/editor/manifest.json"));
     auto* refresh = new QPushButton(tr("Refresh"));
-    connect(refresh, &QPushButton::clicked, this, [this] {
-        launcher::EditorRegistry::setFeedUrl(feed_->text());
-        refreshFeed();
-    });
-    connect(feed_, &QLineEdit::returnPressed, refresh, &QPushButton::click);
-    feedRow->addWidget(feed_, 1);
+    connect(refresh, &QPushButton::clicked, this, &EditorsPage::refreshFeed);
+    feedRow->addStretch(1);
     feedRow->addWidget(refresh);
     feedContent->addLayout(feedRow);
 
@@ -177,14 +170,14 @@ EditorsPage::EditorsPage(QWidget* parent)
 void EditorsPage::showEvent(QShowEvent* event) {
     QWidget::showEvent(event);
     rebuild();
-    if (!fetched_ && !feed_->text().trimmed().isEmpty()) refreshFeed();
+    if (!fetched_ && !launcher::EditorRegistry::feedUrl().isEmpty()) refreshFeed();
 }
 
 void EditorsPage::refreshFeed() {
     fetched_ = true;
-    const QString url = feed_->text().trimmed();
+    const QString url = launcher::EditorRegistry::feedUrl();
     if (url.isEmpty()) {
-        feedError_ = tr("Enter the address of the release feed (manifest.json).");
+        feedError_ = tr("This build has no release feed (configure with -DLUMORA_RELEASE_FEED=<url>).");
         rebuild();
         return;
     }

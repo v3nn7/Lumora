@@ -12,7 +12,6 @@ namespace lumora::launcher {
 namespace {
 
 constexpr const char* kLocalKey = "hub/localEditors";  // list of "version|path"
-constexpr const char* kFeedKey = "hub/releaseFeed";
 constexpr const char* kChannelKey = "hub/channel";
 
 void sortNewestFirst(std::vector<InstalledEditor>& editors) {
@@ -110,16 +109,12 @@ void EditorRegistry::setPreferredChannel(Channel channel) {
 }
 
 QString EditorRegistry::feedUrl() {
-    const QString configured = QSettings().value(QString::fromLatin1(kFeedKey)).toString();
-    if (!configured.isEmpty()) return configured;
 #if defined(LUMORA_RELEASE_FEED)
     return QStringLiteral(LUMORA_RELEASE_FEED);
 #else
     return {};
 #endif
 }
-
-void EditorRegistry::setFeedUrl(const QString& url) { QSettings().setValue(QString::fromLatin1(kFeedKey), url.trimmed()); }
 
 QStringList EditorRegistry::openProjectArguments(const QString& projectPath) {
     return {QStringLiteral("--editor"), projectPath};

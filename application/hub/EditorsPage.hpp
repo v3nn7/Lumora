@@ -11,7 +11,6 @@
 
 class QComboBox;
 class QLabel;
-class QLineEdit;
 class QProgressBar;
 class QPushButton;
 class QVBoxLayout;
@@ -46,7 +45,6 @@ private:
     std::optional<launcher::ReleaseManifest> manifest_;
     QString feedError_;
     bool fetched_ = false;
-    QLineEdit* feed_ = nullptr;
     QComboBox* channel_ = nullptr;
     QPushButton* installLatest_ = nullptr;
     QLabel* message_ = nullptr;

@@ -77,6 +77,31 @@ int compareVersions(const QString& a, const QString& b) {
     return compareIdentifiers(aPre.split(QLatin1Char('.')), bPre.split(QLatin1Char('.')));
 }
 
+Channel channelFromName(const QString& name) {
+    if (name == QLatin1String("stable")) return Channel::Stable;
+    if (name == QLatin1String("beta")) return Channel::Beta;
+    return Channel::Alpha;
+}
+
+QString channelName(Channel channel) {
+    switch (channel) {
+        case Channel::Stable:
+            return QStringLiteral("stable");
+        case Channel::Beta:
+            return QStringLiteral("beta");
+        case Channel::Alpha:
+            break;
+    }
+    return QStringLiteral("alpha");
+}
+
+Channel channelOfVersion(const QString& version) {
+    const QString suffix = version.section(QLatin1Char('-'), 1);
+    if (suffix.isEmpty()) return Channel::Stable;
+    if (suffix.startsWith(QLatin1String("beta")) || suffix.startsWith(QLatin1String("rc"))) return Channel::Beta;
+    return Channel::Alpha;
+}
+
 const PackageInfo* ReleaseInfo::packageFor(const QString& platform) const {
     const auto it = std::ranges::find(packages, platform, &PackageInfo::platform);
     return it == packages.end() ? nullptr : &*it;
@@ -128,11 +153,17 @@ Result<ReleaseManifest> ReleaseManifest::parse(const QByteArray& bytes, const QU
     return manifest;
 }
 
-const ReleaseInfo* ReleaseManifest::latest(const QString& platform, const QString& channel) const {
-    for (const ReleaseInfo& r : releases) {
-        if ((channel.isEmpty() || r.channel == channel) && r.packageFor(platform) != nullptr) return &r;
+const ReleaseInfo* ReleaseManifest::latest(const QString& platform, Channel upTo) const {
+    const auto list = visible(platform, upTo);
+    return list.empty() ? nullptr : list.front();
+}
+
+std::vector<const ReleaseInfo*> ReleaseManifest::visible(const QString& platform, Channel upTo) const {
+    std::vector<const ReleaseInfo*> out;
+    for (const ReleaseInfo& r : releases) {  // already newest first
+        if (channelFromName(r.channel) <= upTo && r.packageFor(platform) != nullptr) out.push_back(&r);
     }
-    return nullptr;
+    return out;
 }
 
 const ReleaseInfo* ReleaseManifest::find(const QString& version) const {

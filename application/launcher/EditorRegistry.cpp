@@ -13,6 +13,7 @@ namespace {
 
 constexpr const char* kLocalKey = "hub/localEditors";  // list of "version|path"
 constexpr const char* kFeedKey = "hub/releaseFeed";
+constexpr const char* kChannelKey = "hub/channel";
 
 void sortNewestFirst(std::vector<InstalledEditor>& editors) {
     std::ranges::stable_sort(editors, [](const InstalledEditor& a, const InstalledEditor& b) {
@@ -97,6 +98,15 @@ std::optional<InstalledEditor> EditorRegistry::exactMatch(const QString& project
         if (e.version == projectVersion) return e;
     }
     return std::nullopt;
+}
+
+Channel EditorRegistry::preferredChannel() {
+    const QString name = QSettings().value(QString::fromLatin1(kChannelKey), QStringLiteral("stable")).toString();
+    return channelFromName(name);
+}
+
+void EditorRegistry::setPreferredChannel(Channel channel) {
+    QSettings().setValue(QString::fromLatin1(kChannelKey), channelName(channel));
 }
 
 QString EditorRegistry::feedUrl() {

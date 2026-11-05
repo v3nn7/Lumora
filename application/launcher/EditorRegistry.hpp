@@ -28,6 +28,10 @@ public:
     /// else nullopt (the caller then offers the newest one or an install).
     [[nodiscard]] std::optional<InstalledEditor> exactMatch(const QString& projectVersion) const;
 
+    /// Least stable channel the Hub offers (setting; stable by default).
+    [[nodiscard]] static Channel preferredChannel();
+    static void setPreferredChannel(Channel channel);
+
     /// Default feed: the Hub setting, else the URL this build was configured with.
     [[nodiscard]] static QString feedUrl();
     static void setFeedUrl(const QString& url);

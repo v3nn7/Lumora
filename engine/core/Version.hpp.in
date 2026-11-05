@@ -5,7 +5,8 @@ namespace lumora::version {
 inline constexpr int kMajor = @PROJECT_VERSION_MAJOR@;
 inline constexpr int kMinor = @PROJECT_VERSION_MINOR@;
 inline constexpr int kPatch = @PROJECT_VERSION_PATCH@;
-inline constexpr const char* kString = "@PROJECT_VERSION@";
+inline constexpr const char* kString = "@LUMORA_VERSION_STRING@";  // e.g. 0.2.0 or 0.2.0-beta.1
+inline constexpr const char* kChannel = "@LUMORA_RELEASE_CHANNEL@";  // stable, beta or alpha
 inline constexpr const char* kBuildType = "@CMAKE_BUILD_TYPE@";
 inline constexpr const char* kEngineName = "Lumora Engine";
 } // namespace lumora::version

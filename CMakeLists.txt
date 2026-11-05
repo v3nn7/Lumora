@@ -14,6 +14,23 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
 endif()
 
+# Pre-release builds carry a suffix (0.2.0-beta.1); it also selects the release channel the
+# build belongs to: alpha*, beta*/rc* or stable (no suffix).
+set(LUMORA_VERSION_SUFFIX "" CACHE STRING "Pre-release suffix, e.g. alpha.1, beta.2 or rc.1 (empty: stable)")
+if(LUMORA_VERSION_SUFFIX AND NOT LUMORA_VERSION_SUFFIX MATCHES "^(alpha|beta|rc)(\\.[0-9A-Za-z]+)*$")
+    message(FATAL_ERROR "LUMORA_VERSION_SUFFIX '${LUMORA_VERSION_SUFFIX}' must look like alpha.1, beta.2 or rc.1")
+endif()
+set(LUMORA_VERSION_STRING ${PROJECT_VERSION})
+set(LUMORA_RELEASE_CHANNEL stable)
+if(LUMORA_VERSION_SUFFIX)
+    string(APPEND LUMORA_VERSION_STRING "-${LUMORA_VERSION_SUFFIX}")
+    if(LUMORA_VERSION_SUFFIX MATCHES "^alpha")
+        set(LUMORA_RELEASE_CHANNEL alpha)
+    else()
+        set(LUMORA_RELEASE_CHANNEL beta)
+    endif()
+endif()
+
 option(LUMORA_BUILD_TESTS "Build Lumora unit tests" ON)
 option(LUMORA_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(LUMORA_ENABLE_SANITIZERS "Enable ASan/UBSan (Debug, GCC/Clang)" OFF)

@@ -2,6 +2,7 @@
 
 #include "launcher/Signature.hpp"
 
+#include <QComboBox>
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QFrame>
@@ -111,6 +112,31 @@ EditorsPage::EditorsPage(QWidget* parent)
     feedRow->addWidget(feed_, 1);
     feedRow->addWidget(refresh);
     feedContent->addLayout(feedRow);
+
+    // Channels: stable releases, plus betas, plus alphas (each includes the more stable ones).
+    auto* channelRow = new QHBoxLayout;
+    auto* channelLabel = new QLabel(tr("Show"));
+    channel_ = new QComboBox;
+    channel_->addItem(tr("Stable releases"), static_cast<int>(launcher::Channel::Stable));
+    channel_->addItem(tr("Stable and beta"), static_cast<int>(launcher::Channel::Beta));
+    channel_->addItem(tr("Everything, including alpha"), static_cast<int>(launcher::Channel::Alpha));
+    channel_->setCurrentIndex(channel_->findData(static_cast<int>(launcher::EditorRegistry::preferredChannel())));
+    connect(channel_, &QComboBox::currentIndexChanged, this, [this] {
+        launcher::EditorRegistry::setPreferredChannel(static_cast<launcher::Channel>(channel_->currentData().toInt()));
+        rebuild();
+    });
+    installLatest_ = new QPushButton(tr("Install Latest"));
+    installLatest_->setProperty("accent", true);
+    connect(installLatest_, &QPushButton::clicked, this, [this] {
+        if (!manifest_) return;
+        const auto upTo = static_cast<launcher::Channel>(channel_->currentData().toInt());
+        if (const launcher::ReleaseInfo* latest = manifest_->latest(launcher::currentPlatform(), upTo)) install(*latest);
+    });
+    channelRow->addWidget(channelLabel);
+    channelRow->addWidget(channel_);
+    channelRow->addStretch(1);
+    channelRow->addWidget(installLatest_);
+    feedContent->addLayout(channelRow);
     availableRows_ = new QVBoxLayout;
     availableRows_->setSpacing(6);
     feedContent->addLayout(availableRows_);
@@ -210,8 +236,12 @@ void EditorsPage::rebuild() {
             emit editorsChanged();
         });
         remove->setEnabled(!installer_.busy());
-        installedRows_->addWidget(row(tr("Lumora %1%2").arg(e.version, local ? tr("  (local build)") : QString()),
-                                      e.executable, {folder, remove}));
+        QString title = tr("Lumora %1").arg(e.version);
+        if (launcher::channelOfVersion(e.version) != launcher::Channel::Stable) {
+            title += QStringLiteral("  · ") + launcher::channelName(launcher::channelOfVersion(e.version));
+        }
+        if (local) title += tr("  (local build)");
+        installedRows_->addWidget(row(title, e.executable, {folder, remove}));
     }
     if (editors.empty()) {
         auto* none = new QLabel(tr("No editor installed yet - install one below, or add a local build."));
@@ -239,6 +269,7 @@ void EditorsPage::rebuild() {
     installedRows_->addWidget(addHolder);
 
     clear(availableRows_);
+    installLatest_->setEnabled(false);
     if (!manifest_) {
         if (!feedError_.isEmpty()) {
             auto* note = new QLabel(feedError_);
@@ -249,10 +280,16 @@ void EditorsPage::rebuild() {
         return;
     }
     const QString platform = launcher::currentPlatform();
+    const auto upTo = static_cast<launcher::Channel>(channel_->currentData().toInt());
+    if (const launcher::ReleaseInfo* latest = manifest_->latest(platform, upTo)) {
+        const bool have = installer_.find(latest->version).has_value();
+        installLatest_->setEnabled(!have && !installer_.busy());
+        installLatest_->setText(have ? tr("Latest Installed") : tr("Install %1").arg(latest->version));
+    }
     int shown = 0;
-    for (const launcher::ReleaseInfo& r : manifest_->releases) {
+    for (const launcher::ReleaseInfo* release : manifest_->visible(platform, upTo)) {
+        const launcher::ReleaseInfo& r = *release;
         const launcher::PackageInfo* package = r.packageFor(platform);
-        if (package == nullptr) continue;
         const bool have = installer_.find(r.version).has_value();
         auto* installButton = new QPushButton(have ? tr("Installed") : tr("Install"));
         installButton->setEnabled(!have && !installer_.busy());
@@ -263,7 +300,8 @@ void EditorsPage::rebuild() {
         ++shown;
     }
     if (shown == 0) {
-        auto* none = new QLabel(tr("The feed has no releases for %1.").arg(platform));
+        auto* none = new QLabel(tr("No %1 releases for %2 in the feed.")
+                                    .arg(upTo == launcher::Channel::Stable ? tr("stable") : tr("matching"), platform));
         none->setProperty("muted", true);
         availableRows_->addWidget(none);
     }

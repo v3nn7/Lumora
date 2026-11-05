@@ -7,6 +7,7 @@
 
 #include <optional>
 
+class QComboBox;
 class QLabel;
 class QLineEdit;
 class QProgressBar;
@@ -44,6 +45,8 @@ private:
     QString feedError_;
     bool fetched_ = false;
     QLineEdit* feed_ = nullptr;
+    QComboBox* channel_ = nullptr;
+    QPushButton* installLatest_ = nullptr;
     QLabel* message_ = nullptr;
     QProgressBar* progress_ = nullptr;
     QPushButton* cancel_ = nullptr;

@@ -161,9 +161,39 @@ TEST(LauncherManifest, ParsesResolvesAndSorts) {
     ASSERT_NE(stable, nullptr);
     EXPECT_EQ(stable->url.toString(), QStringLiteral("https://releases.example.com/editor/editor/0.4.0/a.zip"));
     EXPECT_EQ(manifest->releases[0].packages[0].sha256, QByteArray(64, 'b'));  // normalised to lower case
-    EXPECT_EQ(manifest->latest(QStringLiteral("linux-x64"), QStringLiteral("stable"))->version, QStringLiteral("0.4.0"));
+    EXPECT_EQ(manifest->latest(QStringLiteral("linux-x64"), Channel::Stable)->version, QStringLiteral("0.4.0"));
     EXPECT_EQ(manifest->latest(QStringLiteral("linux-x64"))->version, QStringLiteral("0.5.0-beta.1"));
     EXPECT_EQ(manifest->latest(QStringLiteral("windows-x64")), nullptr);
+}
+
+TEST(LauncherChannels, FilterFromStableToAlpha) {
+    EXPECT_EQ(channelOfVersion(QStringLiteral("0.4.0")), Channel::Stable);
+    EXPECT_EQ(channelOfVersion(QStringLiteral("0.5.0-beta.2")), Channel::Beta);
+    EXPECT_EQ(channelOfVersion(QStringLiteral("0.5.0-rc.1")), Channel::Beta);
+    EXPECT_EQ(channelOfVersion(QStringLiteral("0.6.0-alpha.7")), Channel::Alpha);
+    EXPECT_EQ(channelFromName(QStringLiteral("stable")), Channel::Stable);
+    EXPECT_EQ(channelFromName(QStringLiteral("nightly")), Channel::Alpha) << "unknown channels count as least stable";
+    EXPECT_EQ(channelName(Channel::Beta), QStringLiteral("beta"));
+
+    const std::string sha(64, 'c');
+    auto release = [&](const char* version, const char* channel) {
+        return std::string(R"({"version":")") + version + R"(","channel":")" + channel +
+               R"(","packages":{"linux-x64":{"url":"a.zip","size":1,"sha256":")" + sha + R"("}}})";
+    };
+    const QByteArray feed = QByteArray::fromStdString(R"({"format":"lumora.releases","version":1,"releases":[)" +
+                                                      release("0.4.0", "stable") + "," + release("0.5.0-beta.1", "beta") +
+                                                      "," + release("0.6.0-alpha.3", "alpha") + "," +
+                                                      release("0.3.0", "stable") + "]}");
+    auto manifest = ReleaseManifest::parse(feed, QUrl(QStringLiteral("https://x/editor/manifest.json")));
+    ASSERT_TRUE(manifest.has_value()) << manifest.error().message;
+    const QString linux = QStringLiteral("linux-x64");
+    EXPECT_EQ(manifest->latest(linux, Channel::Stable)->version, QStringLiteral("0.4.0"));
+    EXPECT_EQ(manifest->latest(linux, Channel::Beta)->version, QStringLiteral("0.5.0-beta.1"));
+    EXPECT_EQ(manifest->latest(linux, Channel::Alpha)->version, QStringLiteral("0.6.0-alpha.3"));
+    EXPECT_EQ(manifest->visible(linux, Channel::Stable).size(), 2u);
+    EXPECT_EQ(manifest->visible(linux, Channel::Beta).size(), 3u);
+    EXPECT_EQ(manifest->visible(linux, Channel::Alpha).size(), 4u);
+    EXPECT_TRUE(manifest->visible(QStringLiteral("windows-x64"), Channel::Alpha).empty());
 }
 
 TEST(LauncherManifest, RejectsMalformedFeeds) {

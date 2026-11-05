@@ -9,7 +9,8 @@
 #             LUMORA_RELEASE_PUBLIC_KEY                from keygen (baked into the Hub)
 #             LUMORA_RELEASE_FEED                      https://<public url>/editor/manifest.json
 #
-# Release: bump VERSION in CMakeLists.txt, commit, then `git tag v0.2.0 && git push --tags`.
+# Release: set VERSION in CMakeLists.txt, commit, then push a tag. The tag's suffix picks the channel:
+#   v0.2.0          stable          v0.2.0-beta.1 / v0.2.0-rc.1   beta          v0.2.0-alpha.3   alpha
 name: Release
 
 on:
@@ -20,8 +21,12 @@ on:
       channel:
         description: Release channel
         type: choice
-        options: [stable, beta]
+        options: [alpha, beta, stable]
         default: beta
+      suffix:
+        description: Pre-release suffix (e.g. beta.2); empty = <channel>.<run number>, none for stable
+        type: string
+        default: ""
       publish:
         description: Upload to R2 (otherwise build and test only)
         type: boolean
@@ -48,6 +53,7 @@ jobs:
     continue-on-error: ${{ matrix.experimental }}
     outputs:
       version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.version.outputs.channel }}
     steps:
       - uses: actions/checkout@v4
 
@@ -55,16 +61,44 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Version
+      - name: Version and channel
         id: version
         shell: bash
+        env:
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_SUFFIX: ${{ inputs.suffix }}
         run: |
-          version=$(sed -n '/^project(Lumora/,/)/s/^ *VERSION \([0-9.]*\)$/\1/p' CMakeLists.txt)
-          if [[ -z "$version" ]]; then echo "::error::cannot read VERSION from CMakeLists.txt"; exit 1; fi
-          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$version" ]]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match the project version $version"; exit 1
+          core=$(sed -n '/^project(Lumora/,/)/s/^ *VERSION \([0-9.]*\)$/\1/p' CMakeLists.txt)
+          if [[ -z "$core" ]]; then echo "::error::cannot read VERSION from CMakeLists.txt"; exit 1; fi
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME#v}"
+            suffix=""
+            [[ "$tag" == *-* ]] && suffix="${tag#*-}"
+            if [[ "${tag%%-*}" != "$core" ]]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match the project version $core"; exit 1
+            fi
+          else
+            suffix="$INPUT_SUFFIX"
+            if [[ "$INPUT_CHANNEL" != "stable" && -z "$suffix" ]]; then suffix="$INPUT_CHANNEL.$GITHUB_RUN_NUMBER"; fi
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ -n "$suffix" && ! "$suffix" =~ ^(alpha|beta|rc)(\.[0-9A-Za-z]+)*$ ]]; then
+            echo "::error::pre-release suffix '$suffix' must look like alpha.1, beta.2 or rc.1"; exit 1
+          fi
+          case "$suffix" in
+            "") channel=stable ;;
+            alpha*) channel=alpha ;;
+            *) channel=beta ;;
+          esac
+          if [[ "$GITHUB_REF_TYPE" != "tag" && "$channel" != "$INPUT_CHANNEL" ]]; then
+            echo "::error::suffix '$suffix' belongs to the $channel channel, not $INPUT_CHANNEL"; exit 1
+          fi
+          version="$core${suffix:+-$suffix}"
+          echo "Lumora $version ($channel)" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "version=$version"
+            echo "suffix=$suffix"
+            echo "channel=$channel"
+          } >> "$GITHUB_OUTPUT"
 
       - name: System packages (Linux)
         if: runner.os == 'Linux'
@@ -112,6 +146,7 @@ jobs:
           compilers=()
           if [[ "$RUNNER_OS" == "Linux" ]]; then compilers=(-DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14); fi
           cmake --preset release "${compilers[@]}" -DLUMORA_RELEASE_PUBLIC_KEY="$PUBLIC_KEY" \
+            -DLUMORA_VERSION_SUFFIX="${{ steps.version.outputs.suffix }}" \
             ${FEED:+-DLUMORA_RELEASE_FEED="$FEED"}
 
       - name: Build
@@ -185,7 +220,7 @@ jobs:
       R2: --endpoint-url ${{ vars.R2_ENDPOINT }}
       BUCKET: s3://${{ vars.R2_BUCKET }}
       VERSION: ${{ needs.build.outputs.version }}
-      CHANNEL: ${{ github.event_name == 'push' && 'stable' || inputs.channel }}
+      CHANNEL: ${{ needs.build.outputs.channel }}
     steps:
       - uses: actions/checkout@v4
 

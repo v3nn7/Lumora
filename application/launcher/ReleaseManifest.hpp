@@ -22,6 +22,15 @@ namespace lumora::launcher {
 /// release ("1.0.0-rc.1" < "1.0.0").
 [[nodiscard]] int compareVersions(const QString& a, const QString& b);
 
+/// Release channels, from the most to the least stable. A Hub showing a channel also shows the
+/// more stable ones.
+enum class Channel { Stable = 0, Beta = 1, Alpha = 2 };
+/// "stable", "beta", "alpha"; anything unknown counts as the least stable.
+[[nodiscard]] Channel channelFromName(const QString& name);
+[[nodiscard]] QString channelName(Channel channel);
+/// Channel a version belongs to by its suffix: "-alpha*" alpha, "-beta*"/"-rc*" beta, none stable.
+[[nodiscard]] Channel channelOfVersion(const QString& version);
+
 struct PackageInfo {
     QString platform;
     QUrl url;            // absolute (relative entries are resolved against the feed)
@@ -52,8 +61,10 @@ struct ReleaseManifest {
     std::vector<ReleaseInfo> releases;  // newest first
 
     [[nodiscard]] static Result<ReleaseManifest> parse(const QByteArray& json, const QUrl& feedUrl);
-    /// Newest release for the platform, optionally limited to one channel.
-    [[nodiscard]] const ReleaseInfo* latest(const QString& platform, const QString& channel = {}) const;
+    /// Newest release for the platform in `upTo` or a more stable channel.
+    [[nodiscard]] const ReleaseInfo* latest(const QString& platform, Channel upTo = Channel::Alpha) const;
+    /// Releases for the platform in `upTo` or a more stable channel, newest first.
+    [[nodiscard]] std::vector<const ReleaseInfo*> visible(const QString& platform, Channel upTo) const;
     [[nodiscard]] const ReleaseInfo* find(const QString& version) const;
 };
 

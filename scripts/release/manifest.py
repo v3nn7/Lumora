@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Maintain and sign the release feed (manifest.json) the Lumora Hub reads.
 
-  manifest.py keygen
-      Prints a new signing key (keep it secret: GitHub secret LUMORA_SIGNING_KEY) and its
-      public key (build the Hub with -DLUMORA_RELEASE_PUBLIC_KEY=<public>).
+  manifest.py keygen --secret-file lumora-signing.key
+      Writes a new signing key to the file (owner-only permissions; it is never printed) and
+      prints its public key (build the Hub with -DLUMORA_RELEASE_PUBLIC_KEY=<public>). Store the
+      file's content as the GitHub secret LUMORA_SIGNING_KEY without displaying it:
+          gh secret set LUMORA_SIGNING_KEY --env release < lumora-signing.key
 
   manifest.py update --manifest manifest.json --version 0.4.0 [--channel stable]
                      [--notes "..."] --package dist/*.zip.json [--url-prefix editor/0.4.0/]
@@ -60,12 +62,21 @@ def public_b64(key, serialization) -> str:
     return base64.b64encode(raw).decode()
 
 
-def cmd_keygen(_args):
+def cmd_keygen(args):
     module, serialization = ed25519()
     key = module.Ed25519PrivateKey.generate()
     seed = key.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
-    print("LUMORA_SIGNING_KEY (secret) =", base64.b64encode(seed).decode())
-    print("LUMORA_RELEASE_PUBLIC_KEY   =", public_b64(key, serialization))
+    # The secret goes to a new owner-only file and never to the terminal (terminal output ends
+    # up in logs, recordings and shared sessions).
+    try:
+        fd = os.open(args.secret_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        sys.exit(f"error: {args.secret_file} already exists - not overwriting a key")
+    with os.fdopen(fd, "w") as f:
+        f.write(base64.b64encode(seed).decode() + "\n")
+    print(f"secret key written to {args.secret_file} (store it as the GitHub secret LUMORA_SIGNING_KEY,")
+    print(f"  e.g. gh secret set LUMORA_SIGNING_KEY --env release < {args.secret_file}; keep it out of git)")
+    print("LUMORA_RELEASE_PUBLIC_KEY =", public_b64(key, serialization))
 
 
 def cmd_update(args):
@@ -133,7 +144,9 @@ def cmd_verify(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("keygen").set_defaults(run=cmd_keygen)
+    keygen = sub.add_parser("keygen")
+    keygen.add_argument("--secret-file", required=True, help="new file that receives the secret key")
+    keygen.set_defaults(run=cmd_keygen)
     update = sub.add_parser("update")
     update.add_argument("--manifest", required=True)
     update.add_argument("--version", required=True)

@@ -3,7 +3,7 @@
 #
 # Repository settings (Settings > Secrets and variables > Actions):
 #   secrets   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY   R2 API token (Object Read & Write, bucket only)
-#             LUMORA_SIGNING_KEY                       from scripts/release/manifest.py keygen
+#             LUMORA_SIGNING_KEY                       manifest.py keygen --secret-file <file>
 #   variables R2_ENDPOINT        https://<account id>.r2.cloudflarestorage.com
 #             R2_BUCKET          lumora
 #             LUMORA_RELEASE_PUBLIC_KEY                from keygen (baked into the Hub)
@@ -145,9 +145,9 @@ jobs:
           # A throwaway key signs a local feed holding just this package; the real installer
           # (the same code the Hub runs) must download, verify and unpack it.
           python -m pip install --quiet cryptography
-          keys=$(python scripts/release/manifest.py keygen)
-          export LUMORA_SIGNING_KEY=$(sed -n 's/.*(secret) = //p' <<< "$keys")
-          public=$(sed -n 's/.*PUBLIC_KEY *= //p' <<< "$keys")
+          keys=$(python scripts/release/manifest.py keygen --secret-file "$RUNNER_TEMP/check.key")
+          export LUMORA_SIGNING_KEY=$(cat "$RUNNER_TEMP/check.key")
+          public=$(sed -n 's/^LUMORA_RELEASE_PUBLIC_KEY = //p' <<< "$keys")
           mkdir -p check/editor
           cp out/lumora-editor-*.zip check/editor/
           python scripts/release/manifest.py update --manifest check/manifest.json \

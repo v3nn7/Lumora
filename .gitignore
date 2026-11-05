@@ -5,3 +5,5 @@ compile_commands.json
 *.user
 .vscode/
 .idea/
+# Release signing keys (scripts/release/manifest.py keygen)
+*.key

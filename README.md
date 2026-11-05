@@ -201,11 +201,18 @@ One-time setup:
 
 1. In Cloudflare R2, enable the bucket's **Public Development URL** (or attach a custom domain).
    Create an **R2 API token** with *Object Read & Write* for that bucket only.
-2. Generate the signing key and keep its secret half out of the repository:
+2. Generate the signing key. The secret half goes to a file and is never printed; store it
+   with `gh` (which does not display it) and keep the file outside the repository or delete it:
 
    ```bash
-   python3 scripts/release/manifest.py keygen
+   python3 scripts/release/manifest.py keygen --secret-file ~/lumora-signing.key
    ```
+
+   ```bash
+   gh secret set LUMORA_SIGNING_KEY --env release < ~/lumora-signing.key
+   ```
+
+   The printed `LUMORA_RELEASE_PUBLIC_KEY` is public: it becomes a repository variable.
 
 3. In GitHub → *Settings → Secrets and variables → Actions*, add:
    - secrets: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `LUMORA_SIGNING_KEY`

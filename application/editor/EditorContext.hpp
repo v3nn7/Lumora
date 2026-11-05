@@ -14,6 +14,7 @@
 
 namespace lumora {
 class Scene;
+struct ScenePatch;
 }
 
 namespace lumora::editor {
@@ -64,8 +65,9 @@ public:
     [[nodiscard]] QUndoStack& undoStack() noexcept { return undo_; }
     /// Forgets all history (new scene loaded) and marks the current state as saved.
     void resetHistory();
-    /// Used by snapshot commands: replaces the scene contents in place.
-    void restoreSnapshot(const nlohmann::json& snapshot);
+    /// Applies a scene patch in place (undo/redo of structural edits, collaborators' edits):
+    /// only the entities in the patch change. Keeps the selection valid and notifies panels.
+    void applyPatch(const ScenePatch& patch);
 
     /// Call after editing component values directly. `source` lets the originating panel skip its own refresh.
     void notifyValuesChanged(QObject* source);

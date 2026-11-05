@@ -59,7 +59,9 @@ std::optional<FieldValue> fieldFromJson(FieldKind kind, const json& j) {
     return std::nullopt;
 }
 
-json entityToJson(const Scene& scene, entt::entity e) {
+} // namespace
+
+json SceneSerializer::entityToJson(const Scene& scene, entt::entity e) {
     const auto& reg = scene.registry();
     json out;
     out["uuid"] = scene.uuidOf(e).toString();
@@ -81,15 +83,8 @@ json entityToJson(const Scene& scene, entt::entity e) {
     return out;
 }
 
-} // namespace
-
-json SceneSerializer::toJson(const Scene& scene) {
-    json root;
-    root["format"] = "lumora.scene";
-    root["version"] = kFormatVersion;
-    root["name"] = scene.name();
-    const EnvironmentSettings& env = scene.environment();
-    root["environment"] = {
+json SceneSerializer::environmentToJson(const EnvironmentSettings& env) {
+    return {
         {"skyZenithColor", vec3ToJson(env.skyZenithColor)},
         {"skyHorizonColor", vec3ToJson(env.skyHorizonColor)},
         {"groundColor", vec3ToJson(env.groundColor)},
@@ -100,6 +95,67 @@ json SceneSerializer::toJson(const Scene& scene) {
         {"bloomIntensity", env.bloomIntensity},
         {"vignette", env.vignette},
     };
+}
+
+void SceneSerializer::applyEnvironment(EnvironmentSettings& env, const json& j) {
+    if (!j.is_object()) return;
+    auto number = [&](const char* key, float& target) {
+        if (const auto it = j.find(key); it != j.end() && it->is_number()) target = it->get<float>();
+    };
+    auto colour = [&](const char* key, glm::vec3& target) {
+        if (const auto it = j.find(key); it != j.end()) {
+            if (auto v = vec3FromJson(*it)) target = *v;
+        }
+    };
+    colour("skyZenithColor", env.skyZenithColor);
+    colour("skyHorizonColor", env.skyHorizonColor);
+    colour("groundColor", env.groundColor);
+    number("ambientIntensity", env.ambientIntensity);
+    number("exposure", env.exposure);
+    number("fogDensity", env.fogDensity);
+    number("fogHeightFalloff", env.fogHeightFalloff);
+    number("bloomIntensity", env.bloomIntensity);
+    number("vignette", env.vignette);
+}
+
+void SceneSerializer::applyComponents(Scene& scene, entt::entity e, const json& componentsJson, bool removeMissing) {
+    auto& reg = scene.registry();
+    const ComponentRegistry& components = ComponentRegistry::builtin();
+    const std::string label = scene.uuidOf(e).toString();
+    if (componentsJson.is_object()) {
+        for (const auto& [componentId, fields] : componentsJson.items()) {
+            const ComponentDesc* desc = components.find(componentId);
+            if (desc == nullptr) {
+                log::warn("Scene", "skipping unknown component '{}' on entity {}", componentId, label);
+                continue;
+            }
+            if (!desc->has(reg, e)) desc->add(reg, e);
+            if (!fields.is_object()) continue;
+            for (const auto& [fieldId, value] : fields.items()) {
+                const FieldDesc* f = desc->findField(fieldId);
+                if (f == nullptr) continue;
+                if (auto parsed = fieldFromJson(f->kind, value)) {
+                    f->set(reg, e, *parsed);
+                } else {
+                    log::warn("Scene", "invalid value for {}.{} on entity {}", componentId, fieldId, label);
+                }
+            }
+        }
+    }
+    if (!removeMissing) return;
+    for (const ComponentDesc& desc : components.components()) {
+        if (!desc.removable || !desc.has(reg, e)) continue;
+        if (componentsJson.is_object() && componentsJson.contains(desc.id)) continue;
+        desc.remove(reg, e);
+    }
+}
+
+json SceneSerializer::toJson(const Scene& scene) {
+    json root;
+    root["format"] = "lumora.scene";
+    root["version"] = kFormatVersion;
+    root["name"] = scene.name();
+    root["environment"] = environmentToJson(scene.environment());
     json entities = json::array();
     // Depth-first order guarantees parents precede children and preserves sibling order.
     scene.forEachDepthFirst([&](entt::entity e, int) { entities.push_back(entityToJson(scene, e)); });
@@ -129,26 +185,14 @@ Result<> populateScene(Scene& target, const json& root) {
     target.setName(root.value("name", std::string("Untitled")));
     Scene* scene = &target;
 
-    if (const auto it = root.find("environment"); it != root.end() && it->is_object()) {
-        EnvironmentSettings& env = scene->environment();
-        const json& j = *it;
-        if (auto v = j.contains("skyZenithColor") ? vec3FromJson(j["skyZenithColor"]) : std::nullopt) env.skyZenithColor = *v;
-        if (auto v = j.contains("skyHorizonColor") ? vec3FromJson(j["skyHorizonColor"]) : std::nullopt) env.skyHorizonColor = *v;
-        if (auto v = j.contains("groundColor") ? vec3FromJson(j["groundColor"]) : std::nullopt) env.groundColor = *v;
-        env.ambientIntensity = j.value("ambientIntensity", env.ambientIntensity);
-        env.exposure = j.value("exposure", env.exposure);
-        env.fogDensity = j.value("fogDensity", env.fogDensity);
-        env.fogHeightFalloff = j.value("fogHeightFalloff", env.fogHeightFalloff);
-        env.bloomIntensity = j.value("bloomIntensity", env.bloomIntensity);
-        env.vignette = j.value("vignette", env.vignette);
+    if (const auto it = root.find("environment"); it != root.end()) {
+        SceneSerializer::applyEnvironment(scene->environment(), *it);
     }
 
     const auto entitiesIt = root.find("entities");
     if (entitiesIt == root.end() || !entitiesIt->is_array()) {
         return makeError("scene has no 'entities' array");
     }
-    auto& reg = scene->registry();
-    const ComponentRegistry& components = ComponentRegistry::builtin();
     for (const json& ej : *entitiesIt) {
         if (!ej.is_object()) {
             return makeError("entity entry is not an object");
@@ -166,26 +210,12 @@ Result<> populateScene(Scene& target, const json& root) {
                 return makeError("entity {} references unknown parent {}", uuid->toString(), parentId->toString());
             }
         }
+        if (scene->findByUuid(*uuid) != entt::null) {
+            return makeError("duplicate entity uuid {}", uuid->toString());
+        }
         const entt::entity e = scene->createEntity(ej.value("name", std::string("Entity")), *uuid, parent);
-        const auto compsIt = ej.find("components");
-        if (compsIt == ej.end() || !compsIt->is_object()) continue;
-        for (const auto& [componentId, fields] : compsIt->items()) {
-            const ComponentDesc* desc = components.find(componentId);
-            if (desc == nullptr) {
-                log::warn("Scene", "skipping unknown component '{}' on entity {}", componentId, uuid->toString());
-                continue;
-            }
-            if (!desc->has(reg, e)) desc->add(reg, e);
-            if (!fields.is_object()) continue;
-            for (const auto& [fieldId, value] : fields.items()) {
-                const FieldDesc* f = desc->findField(fieldId);
-                if (f == nullptr) continue;
-                if (auto parsed = fieldFromJson(f->kind, value)) {
-                    f->set(reg, e, *parsed);
-                } else {
-                    log::warn("Scene", "invalid value for {}.{} on entity {}", componentId, fieldId, uuid->toString());
-                }
-            }
+        if (const auto compsIt = ej.find("components"); compsIt != ej.end()) {
+            SceneSerializer::applyComponents(*scene, e, *compsIt, false);
         }
     }
     scene->updateWorldTransforms();

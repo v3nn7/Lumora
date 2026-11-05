@@ -2,6 +2,7 @@
 
 #include "editor/EditorContext.hpp"
 #include "scene/Scene.hpp"
+#include "scene/ScenePatch.hpp"
 
 namespace lumora::editor {
 
@@ -14,13 +15,13 @@ SceneSnapshotCommand::SceneSnapshotCommand(EditorContext& ctx, const QString& te
     : QUndoCommand(text), ctx_(ctx), before_(std::move(before)), after_(std::move(after)) {}
 
 void SceneSnapshotCommand::undo() {
-    ctx_.restoreSnapshot(before_);
+    ctx_.applyPatch(ScenePatch::between(SceneIndex::fromDocument(after_), SceneIndex::fromDocument(before_)));
     applied_ = false;
 }
 
 void SceneSnapshotCommand::redo() {
     if (applied_) return;  // first redo() comes from QUndoStack::push right after the edit
-    ctx_.restoreSnapshot(after_);
+    ctx_.applyPatch(ScenePatch::between(SceneIndex::fromDocument(before_), SceneIndex::fromDocument(after_)));
     applied_ = true;
 }
 

@@ -16,9 +16,9 @@ class EditorContext;
 
 enum class CommandId : int { Field = 1, Environment = 2, Transform = 3 };
 
-/// Structural edits (create/delete/duplicate/reparent/rename, add/remove component): the whole
-/// scene is captured before and after and restored in place. Scenes are small JSON documents
-/// today; a per-entity diff can replace this when scenes grow.
+/// Structural edits (create/delete/duplicate/reparent/rename, add/remove component): the scene
+/// is captured before and after; undo/redo apply the per-entity difference (ScenePatch), so
+/// entities the edit did not touch, including collaborators' concurrent changes, are kept.
 class SceneSnapshotCommand final : public QUndoCommand {
 public:
     SceneSnapshotCommand(EditorContext& ctx, const QString& text, nlohmann::json before, nlohmann::json after);

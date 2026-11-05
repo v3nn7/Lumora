@@ -3,6 +3,7 @@
 #include "core/Log.hpp"
 #include "editor/Commands.hpp"
 #include "scene/Scene.hpp"
+#include "scene/ScenePatch.hpp"
 #include "scene/SceneSerializer.hpp"
 
 #include <nlohmann/json.hpp>
@@ -66,10 +67,10 @@ void EditorContext::structuralEdit(const QString& text, const std::function<void
     undo_.push(new SceneSnapshotCommand(*this, text, std::move(before), std::move(after)));
 }
 
-void EditorContext::restoreSnapshot(const nlohmann::json& snapshot) {
-    if (scene_ == nullptr) return;
-    if (auto loaded = SceneSerializer::loadInto(*scene_, snapshot); !loaded) {
-        log::error("Editor", "undo/redo failed to restore the scene: {}", loaded.error().message);
+void EditorContext::applyPatch(const ScenePatch& patch) {
+    if (scene_ == nullptr || patch.empty()) return;
+    if (auto applied = patch.applyTo(*scene_); !applied) {
+        log::error("Editor", "scene change only partly applied: {}", applied.error().message);
     }
     if (selected_.isValid() && scene_->findByUuid(selected_) == entt::null) {
         selected_ = Uuid{};

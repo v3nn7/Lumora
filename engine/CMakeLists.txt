@@ -43,6 +43,7 @@ lumora_engine_module(scene
         scene/Scene.cpp
         scene/ComponentRegistry.cpp
         scene/SceneSerializer.cpp
+        scene/ScenePatch.cpp
         scene/Camera.cpp
         scene/Picking.cpp
         scene/ModelInstance.cpp

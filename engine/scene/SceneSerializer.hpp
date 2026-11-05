@@ -32,6 +32,17 @@ public:
 
     /// Deep copy via serialization round trip; UUIDs are preserved.
     [[nodiscard]] static Result<std::unique_ptr<Scene>> clone(const Scene& scene);
+
+    // ---- Building blocks (also used by ScenePatch) -----------------------------------------
+    /// {"uuid", "name", "parent"?, "components": {id: {field: value}}} for one entity.
+    [[nodiscard]] static nlohmann::json entityToJson(const Scene& scene, entt::entity entity);
+    [[nodiscard]] static nlohmann::json environmentToJson(const EnvironmentSettings& environment);
+    /// Sets the settings present in `json`; others keep their value.
+    static void applyEnvironment(EnvironmentSettings& environment, const nlohmann::json& json);
+    /// Adds/updates the components in `components` (validated per field). With `removeMissing`,
+    /// removable components not listed are removed, so the entity matches the record exactly.
+    static void applyComponents(Scene& scene, entt::entity entity, const nlohmann::json& components,
+                                bool removeMissing);
 };
 
 } // namespace lumora

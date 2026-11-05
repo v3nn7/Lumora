@@ -6,6 +6,7 @@ add_executable(lumora_tests
     PrimitivesTests.cpp
     SceneTests.cpp
     SerializationTests.cpp
+    ScenePatchTests.cpp
     CameraTests.cpp
     ProjectTests.cpp
     SimulationTests.cpp

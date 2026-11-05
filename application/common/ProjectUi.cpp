@@ -68,6 +68,7 @@ QString relativeTimeString(qint64 unixSeconds) {
     if (delta < 60) return QStringLiteral("Just now");
     if (delta < 3600) return QStringLiteral("%1 min ago").arg(delta / 60);
     if (delta < 86400) return QStringLiteral("%1 h ago").arg(delta / 3600);
+    if (delta < 86400 * 2) return QStringLiteral("Yesterday");
     if (delta < 86400 * 30) return QStringLiteral("%1 days ago").arg(delta / 86400);
     return QDateTime::fromSecsSinceEpoch(unixSeconds).toString(QStringLiteral("d MMM yyyy"));
 }

@@ -6,7 +6,9 @@
 #include "core/Log.hpp"
 #include "core/Version.hpp"
 #include "hub/HeroBanner.hpp"
+#include "hub/HubSettingsPage.hpp"
 #include "hub/NewProjectDialog.hpp"
+#include "hub/ProjectDetailsPanel.hpp"
 #include "hub/ProjectCardDelegate.hpp"
 #include "hub/ProjectListModel.hpp"
 #include "project/ProjectTemplates.hpp"
@@ -16,6 +18,9 @@
 
 #include <QButtonGroup>
 #include <QComboBox>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -85,7 +90,12 @@ HubWindow::HubWindow(AppContext& app, QWidget* parent) : QWidget(parent), app_(a
 
     pages_ = new QStackedWidget;
     pages_->addWidget(buildProjectsPage());
+    auto* settings = new HubSettingsPage(app_);
+    connect(settings, &HubSettingsPage::recentProjectsChanged, this, &HubWindow::refresh);
+    pages_->addWidget(settings);
     pages_->addWidget(buildAboutPage());
+    setAcceptDrops(true);
+    refresh();
     root->addWidget(pages_, 1);
     updateEmptyState();
 }
@@ -168,7 +178,7 @@ QWidget* HubWindow::buildSidebar() {
     layout->addSpacing(4);
 
     auto* group = new QButtonGroup(this);
-    const std::pair<const char*, const char*> navItems[] = {{"Projects", "folder"}, {"About", "info"}};
+    const std::pair<const char*, const char*> navItems[] = {{"Projects", "folder"}, {"Settings", "settings"}, {"About", "info"}};
     int id = 0;
     for (const auto& [text, iconName] : navItems) {
         auto* button = new QPushButton(theme::icon(QString::fromLatin1(iconName)), tr(text));
@@ -181,7 +191,7 @@ QWidget* HubWindow::buildSidebar() {
     group->button(0)->setChecked(true);
     connect(group, &QButtonGroup::idClicked, this, [this](int page) {
         pages_->setCurrentIndex(page);
-        if (page == 1) updateAbout();
+        if (page == 2) updateAbout();
     });
 
     layout->addStretch();
@@ -260,6 +270,7 @@ QWidget* HubWindow::buildProjectsPage() {
     filter_->setSort(ProjectFilterModel::Sort::Recent);
 
     list_ = new QListView;
+    list_->setObjectName(QStringLiteral("projectList"));
     list_->setModel(filter_);
     list_->setItemDelegate(new ProjectCardDelegate(list_));
     list_->setViewMode(QListView::IconMode);
@@ -289,8 +300,17 @@ QWidget* HubWindow::buildProjectsPage() {
     emptyLayout->addWidget(emptyText);
     emptyLayout->addStretch();
 
+    details_ = new ProjectDetailsPanel;
+    details_->hide();
+    auto* browser = new QWidget;
+    auto* browserLayout = new QHBoxLayout(browser);
+    browserLayout->setContentsMargins(0, 0, 0, 0);
+    browserLayout->setSpacing(14);
+    browserLayout->addWidget(list_, 1);
+    browserLayout->addWidget(details_, 0, Qt::AlignTop);
+
     projectStack_ = new QStackedWidget;
-    projectStack_->addWidget(list_);
+    projectStack_->addWidget(browser);
     projectStack_->addWidget(empty);
     layout->addWidget(projectStack_, 1);
 
@@ -309,6 +329,13 @@ QWidget* HubWindow::buildProjectsPage() {
         emit openProjectRequested(index.data(ProjectListModel::DescriptorRole).toString());
     });
     connect(list_, &QListView::customContextMenuRequested, this, &HubWindow::showContextMenu);
+    connect(list_->selectionModel(), &QItemSelectionModel::currentChanged, this,
+            [this](const QModelIndex& current) { details_->showProject(current); });
+    connect(details_, &ProjectDetailsPanel::openRequested, this, &HubWindow::openProjectRequested);
+    connect(details_, &ProjectDetailsPanel::settingsRequested, this, &HubWindow::openProjectSettings);
+    connect(details_, &ProjectDetailsPanel::revealRequested, this,
+            [](const QString& root) { QDesktopServices::openUrl(QUrl::fromLocalFile(root)); });
+    connect(details_, &ProjectDetailsPanel::removeRequested, this, &HubWindow::removeFromList);
     return page;
 }
 
@@ -359,8 +386,73 @@ void HubWindow::updateEmptyState() {
 }
 
 void HubWindow::refresh() {
+    const QModelIndex current = list_->currentIndex();
+    const QString selected = current.isValid() ? current.data(ProjectListModel::DescriptorRole).toString() : QString();
     model_->reload();
     updateEmptyState();
+    if (!selected.isEmpty()) selectDescriptor(selected);
+    if (!list_->currentIndex().isValid() && filter_->rowCount() > 0) {
+        // Preselect the most recent project: its details show at once and Enter opens it.
+        const QModelIndex first = filter_->index(0, 0);
+        list_->setCurrentIndex(first);
+        details_->showProject(first);
+    }
+    if (!list_->currentIndex().isValid()) details_->hide();
+}
+
+void HubWindow::selectDescriptor(const QString& descriptor) {
+    const QModelIndex source = model_->indexOf(descriptor);
+    const QModelIndex proxy = filter_->mapFromSource(source);
+    if (!proxy.isValid()) return;
+    list_->setCurrentIndex(proxy);
+    list_->scrollTo(proxy);
+    details_->showProject(proxy);
+}
+
+void HubWindow::openProjectSettings(const QString& descriptor) {
+    auto project = Project::load(toPath(descriptor));
+    if (!project) {
+        QMessageBox::critical(this, tr("Cannot load project"), QString::fromStdString(project.error().message));
+        return;
+    }
+    ProjectSettingsDialog dialog(*project, this);
+    if (dialog.exec() == QDialog::Accepted) {
+        app_.recentProjects().touch(project->descriptorPath(), project->name());
+        app_.saveRecentProjects();
+        refresh();
+    }
+}
+
+void HubWindow::removeFromList(const QString& descriptor) {
+    // Only the list entry is removed; project files are never deleted from the Hub.
+    app_.recentProjects().remove(toPath(descriptor));
+    app_.saveRecentProjects();
+    list_->setCurrentIndex({});
+    refresh();
+}
+
+bool HubWindow::addExistingProject(const QString& path) {
+    auto project = Project::load(toPath(path));
+    if (!project) {
+        QMessageBox::warning(this, tr("Not a Lumora project"), QString::fromStdString(project.error().message));
+        return false;
+    }
+    app_.recentProjects().touch(project->descriptorPath(), project->name());
+    app_.saveRecentProjects();
+    refresh();
+    selectDescriptor(toQString(project->descriptorPath()));
+    return true;
+}
+
+void HubWindow::dragEnterEvent(QDragEnterEvent* event) {
+    if (event->mimeData()->hasUrls()) event->acceptProposedAction();
+}
+
+void HubWindow::dropEvent(QDropEvent* event) {
+    for (const QUrl& url : event->mimeData()->urls()) {
+        if (url.isLocalFile()) addExistingProject(url.toLocalFile());
+    }
+    event->acceptProposedAction();
 }
 
 void HubWindow::newProject() {
@@ -406,22 +498,9 @@ void HubWindow::showContextMenu(const QPoint& pos) {
     } else if (chosen == reveal) {
         QDesktopServices::openUrl(QUrl::fromLocalFile(root));
     } else if (chosen == settings) {
-        auto project = Project::load(toPath(descriptor));
-        if (!project) {
-            QMessageBox::critical(this, tr("Cannot load project"), QString::fromStdString(project.error().message));
-            return;
-        }
-        ProjectSettingsDialog dialog(*project, this);
-        if (dialog.exec() == QDialog::Accepted) {
-            app_.recentProjects().touch(project->descriptorPath(), project->name());
-            app_.saveRecentProjects();
-            refresh();
-        }
+        openProjectSettings(descriptor);
     } else if (chosen == remove) {
-        // Only the list entry is removed; project files are never deleted from the Hub.
-        app_.recentProjects().remove(toPath(descriptor));
-        app_.saveRecentProjects();
-        refresh();
+        removeFromList(descriptor);
     }
 }
 

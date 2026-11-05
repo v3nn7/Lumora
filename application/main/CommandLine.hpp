@@ -25,7 +25,7 @@ struct AppOptions {
 
     std::optional<bool> validation;     // --validation / --no-validation (default: on in Debug)
     std::optional<std::uint32_t> gpuIndex;
-    bool vsync = true;
+    std::optional<bool> vsync;          // --no-vsync (default: preferences, then on)
     std::optional<LogLevel> logLevel;
 
     // Headless actions

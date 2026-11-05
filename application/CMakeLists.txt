@@ -22,12 +22,15 @@ lumora_qt_module(appcommon
         common/VulkanViewport.cpp
         common/ProjectUi.cpp
         common/Snapshot.cpp
+        common/Preferences.cpp
     DEPS lumora_project lumora_renderer lumora_runtime lumora_cli Qt6::Widgets Qt6::Svg)
 
 lumora_qt_module(hub
     SOURCES
         hub/HubWindow.cpp
         hub/HeroBanner.cpp
+        hub/HubSettingsPage.cpp
+        hub/ProjectDetailsPanel.cpp
         hub/NewProjectDialog.cpp
         hub/ProjectListModel.cpp
         hub/ProjectCardDelegate.cpp

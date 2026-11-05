@@ -2,6 +2,7 @@
 
 #include "common/ProjectUi.hpp"
 #include "common/Theme.hpp"
+#include "core/Version.hpp"
 #include "hub/ProjectListModel.hpp"
 
 #include <QLinearGradient>
@@ -59,19 +60,28 @@ void ProjectCardDelegate::paint(QPainter* p, const QStyleOptionViewItem& option,
     p->setPen(QPen(QColor(255, 255, 255, 14), 1));
     p->drawLine(thumbRect.bottomLeft(), thumbRect.bottomRight());
 
-    // Status chip on the thumbnail.
+    // Status chip on the thumbnail: missing project, or saved by another engine version.
+    const QString version = index.data(ProjectListModel::EngineVersionRole).toString();
+    QString chipText;
+    QColor chipColor;
     if (!exists) {
+        chipText = tr("Missing");
+        chipColor = QColor(236, 106, 94, 225);
+    } else if (!version.isEmpty() && version != QLatin1String(version::kString)) {
+        chipText = tr("Engine %1").arg(version);
+        chipColor = QColor(232, 184, 74, 225);
+    }
+    if (!chipText.isEmpty()) {
         QFont chipFont = option.font;
         chipFont.setPointSizeF(option.font.pointSizeF() - 1.0);
         chipFont.setWeight(QFont::DemiBold);
-        const QString chipText = tr("Missing");
         const QFontMetricsF fm(chipFont);
         const QRectF chip(thumbRect.left() + 10, thumbRect.top() + 10, fm.horizontalAdvance(chipText) + 16, fm.height() + 6);
         QPainterPath chipPath;
         chipPath.addRoundedRect(chip, chip.height() / 2, chip.height() / 2);
-        p->fillPath(chipPath, QColor(236, 106, 94, 220));
+        p->fillPath(chipPath, chipColor);
         p->setFont(chipFont);
-        p->setPen(Qt::white);
+        p->setPen(exists ? QColor(30, 24, 10) : QColor(Qt::white));
         p->drawText(chip, Qt::AlignCenter, chipText);
     }
 

@@ -67,7 +67,7 @@ VulkanViewport::VulkanViewport(AppContext& app, ViewportClient& client)
     }
     // Wayland does not allow clients to warp the pointer; elsewhere we recenter while looking.
     canWarpCursor_ = !QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
-    vsync_ = app_.options().vsync;
+    vsync_ = app_.options().vsync.value_or(true);
     frameTimer_.start();
     paceTimer_.start();
 }

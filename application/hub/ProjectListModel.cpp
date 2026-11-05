@@ -1,6 +1,7 @@
 #include "hub/ProjectListModel.hpp"
 
 #include "common/ProjectUi.hpp"
+#include "project/Project.hpp"
 #include "project/ProjectRegistry.hpp"
 
 #include <QFileInfo>
@@ -22,6 +23,13 @@ void ProjectListModel::reload() {
         e.name = p.name.empty() ? QFileInfo(e.descriptor).completeBaseName() : QString::fromStdString(p.name);
         e.lastOpened = p.lastOpenedUnix;
         e.exists = QFileInfo::exists(e.descriptor);
+        if (e.exists) {
+            if (auto project = Project::load(p.descriptor)) {
+                e.description = QString::fromStdString(project->description());
+                e.engineVersion = QString::fromStdString(project->engineVersion());
+                e.created = project->createdUnix();
+            }
+        }
         entries_.push_back(std::move(e));
     }
     endResetModel();
@@ -42,11 +50,26 @@ QVariant ProjectListModel::data(const QModelIndex& index, int role) const {
         case RootRole: return e.root;
         case LastOpenedRole: return e.lastOpened;
         case ExistsRole: return e.exists;
+        case DescriptionRole: return e.description;
+        case EngineVersionRole: return e.engineVersion;
+        case CreatedRole: return e.created;
         case ThumbnailRole:
             if (e.thumbnail.isNull()) e.thumbnail = projectThumbnail(e.root, e.name, kThumbnailSize);
             return e.thumbnail;
         default: return {};
     }
+}
+
+QModelIndex ProjectListModel::indexOf(const QString& descriptor) const {
+    for (std::size_t i = 0; i < entries_.size(); ++i) {
+        if (entries_[i].descriptor == descriptor) return index(static_cast<int>(i));
+    }
+    return {};
+}
+
+void ProjectListModel::invalidateThumbnails() {
+    for (Entry& e : entries_) e.thumbnail = QPixmap();
+    if (!entries_.empty()) emit dataChanged(index(0), index(static_cast<int>(entries_.size()) - 1), {ThumbnailRole});
 }
 
 void ProjectFilterModel::setSort(Sort sort) {

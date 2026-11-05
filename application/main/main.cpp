@@ -1,6 +1,7 @@
 // Lumora: single executable hosting the Hub, the Editor, the standalone Player and headless mode.
 
 #include "common/AppContext.hpp"
+#include "common/Preferences.hpp"
 #include "common/Theme.hpp"
 #include "core/Log.hpp"
 #include "core/Version.hpp"
@@ -28,11 +29,12 @@ void setupLogging(const lumora::app::AppOptions& options) {
     logger.addSink(std::make_shared<FileLogSink>((paths::userLogDir() / "lumora.log").string()));
 }
 
-int runGui(int argc, char** argv, const lumora::app::AppOptions& options) {
+int runGui(int argc, char** argv, lumora::app::AppOptions options) {
     using namespace lumora::app;
     QApplication qtApp(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Lumora"));
     QApplication::setOrganizationName(QStringLiteral("Lumora"));
+    Preferences::load().applyTo(options);  // needs the application/organisation names set
     QApplication::setApplicationVersion(QString::fromLatin1(lumora::version::kString));
     QApplication::setWindowIcon(theme::icon(QStringLiteral("logo")));
     theme::apply(qtApp);
@@ -80,6 +82,9 @@ int main(int argc, char** argv) {
         if (options->mode == app::AppMode::Headless) {
             // QCoreApplication: image I/O and paths without any windowing system.
             QCoreApplication core(argc, argv);
+            QCoreApplication::setApplicationName(QStringLiteral("Lumora"));
+            QCoreApplication::setOrganizationName(QStringLiteral("Lumora"));
+            app::Preferences::load().applyTo(*options);
             return app::runHeadless(*options);
         }
         return runGui(argc, argv, *options);

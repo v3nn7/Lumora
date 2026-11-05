@@ -55,6 +55,6 @@ TEST(CommandLine, GlobalOptions) {
     ASSERT_TRUE(o.has_value());
     EXPECT_EQ(o->gpuIndex, 1u);
     EXPECT_EQ(o->validation, false);
-    EXPECT_FALSE(o->vsync);
+    EXPECT_EQ(o->vsync, false);
     EXPECT_EQ(o->logLevel, lumora::LogLevel::Debug);
 }

@@ -178,7 +178,7 @@ void EditorWindow::buildActions() {
     grid_->setChecked(true);
     vsync_ = make(tr("V-Sync"), QString());
     vsync_->setCheckable(true);
-    vsync_->setChecked(app_.options().vsync);
+    vsync_->setChecked(app_.options().vsync.value_or(true));
     resetLayout_ = make(tr("Reset Layout"), QString());
     // Gizmo tools. W/E/R are handled while the viewport has focus (handleShortcut) so they
     // never collide with typing or with WASD flying.

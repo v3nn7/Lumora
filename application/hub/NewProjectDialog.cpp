@@ -1,6 +1,7 @@
 #include "hub/NewProjectDialog.hpp"
 
 #include "common/AppContext.hpp"
+#include "common/Preferences.hpp"
 #include "common/ProjectUi.hpp"
 #include "common/Theme.hpp"
 #include "core/Log.hpp"
@@ -82,7 +83,7 @@ NewProjectDialog::NewProjectDialog(AppContext& app, QWidget* parent) : QDialog(p
     grid->setVerticalSpacing(10);
     name_ = new QLineEdit(QStringLiteral("MyProject"));
     name_->setPlaceholderText(tr("Project name"));
-    location_ = new QLineEdit(toQString(paths::defaultProjectsDir()));
+    location_ = new QLineEdit(Preferences::load().effectiveProjectsDirectory());
     auto* browse = new QPushButton(theme::icon(QStringLiteral("open")), tr("Browse…"));
     grid->addWidget(new QLabel(tr("Name")), 0, 0);
     grid->addWidget(name_, 0, 1, 1, 2);

@@ -16,7 +16,14 @@ namespace lumora::app {
 class ProjectListModel final : public QAbstractListModel {
     Q_OBJECT
 public:
-    enum Role { NameRole = Qt::UserRole + 1, DescriptorRole, RootRole, LastOpenedRole, ExistsRole, ThumbnailRole };
+    enum Role {
+        NameRole = Qt::UserRole + 1, DescriptorRole, RootRole, LastOpenedRole, ExistsRole, ThumbnailRole,
+        DescriptionRole, EngineVersionRole, CreatedRole
+    };
+    /// Index of the project with this descriptor, or an invalid index.
+    [[nodiscard]] QModelIndex indexOf(const QString& descriptor) const;
+    /// Drops the cached thumbnail (after the editor saved a new one).
+    void invalidateThumbnails();
 
     explicit ProjectListModel(ProjectRegistry& registry, QObject* parent = nullptr);
     void reload();
@@ -33,6 +40,9 @@ private:
         QString root;
         qint64 lastOpened = 0;
         bool exists = false;
+        QString description;
+        QString engineVersion;
+        qint64 created = 0;
         mutable QPixmap thumbnail;
     };
     ProjectRegistry& registry_;

@@ -6,11 +6,14 @@ where the current design leaves room for them.
 ## Module graph
 
 ```
-                      Lumora (executable: main.cpp)
+         Lumora · lumora-editor · lumora-hub   (thin executables: main() → runLumora(flavor))
+                                 │
+                        liblumora.so / lumora.dll   (shared: Launch.cpp + every module below)
                                  │
                            lumora_shell  (window orchestration, headless mode)
                 ┌────────────────┼────────────────┐
            lumora_hub       lumora_editor     lumora_player
+                ├── lumora_launcher  (editor installer: release feed, signatures, ZIP)
                 │                ├── lumora_collab  (live sessions: Qt Network + scene patches)
                 └────────────────┼────────────────┘
                          lumora_appcommon  (AppContext, VulkanViewport, theme, snapshots)
@@ -26,7 +29,10 @@ where the current design leaves room for them.
 - Nothing under `engine/` or `runtime/` includes Qt. The editor is a client of the engine, not
   part of it. The same renderer runs headless.
 - Each module is a static library with an explicit dependency list
-  (`engine/CMakeLists.txt`, `application/CMakeLists.txt`).
+  (`engine/CMakeLists.txt`, `application/CMakeLists.txt`). Tests link them directly. The
+  shipped binaries link them once, into the shared library, which exports a single symbol
+  (`runLumora`; static-library symbols are hidden with `--exclude-libs`), so there is no
+  cross-DLL template or EnTT type-identity issue.
 
 ## Conventions
 
@@ -237,6 +243,41 @@ simulates the copy and discards it on Stop, so play-mode changes never reach the
 - `Application` owns the top-level windows and performs the Hub ↔ Editor transitions. On
   teardown it flushes deferred deletions before the `AppContext` is destroyed (a use-after-free
   that ASan found).
+
+## Distribution
+
+- **Flavours.** `runLumora(argc, argv, flavor)` is the whole application. `Lumora` (all-in-one,
+  for development) and `lumora-editor` behave the same. `lumora-hub` accepts only Hub mode and
+  sets `Application::setExternalEditors`, so opening a project starts the installed editor
+  matching the project's `engineVersion` as a separate process (`--editor <project>`). If
+  none matches it asks before using the newest one, and if nothing is installed it sends the
+  user to the Editors page. Joining a session from that Hub starts an editor with `--join`; the
+  password goes through `LUMORA_SESSION_PASSWORD`, not the command line.
+- **Packages.** `cmake --install --component editor|hub` lays out `bin/` (launcher, `qt.conf`,
+  shaders) and `lib/` (`liblumora`). On Linux `cmake/LumoraDeployLinux.cmake.in` adds an
+  allow-list of Qt plugins (xcb, Wayland, TLS, SVG/JPEG/GIF/ICO, input contexts) and, through
+  `file(GET_RUNTIME_DEPENDENCIES)`, exactly the `libQt6*` and `libicu*` libraries they need,
+  nothing from the system. On Windows Qt's deployment API runs `windeployqt`. The executables
+  are created with `qt_add_executable` and link the Qt modules so the deployment knows them.
+  RPATHs are `$ORIGIN/../lib` (executables) and `$ORIGIN` (library).
+- **Installer** (`application/launcher`). `ReleaseManifest` parses the feed (versions are
+  validated because they name folders; relative URLs resolve against the feed).
+  `verifyEd25519` (Monocypher) checks the detached signature against the key compiled in with
+  `LUMORA_RELEASE_PUBLIC_KEY`. A test pins interoperability with the Python release tooling.
+  `EditorInstaller` streams the download to disk while hashing it, rejects anything larger than
+  announced or not matching the signed SHA-256, extracts on a worker thread into
+  `.staging-<version>`, writes `lumora-install.json` and renames the folder into place.
+  `extractZip` (miniz, read through `QFile` callbacks) validates every name before writing:
+  no absolute paths, drive letters, backslashes or `..`. Link targets must be plain relative
+  paths, sizes and entry counts are bounded, and Unix modes are restored.
+  `EditorRegistry` merges installed versions with local builds registered in `QSettings`
+  (version read from `--version`).
+- **Release pipeline.** `scripts/release/package.py` writes deterministic ZIPs (fixed
+  timestamps, Unix modes, symlinks kept) plus a size/SHA-256 fragment. `manifest.py` merges
+  releases into the feed, signs and verifies it, and generates keys. The workflow builds and
+  tests both platforms, then checks each editor package by installing it through
+  `lumora_launcher_tests` (`LUMORA_TEST_FEED`) from a feed signed with a throwaway key. Only then
+  does it upload to R2 (S3 API) and replace the feed with `Cache-Control: no-cache`.
 
 ## Live collaboration
 

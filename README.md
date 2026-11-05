@@ -13,8 +13,9 @@ works today from what is planned, and nothing listed as planned exists yet.
 | Area | Status |
 |---|---|
 | Build | CMake + Ninja presets, pinned and hash-verified FetchContent dependencies, HLSL → SPIR-V at build time |
-| Application | One `Lumora` executable; Hub → Editor → Hub transitions in one process; Player and headless modes |
-| Hub | Hero banner rendered live by the engine, recent projects grid with thumbnails, search and sort, project creation from 3 templates with live-rendered previews (saved as the project thumbnail), project settings, GPU/engine info |
+| Application | Everything lives in one shared library (`liblumora.so` / `lumora.dll`) behind thin executables: `lumora-hub` (the Hub), `lumora-editor` (editor, player, headless tools of one version) and `Lumora` (development build: Hub → Editor → Hub in one process) |
+| Hub | Hero banner rendered live by the engine, recent projects grid with thumbnails, search and sort, project creation from 3 templates with live-rendered previews (saved as the project thumbnail), project settings, GPU/engine info; **Editors page**: editor versions installed side by side from a signed release feed, projects opened in the version they were made with |
+| Distribution | Packages per platform (editor and Hub ZIPs with the shared library, Qt libraries and plugins; system libraries never bundled), Ed25519-signed release feed, GitHub Actions workflow publishing to Cloudflare R2, installer that verifies size, SHA-256 and signature and refuses hostile archives |
 | Editor | Embedded Vulkan viewport, fly camera, click picking with selection highlight, move/rotate/scale gizmos (snapping, parent-space aware), undo/redo for every edit, hierarchy (drag & drop re-parenting, rename, duplicate, delete, filter), reflection-driven inspector with asset pickers, content browser (open scenes, add/drop-import models), console, GPU profiler, play/pause/stop, scene save/load, dockable and persisted layout |
 | Collaboration | Live multi-user editing of one scene: host on a port (TCP + UDP), others join by LAN address or a playit.gg tunnel address; edits merge per field, collaborators' cameras and selections are drawn in their colour, chat, missing models/textures are transferred automatically, optional password |
 | Renderer | Vulkan 1.4 instance/device with capability detection, VMA, dynamic rendering, synchronization2, render graph with automatic barriers, bindless descriptors (update-after-bind), timeline-semaphore uploads, persistent pipeline cache, GPU timestamp profiling, frames in flight, swapchain recreation, device-loss reporting |
@@ -22,7 +23,7 @@ works today from what is planned, and nothing listed as planned exists yet.
 | Scene | EnTT ECS, UUID identity, hierarchy, component reflection → JSON serialization + inspector |
 | Assets | glTF 2.0 import (.gltf/.glb: meshes, node hierarchy, PBR materials and textures), PNG/JPEG/TGA/BMP textures, portable project-relative asset references, import copies files into the project without overwriting |
 | Runtime | Fixed-timestep simulation (deterministic), built-in `Rotator` behaviour |
-| Tests | 151 GoogleTest cases: core, scene, serialization, scene patches, projects, CLI, glTF/texture import (incl. a locale regression), render-graph barrier planning, gizmo math, undo/redo, **GPU tests that render real frames and check pixels**, Hub/Editor UI integration tests, collaboration over real loopback sockets (convergence, assets, presence, hostile input) |
+| Tests | 164 GoogleTest cases: core, scene, serialization, scene patches, projects, CLI, editor installer (feeds, signatures, hostile archives, installs from file feeds), glTF/texture import (incl. a locale regression), render-graph barrier planning, gizmo math, undo/redo, **GPU tests that render real frames and check pixels**, Hub/Editor UI integration tests, collaboration over real loopback sockets (convergence, assets, presence, hostile input) |
 
 Verified on Parrot OS 7.4 (KDE Plasma, Wayland) with an NVIDIA GTX 1650 (Mesa NVK, Vulkan
 1.4.354) and on Mesa llvmpipe. Validation layers and GPU-assisted validation report no errors.
@@ -62,7 +63,8 @@ cmake --preset release
 cmake --build --preset release
 ```
 
-The executable is `build/release/bin/Lumora`; compiled shaders are written to `build/release/bin/shaders/`.
+The executables are in `build/release/bin/` (`Lumora`, `lumora-editor`, `lumora-hub`, all thin
+launchers) with compiled shaders in `bin/shaders/`; the engine itself is `build/release/lib/liblumora.so`.
 Use `debug` instead of `release` for a Debug build, which also enables Vulkan validation by default.
 
 Run the tests (the GPU tests are skipped, not faked, when no Vulkan 1.4 device exists):
@@ -165,6 +167,76 @@ received last wins. While a session runs, *New Scene* and *Open Scene* are disab
 The connection is not encrypted, and the password is only an entry check. Share session
 addresses only with people you trust.
 
+## Releases and installing editors
+
+Users install only the **Hub**. It installs editor versions next to each other
+(`~/.local/share/Lumora/Editors/<version>/`, `%LOCALAPPDATA%\Lumora\Editors\<version>\` on Windows)
+and opens each project in the version it was made with, as a separate process. The Hub's
+*Editors* page lists installed versions, the releases in the feed and local builds (*Add Local
+Build…* takes a `lumora-editor` you compiled yourself).
+
+An editor package is a ZIP:
+
+```
+bin/lumora-editor        thin launcher (RPATH $ORIGIN/../lib)
+bin/qt.conf, bin/shaders/*.spv
+lib/liblumora.so         the engine, editor and tools
+lib/libQt6*.so*, libicu* Qt and its ICU only - glibc, libstdc++, X11/Wayland, the Vulkan loader
+                         and OpenSSL always come from the system
+plugins/                 Qt platform (xcb, Wayland), TLS, image-format and icon plugins
+```
+
+On Windows everything sits in `bin/` (DLLs next to the executable, deployed by `windeployqt`).
+
+The release feed is `editor/manifest.json` in the bucket: every release with, per platform,
+the package URL, size and SHA-256. `manifest.json.sig` is its Ed25519 signature. A Hub built
+with `-DLUMORA_RELEASE_PUBLIC_KEY=<key>` refuses feeds not signed by that key, and every
+download must match the size and SHA-256 the signed feed lists. Packages unpack into a staging
+folder and only then move into place. Archives with absolute paths, `..` or links pointing
+outside are refused.
+
+### Publishing (GitHub Actions → Cloudflare R2)
+
+One-time setup:
+
+1. In Cloudflare R2, enable the bucket's **Public Development URL** (or attach a custom domain).
+   Create an **R2 API token** with *Object Read & Write* for that bucket only.
+2. Generate the signing key and keep its secret half out of the repository:
+
+   ```bash
+   python3 scripts/release/manifest.py keygen
+   ```
+
+3. In GitHub → *Settings → Secrets and variables → Actions*, add:
+   - secrets: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `LUMORA_SIGNING_KEY`
+   - variables: `R2_ENDPOINT` (`https://<account id>.r2.cloudflarestorage.com`), `R2_BUCKET`,
+     `LUMORA_RELEASE_PUBLIC_KEY`, `LUMORA_RELEASE_FEED`
+     (`https://<public url>/editor/manifest.json`)
+   - an environment named `release` (add required reviewers there if publishing should need approval)
+
+Each release: set `VERSION` in `project()` in `CMakeLists.txt`, commit, then push a matching tag:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The workflow `.github/workflows/release.yml` builds and tests on Linux and Windows. It packages
+the editor and the Hub, then installs the fresh editor package with the Hub's own installer. If
+that works, it uploads `editor/<version>/…` and `hub/<version>/…` (plus
+`hub/latest/lumora-hub-<platform>.zip` for stable releases) and updates and signs the feed.
+*Run workflow* builds without publishing unless you tick *publish*, and can target the `beta`
+channel.
+
+Packaging locally:
+
+```bash
+cmake --install build/release --component editor --prefix dist/editor
+```
+
+```bash
+python3 scripts/release/package.py --install-dir dist/editor --product editor --version 0.1.0 --platform linux-x64 --out out
+```
+
 ## Project format
 
 ```
@@ -191,7 +263,10 @@ engine/        engine modules, no Qt: core, platform, input, assets, scene (ECS)
 runtime/       fixed-step simulation and gameplay systems
 shaders/       HLSL sources compiled to SPIR-V at build time
 application/   Qt layer: common (app context, Vulkan viewport, theme), hub, editor,
-               player, collab (live sessions), main (CLI, window orchestration, headless)
+               player, collab (live sessions), launcher (editor installer),
+               main (entry point, CLI, window orchestration, headless)
+scripts/       release tooling: package.py (ZIP), manifest.py (feed, signing keys)
+.github/       release workflow (build, test, package, publish to R2)
 tests/         unit, GPU and UI integration tests
 docs/          architecture notes
 ```
@@ -207,8 +282,11 @@ The module boundaries, frame flow and the reasons behind key decisions are in
   again. Wayland clients cannot warp the cursor, so right-mouse look locks it in place through
   the pointer-constraints and relative-pointer protocols (supported by KWin, Mutter and
   wlroots compositors). To force XWayland, run with `QT_QPA_PLATFORM=xcb`.
-- **Windows:** the code has Windows paths (paths, Win32 surface extension, MSVC flags), but it
-  has not been built or tested on Windows.
+- **Windows:** the code has Windows paths (paths, Win32 surface extension, MSVC flags, DLL
+  export of the entry point, `windeployqt` packaging) and the release workflow builds it, but no
+  Windows build has been run or tested yet.
+- **Linux packages** are built on Ubuntu 24.04 (glibc 2.39). Older distributions need a newer
+  glibc.
 
 ## Roadmap
 

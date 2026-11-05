@@ -18,6 +18,7 @@ namespace lumora::app {
 Application::Application(AppContext& context) : ctx_(context) {
     // Developer aid for automated UI checks: LUMORA_UI_SNAPSHOT=/path/prefix writes a PNG of
     // every visible top-level window (with composited Vulkan viewports) after a short delay.
+    // LUMORA_UI_SNAPSHOT_QUIT=1 quits afterwards.
     if (const QString prefix = qEnvironmentVariable("LUMORA_UI_SNAPSHOT"); !prefix.isEmpty()) {
         const int delay = qEnvironmentVariableIntValue("LUMORA_UI_SNAPSHOT_DELAY_MS");
         QTimer::singleShot(delay > 0 ? delay : 3000, this, [prefix] {
@@ -28,6 +29,8 @@ Application::Application(AppContext& context) : ctx_(context) {
                 const bool ok = snapshotWidget(w).save(path);
                 log::info("App", "UI snapshot {} -> {}", ok ? "written" : "FAILED", path.toStdString());
             }
+            // LUMORA_UI_SNAPSHOT_QUIT=1: then shut down normally (exercises teardown in smoke runs).
+            if (qEnvironmentVariableIsSet("LUMORA_UI_SNAPSHOT_QUIT")) QCoreApplication::quit();
         });
     }
 }

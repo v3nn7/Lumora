@@ -98,6 +98,12 @@ VulkanViewport::VulkanViewport(AppContext& app, ViewportClient& client)
     canWarpCursor_ = !QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
     vsync_ = app_.options().vsync.value_or(true);
     if (QCoreApplication::instance() != nullptr) QCoreApplication::instance()->installEventFilter(this);
+    // Hiding the window (e.g. its container, when the editor closes) makes Qt's Wayland backend
+    // destroy the VkSurface right away, before any hide/expose/SurfaceAboutToBeDestroyed event
+    // reaches us. visibleChanged is emitted first, so the swapchain is released in time.
+    connect(this, &QWindow::visibleChanged, this, [this](bool visible) {
+        if (!visible) releaseTarget();
+    });
     frameTimer_.start();
     paceTimer_.start();
 }
@@ -202,8 +208,14 @@ bool VulkanViewport::event(QEvent* e) {
 
 void VulkanViewport::exposeEvent(QExposeEvent*) {
     log::debug("Viewport", "expose: {}", isExposed() ? "visible" : "hidden - rendering paused");
-    if (isExposed()) scheduleNextFrame();
-}
+    if (isExposed()) {
+        scheduleNextFrame();
+    } else {
+        // Like QVulkanWindow: drop the swapchain while unexposed. Qt's Wayland backend destroys
+        // the VkSurface when a window is hidden (before SurfaceAboutToBeDestroyed), and a
+        // swapchain outliving its surface crashes the driver on destruction.
+        releaseTarget();
+    }
 
 void VulkanViewport::renderFrame() {
     if (failed_ || !isExposed()) return;  // exposeEvent restarts the loop

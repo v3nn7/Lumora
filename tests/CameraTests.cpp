@@ -43,6 +43,26 @@ TEST(Camera, FlyControllerMovesOnlyWhileLooking) {
     EXPECT_NEAR(cam.position().z, -2.0f, 1e-5f);
 }
 
+TEST(Camera, KeyboardFlightWithoutLooking) {
+    FlyCameraController cam;
+    cam.keyboardFlight = true;
+    cam.setPosition({0, 0, 0});
+    cam.setRotation(0, 0);
+    cam.setSpeed(2.0f);
+    InputState input;
+    input.setKey(Key::W, true);
+    cam.update(input, 1.0f);
+    EXPECT_NEAR(cam.position().z, -2.0f, 1e-5f) << "W flies forward without RMB";
+    input.setKey(Key::LeftCtrl, true);  // Ctrl+S / Ctrl+W style shortcuts must not move
+    cam.update(input, 1.0f);
+    EXPECT_NEAR(cam.position().z, -2.0f, 1e-5f);
+    input.setKey(Key::LeftCtrl, false);
+    input.setKey(Key::W, false);
+    input.setKey(Key::E, true);
+    cam.update(input, 0.5f);
+    EXPECT_NEAR(cam.position().y, 1.0f, 1e-5f) << "E flies up";
+}
+
 TEST(Camera, ViewMatrixMatchesControllerOrientation) {
     FlyCameraController cam;
     cam.setPosition({1, 2, 3});

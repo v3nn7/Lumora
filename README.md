@@ -21,7 +21,7 @@ works today from what is planned, and nothing listed as planned exists yet.
 | Scene | EnTT ECS, UUID identity, hierarchy, component reflection → JSON serialization + inspector |
 | Assets | glTF 2.0 import (.gltf/.glb: meshes, node hierarchy, PBR materials and textures), PNG/JPEG/TGA/BMP textures, portable project-relative asset references, import copies files into the project without overwriting |
 | Runtime | Fixed-timestep simulation (deterministic), built-in `Rotator` behaviour |
-| Tests | 97 GoogleTest cases: core, scene, serialization, projects, CLI, glTF/texture import (incl. a locale regression), render-graph barrier planning, gizmo math, undo/redo, **GPU tests that render real frames and check pixels**, Hub/Editor UI integration tests |
+| Tests | 116 GoogleTest cases: core, scene, serialization, projects, CLI, glTF/texture import (incl. a locale regression), render-graph barrier planning, gizmo math, undo/redo, **GPU tests that render real frames and check pixels**, Hub/Editor UI integration tests |
 
 Verified on Parrot OS 7.4 (KDE Plasma, Wayland) with an NVIDIA GTX 1650 (Mesa NVK, Vulkan
 1.4.354) and on Mesa llvmpipe. Validation layers and GPU-assisted validation report no errors.
@@ -106,12 +106,13 @@ Global options: `--gpu <index>`, `--validation` / `--no-validation`, `--no-vsync
 
 | Input | Action |
 |---|---|
-| Right mouse + drag | Look |
-| Right mouse + W A S D / Q E | Fly / down, up (Shift = faster, wheel = speed) |
+| W A S D (or arrows) / Q E | Fly / down, up while the pointer is over the viewport or after clicking it (Shift = faster) |
+| Right mouse + drag | Look (Right mouse + wheel = fly speed) |
 | Middle mouse + drag | Pan |
 | Wheel | Dolly |
 | Left click | Select |
-| W / E / R | Move / rotate / scale gizmo (Ctrl snaps: 0.25 m, 15°, 0.1×) |
+| 1 / 2 / 3 | Move / rotate / scale gizmo (Ctrl snaps: 0.25 m, 15°, 0.1×) |
+| Esc | Clear selection |
 | Ctrl+Z / Ctrl+Shift+Z | Undo / redo |
 | Ctrl+I | Import a glTF model |
 | F | Frame selection |

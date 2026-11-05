@@ -192,12 +192,12 @@ void EditorWindow::buildActions() {
     vsync_->setCheckable(true);
     vsync_->setChecked(app_.options().vsync.value_or(true));
     resetLayout_ = make(tr("Reset Layout"), QString());
-    // Gizmo tools. W/E/R are handled while the viewport has focus (handleShortcut) so they
-    // never collide with typing or with WASD flying.
+    // Gizmo tools. 1/2/3 are handled while the viewport has the keyboard (handleShortcut), so
+    // they never collide with typing; WASDQE fly the camera.
     auto* tools = new QActionGroup(this);
-    moveTool_ = make(tr("Move (W)"), QStringLiteral("move"));
-    rotateTool_ = make(tr("Rotate (E)"), QStringLiteral("rotate"));
-    scaleTool_ = make(tr("Scale (R)"), QStringLiteral("scale"));
+    moveTool_ = make(tr("Move (1)"), QStringLiteral("move"));
+    rotateTool_ = make(tr("Rotate (2)"), QStringLiteral("rotate"));
+    scaleTool_ = make(tr("Scale (3)"), QStringLiteral("scale"));
     for (QAction* a : {moveTool_, rotateTool_, scaleTool_}) {
         a->setCheckable(true);
         tools->addAction(a);
@@ -256,6 +256,10 @@ void EditorWindow::buildCentral() {
     container->setMinimumSize(320, 200);
     app::registerViewportContainer(container, viewport_);
     viewportStack_->addWidget(container);
+    // Clicking the viewport takes focus away from text fields, so keys fly the camera; the
+    // container also starts with focus instead of the first line edit in the tab chain.
+    connect(viewport_, &app::VulkanViewport::pointerPressed, container,
+            [container] { container->setFocus(Qt::MouseFocusReason); });
 
     viewportError_ = new QLabel;
     viewportError_->setAlignment(Qt::AlignCenter);
@@ -264,6 +268,7 @@ void EditorWindow::buildCentral() {
     viewportError_->setStyleSheet(QStringLiteral("background: #101114; color: #ec6a5e; padding: 40px; font-size: 11pt;"));
     viewportStack_->addWidget(viewportError_);
     setCentralWidget(viewportFrame_);
+    container->setFocus();  // now inside this window, so it becomes the initial focus widget
 
     connect(viewport_, &app::VulkanViewport::renderFailed, this, &EditorWindow::onRenderFailed);
     if (viewport_->hasFailed()) {
@@ -770,7 +775,7 @@ void EditorWindow::updatePlayState() {
 }
 
 bool EditorWindow::handleShortcut(int key, Qt::KeyboardModifiers mods) {
-    // Shortcuts for keys typed while the native viewport window has focus.
+    // Keys typed while the viewport is engaged (hovered/clicked); WASDQE never get here.
     if (QGuiApplication::mouseButtons() & Qt::RightButton) return false;  // flying
     const bool ctrl = mods & Qt::ControlModifier;
     if (key == Qt::Key_Delete) {
@@ -785,11 +790,11 @@ bool EditorWindow::handleShortcut(int key, Qt::KeyboardModifiers mods) {
         client_->frameSelection();
     } else if (key == Qt::Key_G && !ctrl) {
         grid_->toggle();
-    } else if (key == Qt::Key_W && !ctrl) {
+    } else if (key == Qt::Key_1 && !ctrl) {
         moveTool_->trigger();
-    } else if (key == Qt::Key_E && !ctrl) {
+    } else if (key == Qt::Key_2 && !ctrl) {
         rotateTool_->trigger();
-    } else if (key == Qt::Key_R && !ctrl) {
+    } else if (key == Qt::Key_3 && !ctrl) {
         scaleTool_->trigger();
     } else if (key == Qt::Key_Escape) {
         ctx_.clearSelection();
@@ -802,15 +807,16 @@ bool EditorWindow::handleShortcut(int key, Qt::KeyboardModifiers mods) {
 void EditorWindow::showControls() {
     QMessageBox::information(this, tr("Viewport Controls"),
                              tr("<table cellspacing='6'>"
-                                "<tr><td><b>Right mouse + drag</b></td><td>Look around</td></tr>"
-                                "<tr><td><b>Right mouse + W A S D</b></td><td>Fly</td></tr>"
-                                "<tr><td><b>Right mouse + Q / E</b></td><td>Down / up</td></tr>"
+                                "<tr><td><b>W A S D / arrows</b></td><td>Fly (mouse over or click the viewport)</td></tr>"
+                                "<tr><td><b>Q / E</b></td><td>Down / up</td></tr>"
                                 "<tr><td><b>Shift</b></td><td>Move faster</td></tr>"
+                                "<tr><td><b>Right mouse + drag</b></td><td>Look around</td></tr>"
                                 "<tr><td><b>Right mouse + wheel</b></td><td>Change fly speed</td></tr>"
                                 "<tr><td><b>Middle mouse + drag</b></td><td>Pan</td></tr>"
                                 "<tr><td><b>Wheel</b></td><td>Dolly</td></tr>"
                                 "<tr><td><b>Left click</b></td><td>Select</td></tr>"
-                                "<tr><td><b>W / E / R</b></td><td>Move / rotate / scale gizmo (Ctrl snaps)</td></tr>"
+                                "<tr><td><b>1 / 2 / 3</b></td><td>Move / rotate / scale gizmo (Ctrl snaps)</td></tr>"
+                                "<tr><td><b>Esc</b></td><td>Clear selection</td></tr>"
                                 "<tr><td><b>F</b></td><td>Frame selection</td></tr>"
                                 "<tr><td><b>G</b></td><td>Toggle grid</td></tr>"
                                 "<tr><td><b>Ctrl+Z / Ctrl+Shift+Z</b></td><td>Undo / redo</td></tr>"

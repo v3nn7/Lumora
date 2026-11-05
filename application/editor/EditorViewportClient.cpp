@@ -14,6 +14,7 @@
 namespace lumora::editor {
 
 EditorViewportClient::EditorViewportClient(EditorContext& ctx) : ctx_(ctx) {
+    camera_.keyboardFlight = true;  // WASD/QE fly whenever the viewport has the keyboard
     camera_.setPosition({0.0f, 3.0f, 8.0f});
     camera_.lookAt({0.0f, 0.5f, 0.0f});
 }
@@ -157,7 +158,6 @@ void EditorViewportClient::frameEntity(entt::entity e) {
 void EditorViewportClient::frameSelection() { frameEntity(ctx_.selectedEntity()); }
 
 bool EditorViewportClient::viewportKeyPressed(int key, Qt::KeyboardModifiers modifiers) {
-    // While flying (RMB held) WASDQE belong to the camera.
     return onShortcut ? onShortcut(key, modifiers) : false;
 }
 

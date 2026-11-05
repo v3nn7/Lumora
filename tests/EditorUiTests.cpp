@@ -4,6 +4,7 @@
 
 #include "common/AppContext.hpp"
 #include "common/ProjectUi.hpp"
+#include "common/VulkanViewport.hpp"
 #include "editor/EditorContext.hpp"
 #include "editor/EditorWindow.hpp"
 #include "hub/HubWindow.hpp"
@@ -14,7 +15,11 @@
 #include "runtime/Simulation.hpp"
 
 #include <QApplication>
+#include <QAction>
 #include <QDockWidget>
+#include <QEnterEvent>
+#include <QKeyEvent>
+#include <QLineEdit>
 #include <QToolButton>
 #include <QTreeWidget>
 
@@ -289,4 +294,66 @@ TEST_F(EditorUiTest, PlayModeEditsAreNotRecorded) {
     EXPECT_EQ(ctx.undoStack().count(), 0);
     editor->stop();
     EXPECT_FALSE(ctx.isDirty());
+}
+
+TEST_F(EditorUiTest, KeyboardReachingTheMainWindowFliesTheViewportCamera) {
+    // On Wayland the embedded viewport never gets keyboard focus: keys arrive at the top-level
+    // window. While the viewport is hovered (or was clicked) it must still take WASD.
+    editor::EditorWindow* editor = openEditor();
+    ASSERT_NE(editor, nullptr);
+    app::VulkanViewport* viewport = nullptr;
+    for (QWindow* w : QGuiApplication::allWindows()) {
+        if (auto* v = qobject_cast<app::VulkanViewport*>(w)) viewport = v;
+    }
+    ASSERT_NE(viewport, nullptr);
+    QWindow* top = editor->windowHandle();
+    ASSERT_NE(top, nullptr);
+    EXPECT_EQ(qobject_cast<QLineEdit*>(QApplication::focusWidget()), nullptr)
+        << "the editor must not open with a text field holding the keyboard";
+
+    auto send = [&](QEvent::Type type, int key) {
+        QKeyEvent e(type, key, Qt::NoModifier);
+        return QCoreApplication::sendEvent(top, &e);
+    };
+
+    // Not engaged: keys belong to the widgets.
+    send(QEvent::KeyPress, Qt::Key_W);
+    EXPECT_FALSE(viewport->input().isDown(Key::W));
+    send(QEvent::KeyRelease, Qt::Key_W);
+
+    QEnterEvent enter(QPointF(10, 10), QPointF(10, 10), QPointF(10, 10));
+    QCoreApplication::sendEvent(viewport, &enter);
+    send(QEvent::KeyPress, Qt::Key_W);
+    EXPECT_TRUE(viewport->input().isDown(Key::W));
+    send(QEvent::KeyRelease, Qt::Key_W);
+    EXPECT_FALSE(viewport->input().isDown(Key::W));
+
+    // Gizmo tools live on 1/2/3 (E flies up).
+    QAction* rotate = nullptr;
+    for (QAction* a : editor->findChildren<QAction*>()) {
+        if (a->text() == QStringLiteral("Rotate (2)")) rotate = a;
+    }
+    ASSERT_NE(rotate, nullptr);
+    send(QEvent::KeyPress, Qt::Key_2);
+    EXPECT_TRUE(rotate->isChecked());
+
+    // Leaving the viewport releases held keys so nothing stays stuck.
+    send(QEvent::KeyPress, Qt::Key_D);
+    EXPECT_TRUE(viewport->input().isDown(Key::D));
+    QEvent leave(QEvent::Leave);
+    QCoreApplication::sendEvent(viewport, &leave);
+    EXPECT_FALSE(viewport->input().isDown(Key::D));
+    send(QEvent::KeyPress, Qt::Key_S);
+    EXPECT_FALSE(viewport->input().isDown(Key::S));
+    send(QEvent::KeyRelease, Qt::Key_S);
+
+    // Typing in a text field never moves the camera, even with the pointer over the viewport.
+    auto* field = editor->findChild<QLineEdit*>();
+    ASSERT_NE(field, nullptr);
+    field->setFocus();
+    processEvents();
+    ASSERT_EQ(QApplication::focusWidget(), field);
+    QCoreApplication::sendEvent(viewport, &enter);
+    send(QEvent::KeyPress, Qt::Key_A);
+    EXPECT_FALSE(viewport->input().isDown(Key::A));
 }

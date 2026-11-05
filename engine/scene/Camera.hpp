@@ -26,8 +26,9 @@ struct CameraView {
 /// View from the scene's primary camera entity, or a default framing if none exists.
 [[nodiscard]] CameraView sceneCameraView(const Scene& scene, float aspect);
 
-/// Unreal-style editor/free camera: hold RMB to look + WASDQE to fly, scroll adjusts speed,
-/// MMB drag pans, scroll without RMB dollies.
+/// Editor/free camera: RMB drag looks around, WASD/QE (and arrows/Space) fly, Shift is faster,
+/// scroll while looking changes speed, MMB drag pans, scroll without RMB dollies.
+/// With keyboardFlight the keys fly even without holding RMB.
 class FlyCameraController {
 public:
     void setPosition(const glm::vec3& p) noexcept { position_ = p; }
@@ -48,6 +49,7 @@ public:
     float fovDeg = 60.0f;
     float nearPlane = 0.05f;
     float lookSensitivity = 0.15f;  // degrees per pixel
+    bool keyboardFlight = false;    // WASD/QE move without holding RMB
 
 private:
     glm::vec3 position_{0.0f, 2.0f, 6.0f};

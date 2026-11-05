@@ -92,17 +92,6 @@ void FlyCameraController::update(const InputState& input, float dt) {
         if (input.scrollDelta() != 0.0f) {
             setSpeed(speed_ * std::pow(1.2f, input.scrollDelta()));
         }
-        glm::vec3 move{0.0f};
-        if (input.isDown(Key::W) || input.isDown(Key::Up)) move += forward();
-        if (input.isDown(Key::S) || input.isDown(Key::Down)) move -= forward();
-        if (input.isDown(Key::D) || input.isDown(Key::Right)) move += right();
-        if (input.isDown(Key::A) || input.isDown(Key::Left)) move -= right();
-        if (input.isDown(Key::E) || input.isDown(Key::Space)) move.y += 1.0f;
-        if (input.isDown(Key::Q) || input.isDown(Key::LeftCtrl)) move.y -= 1.0f;
-        if (glm::dot(move, move) > 0.0f) {
-            const float boost = input.isDown(Key::LeftShift) ? 3.0f : 1.0f;
-            position_ += glm::normalize(move) * speed_ * boost * dt;
-        }
     } else {
         if (input.isDown(MouseButton::Middle)) {
             const glm::vec3 up = glm::cross(right(), forward());
@@ -112,6 +101,22 @@ void FlyCameraController::update(const InputState& input, float dt) {
         if (input.scrollDelta() != 0.0f) {
             position_ += forward() * input.scrollDelta() * std::max(speed_ * 0.25f, 0.1f);
         }
+    }
+
+    // Keyboard flight: always while looking; without RMB only if enabled, and never while Ctrl
+    // is held (Ctrl+S, Ctrl+D... must not nudge the camera).
+    const bool keyboard = looking || (keyboardFlight && !input.isDown(Key::LeftCtrl));
+    if (!keyboard) return;
+    glm::vec3 move{0.0f};
+    if (input.isDown(Key::W) || input.isDown(Key::Up)) move += forward();
+    if (input.isDown(Key::S) || input.isDown(Key::Down)) move -= forward();
+    if (input.isDown(Key::D) || input.isDown(Key::Right)) move += right();
+    if (input.isDown(Key::A) || input.isDown(Key::Left)) move -= right();
+    if (input.isDown(Key::E) || input.isDown(Key::Space)) move.y += 1.0f;
+    if (input.isDown(Key::Q) || (looking && input.isDown(Key::LeftCtrl))) move.y -= 1.0f;
+    if (glm::dot(move, move) > 0.0f) {
+        const float boost = input.isDown(Key::LeftShift) ? 3.0f : 1.0f;
+        position_ += glm::normalize(move) * speed_ * boost * dt;
     }
 }
 

@@ -6,7 +6,13 @@
 #include "renderer/Renderer.hpp"
 #include "scene/Scene.hpp"
 
+#include <QAbstractSpinBox>
+#include <QApplication>
+#include <QComboBox>
 #include <QCursor>
+#include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QTextEdit>
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -46,6 +52,29 @@ std::optional<Key> mapKey(int qtKey) {
     }
 }
 
+/// Keys that drive the camera and must not leak into widgets (tree type-ahead etc.).
+bool isFlightKey(int key) {
+    switch (key) {
+        case Qt::Key_W: case Qt::Key_A: case Qt::Key_S: case Qt::Key_D: case Qt::Key_Q: case Qt::Key_E:
+        case Qt::Key_Up: case Qt::Key_Down: case Qt::Key_Left: case Qt::Key_Right: case Qt::Key_Space:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/// True while the user is typing somewhere, so keys belong to that widget.
+bool textInputHasFocus() {
+    QWidget* w = QApplication::focusWidget();
+    if (w == nullptr) return false;
+    if (qobject_cast<QLineEdit*>(w) || qobject_cast<QAbstractSpinBox*>(w) || qobject_cast<QPlainTextEdit*>(w) ||
+        qobject_cast<QTextEdit*>(w)) {
+        return true;
+    }
+    auto* combo = qobject_cast<QComboBox*>(w);
+    return combo != nullptr && combo->isEditable();
+}
+
 std::optional<MouseButton> mapButton(Qt::MouseButton b) {
     switch (b) {
         case Qt::LeftButton: return MouseButton::Left;
@@ -68,6 +97,7 @@ VulkanViewport::VulkanViewport(AppContext& app, ViewportClient& client)
     // Wayland does not allow clients to warp the pointer; elsewhere we recenter while looking.
     canWarpCursor_ = !QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
     vsync_ = app_.options().vsync.value_or(true);
+    if (QCoreApplication::instance() != nullptr) QCoreApplication::instance()->installEventFilter(this);
     frameTimer_.start();
     paceTimer_.start();
 }
@@ -149,6 +179,12 @@ void VulkanViewport::releaseTarget() {
 
 bool VulkanViewport::event(QEvent* e) {
     switch (e->type()) {
+        case QEvent::Enter:
+            updateEngagement(true, clickFocus_);  // hovering is enough to fly with the keyboard
+            break;
+        case QEvent::Leave:
+            updateEngagement(false, clickFocus_);
+            break;
         case QEvent::UpdateRequest:
             scheduleNextFrame();
             return true;
@@ -243,6 +279,50 @@ QImage VulkanViewport::captureFrame(QSize pixels) {
     }
 }
 
+QWindow* VulkanViewport::topLevelWindow() {
+    QWindow* w = this;
+    while (w->parent() != nullptr) w = w->parent();
+    return w;
+}
+
+void VulkanViewport::updateEngagement(bool hovered, bool clickFocus) {
+    const bool was = engaged();
+    hovered_ = hovered;
+    clickFocus_ = clickFocus;
+    if (was && !engaged()) input_.releaseAll();  // never leave a key "stuck" down
+}
+
+bool VulkanViewport::eventFilter(QObject* watched, QEvent* event) {
+    switch (event->type()) {
+        case QEvent::MouseButtonPress:
+            // A click in another window (panel, menu, dialog) hands the keyboard back to it.
+            if (watched != this && qobject_cast<QWindow*>(watched) != nullptr) updateEngagement(hovered_, false);
+            break;
+        case QEvent::ApplicationDeactivate:
+            input_.releaseAll();
+            break;
+        case QEvent::KeyPress:
+        case QEvent::KeyRelease: {
+            // Keys delivered to this window go through keyPressEvent. Only take keys that reached
+            // our own top-level window (seen once, before any widget), never other windows'.
+            QWindow* top = topLevelWindow();
+            if (top == this || watched != top) break;
+            if (!engaged() || textInputHasFocus()) break;
+            auto* key = static_cast<QKeyEvent*>(event);
+            const bool down = event->type() == QEvent::KeyPress;
+            if (!key->isAutoRepeat()) {
+                if (auto k = mapKey(key->key())) input_.setKey(*k, down);
+            }
+            if (isFlightKey(key->key())) return true;  // the camera owns it
+            if (down && client_.viewportKeyPressed(key->key(), key->modifiers())) return true;
+            break;
+        }
+        default:
+            break;
+    }
+    return QWindow::eventFilter(watched, event);
+}
+
 void VulkanViewport::keyPressEvent(QKeyEvent* e) {
     if (!e->isAutoRepeat()) {
         if (auto k = mapKey(e->key())) input_.setKey(*k, true);
@@ -265,6 +345,8 @@ glm::vec2 VulkanViewport::toNdc(QPointF position) const {
 
 void VulkanViewport::mousePressEvent(QMouseEvent* e) {
     requestActivate();
+    updateEngagement(hovered_, true);
+    emit pointerPressed();
     lastMouse_ = e->position();
     if (e->button() == Qt::LeftButton) {
         pressPos_ = e->position();

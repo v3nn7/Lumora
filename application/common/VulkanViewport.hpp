@@ -71,12 +71,16 @@ public:
     void setVsync(bool vsync);
     [[nodiscard]] double frameIntervalMs() const noexcept { return frameIntervalMs_; }
     [[nodiscard]] bool hasFailed() const noexcept { return failed_; }
+    [[nodiscard]] const InputState& input() const noexcept { return input_; }
     /// Offscreen render of what the viewport currently shows (null image if unavailable).
     [[nodiscard]] QImage captureFrame(QSize pixels);
 
 signals:
     void frameRendered();
     void renderFailed(const QString& message);
+    /// A mouse button went down in the viewport; embedders move widget focus to its container
+    /// (on Wayland the embedded window itself never receives keyboard focus).
+    void pointerPressed();
 
 protected:
     bool event(QEvent* e) override;
@@ -88,6 +92,9 @@ protected:
     void mouseMoveEvent(QMouseEvent* e) override;
     void wheelEvent(QWheelEvent* e) override;
     void focusOutEvent(QFocusEvent* e) override;
+    /// Keyboard routing for an embedded viewport: on Wayland the embedded (subsurface) window
+    /// never gets keyboard focus, so keys reach the top-level window and are taken from there.
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void renderFrame();
@@ -98,6 +105,10 @@ private:
     void fail(const QString& message);
     [[nodiscard]] VkExtent2D pixelExtent() const;
     [[nodiscard]] glm::vec2 toNdc(QPointF position) const;
+    /// Keyboard drives the viewport while it is hovered, was clicked last, or is looking.
+    [[nodiscard]] bool engaged() const noexcept { return hovered_ || clickFocus_ || looking_; }
+    void updateEngagement(bool hovered, bool clickFocus);
+    [[nodiscard]] QWindow* topLevelWindow();
 
     AppContext& app_;
     ViewportClient& client_;
@@ -109,6 +120,8 @@ private:
     QPointF lastMouse_;
     QPointF pressPos_;
     bool leftDragged_ = false;
+    bool hovered_ = false;     // pointer over the viewport
+    bool clickFocus_ = false;  // last click landed in the viewport
     bool pressConsumed_ = false;
     bool looking_ = false;
     bool canWarpCursor_ = false;

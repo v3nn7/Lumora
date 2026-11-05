@@ -188,8 +188,11 @@ jobs:
       - name: Install
         shell: bash
         run: |
-          cmake --install build/release --component editor --prefix dist/editor
-          cmake --install build/release --component hub --prefix dist/hub
+          # Absolute prefix: Qt's Windows deploy step refuses a relative qt.conf path.
+          root="$PWD"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then root=$(cygpath -m "$PWD"); fi
+          cmake --install build/release --component editor --prefix "$root/dist/editor"
+          cmake --install build/release --component hub --prefix "$root/dist/hub"
 
       - name: Package
         shell: bash

@@ -4,6 +4,8 @@
 #include "scene/Picking.hpp"
 #include "scene/Scene.hpp"
 
+#include <QObject>
+
 #include <glm/common.hpp>
 
 #include <algorithm>
@@ -20,12 +22,48 @@ bool EditorViewportClient::viewingThroughSceneCamera() const {
            ctx_.scene()->primaryCamera() != entt::null;
 }
 
+bool EditorViewportClient::gizmoVisible() const {
+    return !ctx_.isPlaying() && ctx_.scene() != nullptr && ctx_.selectedEntity() != entt::null;
+}
+
 void EditorViewportClient::viewportTick(float dt, const InputState& input, bool) {
     if (!viewingThroughSceneCamera()) {
         camera_.update(input, dt);
     }
     if (onSimulate) onSimulate(dt);
-    if (Scene* scene = ctx_.scene()) scene->updateWorldTransforms();
+    Scene* scene = ctx_.scene();
+    if (scene != nullptr) scene->updateWorldTransforms();
+    overlay_.clear();
+    if (gizmoVisible()) {
+        gizmo_.build(*scene, ctx_.selectedEntity(), camera_.view(lastAspect_), overlay_);
+    }
+}
+
+bool EditorViewportClient::viewportMousePressed(glm::vec2 ndc, Qt::MouseButton button, Qt::KeyboardModifiers) {
+    if (button != Qt::LeftButton || !gizmoVisible()) return false;
+    if (!gizmo_.begin(*ctx_.scene(), ctx_.selectedEntity(), camera_.view(lastAspect_), ndc)) return false;
+    dragTarget_ = ctx_.selectedUuid();
+    return true;
+}
+
+void EditorViewportClient::viewportMouseMoved(glm::vec2 ndc, Qt::KeyboardModifiers modifiers) {
+    Scene* scene = ctx_.scene();
+    if (!gizmoVisible()) return;
+    if (gizmo_.active()) {
+        const entt::entity target = scene->findByUuid(dragTarget_);
+        gizmo_.drag(*scene, target, camera_.view(lastAspect_), ndc, (modifiers & Qt::ControlModifier) != 0);
+        ctx_.notifyValuesChanged(nullptr);  // live inspector values; recorded once on release
+    } else {
+        gizmo_.hover(*scene, ctx_.selectedEntity(), camera_.view(lastAspect_), ndc);
+    }
+}
+
+void EditorViewportClient::viewportMouseReleased(glm::vec2, Qt::MouseButton button) {
+    if (button != Qt::LeftButton || !gizmo_.active()) return;
+    gizmo_.end();
+    static const char* kNames[] = {"Move", "Rotate", "Scale"};
+    ctx_.commitTransform(dragTarget_, QObject::tr(kNames[static_cast<int>(gizmo_.mode())]), gizmo_.startTransform());
+    dragTarget_ = Uuid{};
 }
 
 const Scene* EditorViewportClient::viewportScene() const { return ctx_.scene(); }
@@ -40,6 +78,7 @@ render::RenderSettings EditorViewportClient::viewportSettings() const {
     render::RenderSettings s;
     s.showGrid = showGrid && !viewingThroughSceneCamera();
     s.selected = ctx_.isPlaying() ? entt::entity{entt::null} : ctx_.selectedEntity();
+    s.overlay = overlay_.empty() ? nullptr : &overlay_;
     return s;
 }
 

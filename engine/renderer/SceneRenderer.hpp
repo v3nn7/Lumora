@@ -1,5 +1,6 @@
 #pragma once
 
+#include "renderer/Overlay.hpp"
 #include "renderer/RenderGraph.hpp"
 #include "renderer/vulkan/Resources.hpp"
 #include "scene/Camera.hpp"
@@ -27,6 +28,7 @@ struct RenderSettings {
     float shadowDistance = 35.0f;          // metres covered by the sun shadow map
     std::uint32_t shadowResolution = 2048;
     entt::entity selected = entt::null;
+    const OverlayGeometry* overlay = nullptr;  // drawn on top after tone mapping (gizmos)
 };
 
 struct SceneDrawStats {
@@ -66,6 +68,7 @@ public:
 private:
     void ensureObjectCapacity(FrameResources& frame, std::uint32_t count);
     VkPipeline tonemapPipeline(VkFormat outputFormat);
+    VkPipeline overlayPipeline(VkFormat outputFormat);
 
     RenderContext& ctx_;
     rhi::UniquePipeline sky_;
@@ -74,6 +77,7 @@ private:
     rhi::UniquePipeline shadow_;
     std::unordered_map<int, rhi::UniquePipeline> bloom_;  // 0 = downsample, 1 = upsample
     std::unordered_map<VkFormat, rhi::UniquePipeline> tonemap_;
+    std::unordered_map<VkFormat, rhi::UniquePipeline> overlay_;
 };
 
 } // namespace lumora::render

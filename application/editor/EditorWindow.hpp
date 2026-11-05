@@ -113,6 +113,9 @@ private:
     QAction* grid_ = nullptr;
     QAction* vsync_ = nullptr;
     QAction* resetLayout_ = nullptr;
+    QAction* moveTool_ = nullptr;
+    QAction* rotateTool_ = nullptr;
+    QAction* scaleTool_ = nullptr;
 
     QLabel* toolbarScene_ = nullptr;
     QLabel* modeChip_ = nullptr;

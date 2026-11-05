@@ -256,14 +256,22 @@ void VulkanViewport::keyReleaseEvent(QKeyEvent* e) {
     }
 }
 
+glm::vec2 VulkanViewport::toNdc(QPointF position) const {
+    return {static_cast<float>(position.x() / std::max(width(), 1)) * 2.0f - 1.0f,
+            static_cast<float>(position.y() / std::max(height(), 1)) * 2.0f - 1.0f};
+}
+
 void VulkanViewport::mousePressEvent(QMouseEvent* e) {
     requestActivate();
-    if (auto b = mapButton(e->button())) input_.setMouseButton(*b, true);
     lastMouse_ = e->position();
     if (e->button() == Qt::LeftButton) {
         pressPos_ = e->position();
         leftDragged_ = false;
-    } else if (e->button() == Qt::RightButton) {
+        pressConsumed_ = client_.viewportMousePressed(toNdc(e->position()), e->button(), e->modifiers());
+        if (pressConsumed_) return;  // e.g. gizmo drag: no camera input, no click
+    }
+    if (auto b = mapButton(e->button())) input_.setMouseButton(*b, true);
+    if (e->button() == Qt::RightButton) {
         looking_ = true;
         setCursor(Qt::BlankCursor);
     }
@@ -271,10 +279,11 @@ void VulkanViewport::mousePressEvent(QMouseEvent* e) {
 
 void VulkanViewport::mouseReleaseEvent(QMouseEvent* e) {
     if (auto b = mapButton(e->button())) input_.setMouseButton(*b, false);
-    if (e->button() == Qt::LeftButton && !leftDragged_ && width() > 0 && height() > 0) {
-        const glm::vec2 ndc(static_cast<float>(e->position().x() / width()) * 2.0f - 1.0f,
-                            static_cast<float>(e->position().y() / height()) * 2.0f - 1.0f);
-        client_.viewportClicked(ndc);
+    client_.viewportMouseReleased(toNdc(e->position()), e->button());
+    if (e->button() == Qt::LeftButton && pressConsumed_) {
+        pressConsumed_ = false;
+    } else if (e->button() == Qt::LeftButton && !leftDragged_ && width() > 0 && height() > 0) {
+        client_.viewportClicked(toNdc(e->position()));
     } else if (e->button() == Qt::RightButton) {
         looking_ = false;
         unsetCursor();
@@ -283,6 +292,7 @@ void VulkanViewport::mouseReleaseEvent(QMouseEvent* e) {
 
 void VulkanViewport::mouseMoveEvent(QMouseEvent* e) {
     const QPointF pos = e->position();
+    client_.viewportMouseMoved(toNdc(pos), e->modifiers());
     const QPointF delta = pos - lastMouse_;
     input_.addMouseDelta({static_cast<float>(delta.x()), static_cast<float>(delta.y())});
     input_.setMousePosition({static_cast<float>(pos.x()), static_cast<float>(pos.y())});

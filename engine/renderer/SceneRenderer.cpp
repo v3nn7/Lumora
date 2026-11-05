@@ -163,6 +163,22 @@ VkPipeline SceneRenderer::tonemapPipeline(VkFormat outputFormat) {
         .first->second.get();
 }
 
+VkPipeline SceneRenderer::overlayPipeline(VkFormat outputFormat) {
+    if (auto it = overlay_.find(outputFormat); it != overlay_.end()) {
+        return it->second.get();
+    }
+    rhi::GraphicsPipelineDesc desc;
+    desc.vertexShader = ctx_.shaders().get("overlay.vert");
+    desc.fragmentShader = ctx_.shaders().get("overlay.frag");
+    desc.overlayVertexInput = true;
+    desc.blend = rhi::BlendMode::Alpha;
+    desc.colorFormats = {outputFormat};
+    desc.layout = ctx_.pipelineLayout();
+    desc.debugName = "Overlay";
+    return overlay_.emplace(outputFormat, rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), desc))
+        .first->second.get();
+}
+
 void SceneRenderer::ensureObjectCapacity(FrameResources& frame, std::uint32_t count) {
     if (count <= frame.objectCapacity && frame.objects) return;
     std::uint32_t capacity = std::max(frame.objectCapacity, 256u);
@@ -462,6 +478,36 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                                sizeof(pc), &pc);
             vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
         });
+
+    // ---- Overlay (gizmos): unlit, alpha blended, on top of the final image.
+    if (settings.overlay != nullptr && !settings.overlay->empty()) {
+        const auto& vertices = settings.overlay->vertices;
+        const VkDeviceSize bytes = vertices.size() * sizeof(OverlayVertex);
+        if (frame.overlayVertices.size() < bytes) {
+            VkDeviceSize capacity = std::max<VkDeviceSize>(64 * 1024, frame.overlayVertices.size());
+            while (capacity < bytes) capacity *= 2;
+            frame.overlayVertices = rhi::Buffer(ctx_.device(), {capacity, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                                                rhi::MemoryUsage::CpuToGpu, "OverlayVertices"});
+        }
+        frame.overlayVertices.write(std::as_bytes(std::span(vertices)));
+        const VkPipeline overlay = overlayPipeline(outputFormat);
+        const VkBuffer vb = frame.overlayVertices.handle();
+        const auto count = static_cast<std::uint32_t>(vertices.size());
+        graph.addRasterPass(
+            "Overlay", [&](PassBuilder& b) { b.writeColor(output, LoadOp::Load); },
+            [=](PassContext& ctx) {
+                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, overlay);
+                bindSets(ctx.cmd);
+                PushConstants pc;
+                pc.flags = shaderSrgb ? 1u : 0u;
+                vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(pc), &pc);
+                const VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
+                vkCmdDraw(ctx.cmd, count, 1, 0, 0);
+            });
+        ++stats.drawCalls;
+    }
     return stats;
 }
 

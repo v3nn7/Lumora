@@ -64,4 +64,5 @@ lumora_engine_module(renderer
         renderer/RenderContext.cpp
         renderer/Renderer.cpp
         renderer/SceneRenderer.cpp
+        renderer/Overlay.cpp
     DEPS lumora_scene Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)

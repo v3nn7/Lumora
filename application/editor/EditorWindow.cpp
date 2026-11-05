@@ -20,6 +20,7 @@
 #include "runtime/Simulation.hpp"
 #include "scene/SceneSerializer.hpp"
 
+#include <QActionGroup>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDockWidget>
@@ -172,6 +173,20 @@ void EditorWindow::buildActions() {
     vsync_->setCheckable(true);
     vsync_->setChecked(app_.options().vsync);
     resetLayout_ = make(tr("Reset Layout"), QString());
+    // Gizmo tools. W/E/R are handled while the viewport has focus (handleShortcut) so they
+    // never collide with typing or with WASD flying.
+    auto* tools = new QActionGroup(this);
+    moveTool_ = make(tr("Move (W)"), QStringLiteral("move"));
+    rotateTool_ = make(tr("Rotate (E)"), QStringLiteral("rotate"));
+    scaleTool_ = make(tr("Scale (R)"), QStringLiteral("scale"));
+    for (QAction* a : {moveTool_, rotateTool_, scaleTool_}) {
+        a->setCheckable(true);
+        tools->addAction(a);
+    }
+    moveTool_->setChecked(true);
+    connect(moveTool_, &QAction::triggered, this, [this] { client_->gizmo().setMode(GizmoMode::Translate); });
+    connect(rotateTool_, &QAction::triggered, this, [this] { client_->gizmo().setMode(GizmoMode::Rotate); });
+    connect(scaleTool_, &QAction::triggered, this, [this] { client_->gizmo().setMode(GizmoMode::Scale); });
 
     for (QAction* a : {play_, pause_, stop_}) a->setShortcutContext(Qt::ApplicationShortcut);
 
@@ -345,6 +360,11 @@ void EditorWindow::buildToolbar() {
     populateCreateMenu(*createMenu, ctx_, false);
     createButton->setMenu(createMenu);
     bar->addWidget(createButton);
+    bar->addSeparator();
+    bar->addAction(moveTool_);
+    bar->addAction(rotateTool_);
+    bar->addAction(scaleTool_);
+    bar->addSeparator();
     bar->addAction(grid_);
     bar->addAction(pilot_);
 
@@ -614,6 +634,12 @@ bool EditorWindow::handleShortcut(int key, Qt::KeyboardModifiers mods) {
         client_->frameSelection();
     } else if (key == Qt::Key_G && !ctrl) {
         grid_->toggle();
+    } else if (key == Qt::Key_W && !ctrl) {
+        moveTool_->trigger();
+    } else if (key == Qt::Key_E && !ctrl) {
+        rotateTool_->trigger();
+    } else if (key == Qt::Key_R && !ctrl) {
+        scaleTool_->trigger();
     } else if (key == Qt::Key_Escape) {
         ctx_.clearSelection();
     } else {
@@ -633,6 +659,7 @@ void EditorWindow::showControls() {
                                 "<tr><td><b>Middle mouse + drag</b></td><td>Pan</td></tr>"
                                 "<tr><td><b>Wheel</b></td><td>Dolly</td></tr>"
                                 "<tr><td><b>Left click</b></td><td>Select</td></tr>"
+                                "<tr><td><b>W / E / R</b></td><td>Move / rotate / scale gizmo (Ctrl snaps)</td></tr>"
                                 "<tr><td><b>F</b></td><td>Frame selection</td></tr>"
                                 "<tr><td><b>G</b></td><td>Toggle grid</td></tr>"
                                 "<tr><td><b>Ctrl+Z / Ctrl+Shift+Z</b></td><td>Undo / redo</td></tr>"

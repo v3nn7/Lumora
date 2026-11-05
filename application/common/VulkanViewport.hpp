@@ -35,6 +35,22 @@ public:
     [[nodiscard]] virtual render::RenderSettings viewportSettings() const = 0;
     /// Left click without drag; ndc in [-1,1], +Y down.
     virtual void viewportClicked(glm::vec2 ndc) { (void)ndc; }
+    /// Raw pointer events (ndc as above). Returning true from a press consumes it: no click and
+    /// no camera interaction follow (used by gizmo drags).
+    virtual bool viewportMousePressed(glm::vec2 ndc, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) {
+        (void)ndc;
+        (void)button;
+        (void)modifiers;
+        return false;
+    }
+    virtual void viewportMouseMoved(glm::vec2 ndc, Qt::KeyboardModifiers modifiers) {
+        (void)ndc;
+        (void)modifiers;
+    }
+    virtual void viewportMouseReleased(glm::vec2 ndc, Qt::MouseButton button) {
+        (void)ndc;
+        (void)button;
+    }
     /// Key presses that reach the viewport (Qt key code + modifiers). Return true if handled.
     virtual bool viewportKeyPressed(int key, Qt::KeyboardModifiers modifiers) {
         (void)key;
@@ -81,6 +97,7 @@ private:
     void releaseTarget();
     void fail(const QString& message);
     [[nodiscard]] VkExtent2D pixelExtent() const;
+    [[nodiscard]] glm::vec2 toNdc(QPointF position) const;
 
     AppContext& app_;
     ViewportClient& client_;
@@ -92,6 +109,7 @@ private:
     QPointF lastMouse_;
     QPointF pressPos_;
     bool leftDragged_ = false;
+    bool pressConsumed_ = false;
     bool looking_ = false;
     bool canWarpCursor_ = false;
     bool failed_ = false;

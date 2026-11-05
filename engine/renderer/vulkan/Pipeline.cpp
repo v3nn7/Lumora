@@ -99,7 +99,18 @@ UniquePipeline createGraphicsPipeline(const Device& device, const PipelineCache&
         {1, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<std::uint32_t>(offsetof(Vertex, normal))},
         {2, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<std::uint32_t>(offsetof(Vertex, uv))},
     };
+    const VkVertexInputBindingDescription overlayBinding{0, 16, VK_VERTEX_INPUT_RATE_VERTEX};
+    const VkVertexInputAttributeDescription overlayAttributes[2] = {
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
+        {1, 0, VK_FORMAT_R8G8B8A8_UNORM, 12},
+    };
     VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    if (d.overlayVertexInput) {
+        vertexInput.vertexBindingDescriptionCount = 1;
+        vertexInput.pVertexBindingDescriptions = &overlayBinding;
+        vertexInput.vertexAttributeDescriptionCount = 2;
+        vertexInput.pVertexAttributeDescriptions = overlayAttributes;
+    }
     if (d.meshVertexInput) {
         vertexInput.vertexBindingDescriptionCount = 1;
         vertexInput.pVertexBindingDescriptions = &binding;

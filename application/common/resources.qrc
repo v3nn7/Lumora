@@ -36,5 +36,7 @@
     <file alias="sparkle.svg">icons/sparkle.svg</file>
     <file alias="undo.svg">icons/undo.svg</file>
     <file alias="redo.svg">icons/redo.svg</file>
+    <file alias="move.svg">icons/move.svg</file>
+    <file alias="scale.svg">icons/scale.svg</file>
   </qresource>
 </RCC>

@@ -17,6 +17,7 @@ struct FrameResources {
     rhi::Buffer constants;           // FrameConstants (host-visible UBO)
     rhi::Buffer objects;             // GpuObject[] (host-visible SSBO)
     std::uint32_t objectCapacity = 0;
+    rhi::Buffer overlayVertices;     // render::OverlayVertex[] (host-visible vertex buffer)
     VkDescriptorSet set = VK_NULL_HANDLE;
     std::unique_ptr<TransientImagePool> transients;
     std::unique_ptr<GpuProfiler> profiler;

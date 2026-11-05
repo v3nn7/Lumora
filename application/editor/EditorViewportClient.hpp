@@ -1,6 +1,8 @@
 #pragma once
 
 #include "common/VulkanViewport.hpp"
+#include "editor/TransformGizmo.hpp"
+#include "renderer/Overlay.hpp"
 #include "scene/Camera.hpp"
 
 #include <functional>
@@ -19,6 +21,7 @@ public:
     std::function<bool(int, Qt::KeyboardModifiers)> onShortcut;      // window-level shortcuts
 
     [[nodiscard]] FlyCameraController& camera() noexcept { return camera_; }
+    [[nodiscard]] TransformGizmo& gizmo() noexcept { return gizmo_; }
     void frameEntity(entt::entity e);
     void frameSelection();
 
@@ -31,13 +34,21 @@ public:
     [[nodiscard]] render::RenderSettings viewportSettings() const override;
     void viewportClicked(glm::vec2 ndc) override;
     bool viewportKeyPressed(int key, Qt::KeyboardModifiers modifiers) override;
+    bool viewportMousePressed(glm::vec2 ndc, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) override;
+    void viewportMouseMoved(glm::vec2 ndc, Qt::KeyboardModifiers modifiers) override;
+    void viewportMouseReleased(glm::vec2 ndc, Qt::MouseButton button) override;
 
 private:
     [[nodiscard]] bool viewingThroughSceneCamera() const;
+    /// The gizmo is shown for the selection while editing (not in play mode).
+    [[nodiscard]] bool gizmoVisible() const;
 
     EditorContext& ctx_;
     FlyCameraController camera_;
     mutable float lastAspect_ = 16.0f / 9.0f;
+    TransformGizmo gizmo_;
+    render::OverlayGeometry overlay_;
+    Uuid dragTarget_;
 };
 
 } // namespace lumora::editor

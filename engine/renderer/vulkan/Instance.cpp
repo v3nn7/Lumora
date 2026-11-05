@@ -120,7 +120,13 @@ Instance::Instance(const InstanceConfig& config) {
     if (validation_ && debugUtils_) {
         info.pNext = &dbg;  // also captures instance creation/destruction messages
     }
-    LUMORA_VK_CHECK(vkCreateInstance(&info, nullptr, &instance_));
+    const VkResult created = vkCreateInstance(&info, nullptr, &instance_);
+    if (created == VK_ERROR_INCOMPATIBLE_DRIVER) {
+        // The loader found no driver that implements Vulkan 1.4 (or none at all).
+        throw UnsupportedHardwareError(std::format("no Vulkan driver supports Vulkan {} (vkCreateInstance: {})",
+                                                   versionString(kRequiredApiVersion), toString(created)));
+    }
+    LUMORA_VK_CHECK(created);
 
     if (validation_ && debugUtils_) {
         auto create = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(

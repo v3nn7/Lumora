@@ -488,7 +488,11 @@ TEST(CollabSecurity, HostIdentityIsAValidSelfSignedCertificate) {
     auto again = loadOrCreateHostIdentity(folder);
     ASSERT_TRUE(first.has_value() && again.has_value());
     EXPECT_EQ(first->fingerprint, again->fingerprint) << "the host keeps its identity between sessions";
+#ifndef Q_OS_WIN
+    // POSIX mode bits. On Windows the key is protected by the ACL of the user's profile folder,
+    // which QFile::permissions() does not report.
     EXPECT_EQ(QFile(folder + "/host.key").permissions() & (QFile::ReadGroup | QFile::ReadOther), QFile::Permissions{});
+#endif
 }
 
 TEST(CollabSecurity, DatagramsAreSealed) {

@@ -242,8 +242,6 @@ jobs:
     runs-on: ubuntu-24.04
     environment: release
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: auto
       # R2 does not support the newer default integrity checksums of the AWS CLI.
       AWS_REQUEST_CHECKSUM_CALCULATION: when_required
@@ -253,6 +251,24 @@ jobs:
       VERSION: ${{ needs.build.outputs.version }}
       CHANNEL: ${{ needs.build.outputs.channel }}
     steps:
+      # A pasted secret easily carries a trailing newline or space, which the AWS CLI sends in
+      # the Authorization header (AWS_ERROR_HTTP_INVALID_HEADER_VALUE). Keys never contain whitespace.
+      - name: R2 credentials
+        env:
+          KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          SECRET: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          id=$(printf '%s' "$KEY_ID" | tr -d '[:space:]')
+          secret=$(printf '%s' "$SECRET" | tr -d '[:space:]')
+          if [[ -z "$id" || -z "$secret" ]]; then echo "::error::R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY are not set"; exit 1; fi
+          echo "::add-mask::$id"
+          echo "::add-mask::$secret"
+          echo "R2 key id: ${#id} characters, secret: ${#secret} characters"
+          {
+            echo "AWS_ACCESS_KEY_ID=$id"
+            echo "AWS_SECRET_ACCESS_KEY=$secret"
+          } >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4

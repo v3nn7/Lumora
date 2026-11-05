@@ -42,13 +42,36 @@ FetchContent_Declare(stb
     URL_HASH SHA256=9a955b1b49a4410088a2e0ee2a9c057c3c907d0c1d75454144cb980aca0ba515
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 
+# Jolt Physics. Portable x86-64 baseline (SSE4.2); no AVX/LZCNT/F16C/FMA assumptions about the
+# user's CPU. Samples, tests, GPU compute, debug renderer and profiler are not built.
+FetchContent_Declare(JoltPhysics
+    URL https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.6.0.tar.gz
+    URL_HASH SHA256=6e069ee0172478cc78182047aac87e5310ba14a67a53348ae14cc37801fd3f8e
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR Build
+    SYSTEM)
+foreach(opt TARGET_UNIT_TESTS TARGET_HELLO_WORLD TARGET_PERFORMANCE_TEST TARGET_SAMPLES TARGET_VIEWER
+            USE_AVX USE_AVX2 USE_AVX512 USE_LZCNT USE_TZCNT USE_F16C USE_FMADD
+            INTERPROCEDURAL_OPTIMIZATION ENABLE_ALL_WARNINGS OVERRIDE_CXX_FLAGS FLOATING_POINT_EXCEPTIONS_ENABLED
+            DEBUG_RENDERER_IN_DEBUG_AND_RELEASE PROFILER_IN_DEBUG_AND_RELEASE ENABLE_OBJECT_STREAM ENABLE_INSTALL
+            JPH_USE_DX12 JPH_USE_VK JPH_USE_MTL JPH_USE_CPU_COMPUTE)
+    set(${opt} OFF CACHE INTERNAL "")
+endforeach()
+# RTTI on: sanitizers (UBSan vptr) and dynamic_cast across the boundary need Jolt's typeinfo.
+set(CPP_RTTI_ENABLED ON CACHE INTERNAL "")
+set(USE_SSE4_1 ON CACHE INTERNAL "")
+set(USE_SSE4_2 ON CACHE INTERNAL "")
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(USE_ASSERTS ON CACHE INTERNAL "")
+endif()
+
 set(GLM_BUILD_TESTS OFF CACHE INTERNAL "")
 set(GLM_BUILD_LIBRARY OFF CACHE INTERNAL "")
 set(JSON_BuildTests OFF CACHE INTERNAL "")
 set(JSON_Install OFF CACHE INTERNAL "")
 set(VMA_ENABLE_INSTALL OFF CACHE INTERNAL "")
 
-FetchContent_MakeAvailable(glm EnTT VulkanMemoryAllocator nlohmann_json cgltf stb)
+FetchContent_MakeAvailable(glm EnTT VulkanMemoryAllocator nlohmann_json cgltf stb JoltPhysics)
 add_library(stb INTERFACE)
 target_include_directories(stb SYSTEM INTERFACE ${stb_SOURCE_DIR})
 add_library(cgltf INTERFACE)

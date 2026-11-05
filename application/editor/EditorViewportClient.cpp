@@ -7,6 +7,7 @@
 #include <QObject>
 
 #include <glm/common.hpp>
+#include <glm/matrix.hpp>
 
 #include <algorithm>
 
@@ -35,7 +36,57 @@ void EditorViewportClient::viewportTick(float dt, const InputState& input, bool)
     if (scene != nullptr) scene->updateWorldTransforms();
     overlay_.clear();
     if (gizmoVisible()) {
+        drawColliderOf(*scene, ctx_.selectedEntity());
         gizmo_.build(*scene, ctx_.selectedEntity(), camera_.view(lastAspect_), overlay_);
+    }
+}
+
+void EditorViewportClient::drawColliderOf(const Scene& scene, entt::entity e) {
+    const auto* collider = scene.registry().try_get<ColliderComponent>(e);
+    if (collider == nullptr) return;
+    const CameraView view = camera_.view(lastAspect_);
+    const glm::vec3 forward = -glm::normalize(glm::vec3(glm::inverse(view.view)[2]));
+    render::OverlayBuilder b(overlay_, forward);
+    const glm::mat4 world = scene.worldMatrix(e);
+    glm::vec3 axes[3];
+    glm::vec3 scale;
+    for (int i = 0; i < 3; ++i) {
+        scale[i] = glm::length(glm::vec3(world[i]));
+        axes[i] = scale[i] > 1e-8f ? glm::vec3(world[i]) / scale[i] : glm::vec3(0.0f);
+    }
+    const glm::vec3 center = glm::vec3(world * glm::vec4(collider->offset, 1.0f));
+    const float distance = glm::length(center - view.position);
+    const float line = std::max(distance * 0.0012f, 0.002f);
+    const glm::vec4 edge{0.35f, 0.95f, 0.45f, 0.9f};
+    const glm::vec4 fill{0.35f, 0.95f, 0.45f, 0.08f};
+    const glm::vec3 s = glm::abs(scale);
+    switch (collider->shape) {
+        case ColliderShape::Box: {
+            const glm::vec3 half[3] = {axes[0] * collider->size.x * s.x * 0.5f, axes[1] * collider->size.y * s.y * 0.5f,
+                                       axes[2] * collider->size.z * s.z * 0.5f};
+            b.solidBox(center, half, fill);
+            b.wireBox(center, half, line, edge);
+            break;
+        }
+        case ColliderShape::Sphere: {
+            const float r = collider->radius * std::max({s.x, s.y, s.z});
+            for (const glm::vec3& axis : axes) b.torus(center, axis, r, line, edge, 48, 4);
+            break;
+        }
+        case ColliderShape::Capsule: {
+            const float r = collider->radius * std::max(s.x, s.z);
+            const float h = collider->height * s.y * 0.5f;
+            const glm::vec3 up = axes[1];
+            for (const float side : {-1.0f, 1.0f}) {
+                b.torus(center + up * (h * side), up, r, line, edge, 48, 4);
+                // Hemisphere outlines: two half-rings approximated by full rings through the cap centre.
+                b.torus(center + up * (h * side), axes[0], r, line, edge * glm::vec4(1, 1, 1, 0.5f), 48, 4);
+            }
+            for (const glm::vec3& side : {axes[0], -axes[0], axes[2], -axes[2]}) {
+                b.cylinder(center + side * r - up * h, center + side * r + up * h, line, edge, 6);
+            }
+            break;
+        }
     }
 }
 

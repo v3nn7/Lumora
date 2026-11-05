@@ -22,6 +22,8 @@ constexpr std::array kTemplates{
                         "Ground plane, primitives and lighting - a starting point for prototyping."},
     ProjectTemplateInfo{ProjectTemplate::MaterialShowcase, "showcase", "Material Showcase",
                         "A grid of spheres sweeping metallic and roughness to inspect PBR shading."},
+    ProjectTemplateInfo{ProjectTemplate::PhysicsPlayground, "physics", "Physics Playground",
+                        "Rigid bodies on Jolt Physics: a tower of crates, rolling balls and a spinning paddle. Press Play."},
 };
 } // namespace
 

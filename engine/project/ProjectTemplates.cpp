@@ -43,6 +43,9 @@ entt::entity addGround(Scene& scene, float size) {
     const entt::entity ground = addMesh(scene, "Ground", MeshPrimitive::Plane, {0, 0, 0}, {0.42f, 0.42f, 0.43f}, 0.0f, 0.85f);
     scene.registry().get<TransformComponent>(ground).scale = {size, 1.0f, size};
     scene.registry().get<MeshRendererComponent>(ground).pattern = SurfacePattern::Grid;
+    auto& collider = scene.registry().emplace<ColliderComponent>(ground);  // static ground for physics
+    collider.size = {1.0f, 0.02f, 1.0f};
+    collider.offset = {0.0f, -0.01f, 0.0f};
     return ground;
 }
 
@@ -96,6 +99,49 @@ std::unique_ptr<Scene> createTemplateScene(ProjectTemplate templ) {
                             color, metallic, std::max(t, 0.05f), grid);
                 }
             }
+            break;
+        }
+        case ProjectTemplate::PhysicsPlayground: {
+            addSun(*scene);
+            addCamera(*scene, {7.0f, 4.5f, 9.0f}, {-20.0f, 38.0f, 0.0f});
+            addGround(*scene, 1000.0f);
+            auto body = [&](entt::entity e, ColliderShape shape, float mass) {
+                auto& c = scene->registry().emplace<ColliderComponent>(e);
+                c.shape = shape;
+                auto& rb = scene->registry().emplace<RigidBodyComponent>(e);
+                rb.mass = mass;
+            };
+            // Tower of crates.
+            const entt::entity tower = scene->createEntity("Crate Tower");
+            for (int level = 0; level < 6; ++level) {
+                for (int i = 0; i < 2; ++i) {
+                    const bool alongX = level % 2 == 0;
+                    const float offset = (static_cast<float>(i) - 0.5f) * 1.02f;
+                    const glm::vec3 pos = alongX ? glm::vec3(offset, 0.5f + 1.0f * static_cast<float>(level), 0.0f)
+                                                 : glm::vec3(0.0f, 0.5f + 1.0f * static_cast<float>(level), offset);
+                    const entt::entity crate = addMesh(*scene, std::format("Crate {}-{}", level, i), MeshPrimitive::Cube, pos,
+                                                       {0.50f, 0.33f, 0.18f}, 0.0f, 0.8f, tower);
+                    body(crate, ColliderShape::Box, 8.0f);
+                }
+            }
+            // Balls dropped from above.
+            const entt::entity balls = scene->createEntity("Balls");
+            for (int i = 0; i < 5; ++i) {
+                const entt::entity ball = addMesh(*scene, std::format("Ball {}", i), MeshPrimitive::Sphere,
+                                                  {-3.0f + 0.35f * static_cast<float>(i), 4.0f + 1.4f * static_cast<float>(i), -1.5f + 0.6f * static_cast<float>(i)},
+                                                  {0.95f, 0.45f - 0.07f * static_cast<float>(i), 0.12f}, 0.0f, 0.35f, balls);
+                body(ball, ColliderShape::Sphere, 2.0f);
+                scene->registry().get<RigidBodyComponent>(ball).restitution = 0.45f;
+            }
+            // Kinematic paddle sweeping through the tower.
+            const entt::entity paddle = addMesh(*scene, "Spinning Paddle", MeshPrimitive::Cube, {0.0f, 0.6f, 0.0f},
+                                                {0.85f, 0.85f, 0.9f}, 1.0f, 0.3f);
+            auto& pt = scene->registry().get<TransformComponent>(paddle);
+            pt.position = {3.3f, 0.6f, 0.0f};
+            pt.scale = {6.0f, 0.5f, 0.4f};
+            body(paddle, ColliderShape::Box, 1.0f);
+            scene->registry().get<RigidBodyComponent>(paddle).motion = BodyMotion::Kinematic;
+            scene->registry().emplace<RotatorComponent>(paddle).speedDeg = 40.0f;
             break;
         }
     }

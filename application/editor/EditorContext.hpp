@@ -57,6 +57,9 @@ public:
     /// Records a transform change that has already been applied (e.g. at the end of a gizmo drag).
     void commitTransform(Uuid id, const QString& text, const TransformComponent& before);
 
+    /// Called inside the recorded edit right after a component was added (e.g. to fit a collider).
+    std::function<void(Scene&, entt::entity, const ComponentDesc&)> onComponentAdded;
+
     // ---- History ---------------------------------------------------------------------------
     [[nodiscard]] QUndoStack& undoStack() noexcept { return undo_; }
     /// Forgets all history (new scene loaded) and marks the current state as saved.

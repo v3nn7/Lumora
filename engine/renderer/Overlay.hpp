@@ -39,6 +39,10 @@ public:
     void orientedBox(const glm::vec3& center, const glm::vec3 axes[3], float halfExtent, const glm::vec4& color);
     void torus(const glm::vec3& center, const glm::vec3& axis, float radius, float thickness, const glm::vec4& color,
                int segments = 64, int sides = 6);
+    /// Box spanned by three (not necessarily unit) half-axis vectors.
+    void solidBox(const glm::vec3& center, const glm::vec3 halfAxes[3], const glm::vec4& color);
+    /// The 12 edges of such a box as thin cylinders.
+    void wireBox(const glm::vec3& center, const glm::vec3 halfAxes[3], float thickness, const glm::vec4& color);
 
 private:
     OverlayGeometry& out_;

@@ -47,6 +47,8 @@ private:
     [[nodiscard]] bool viewingThroughSceneCamera() const;
     /// The gizmo is shown for the selection while editing (not in play mode).
     [[nodiscard]] bool gizmoVisible() const;
+    /// Translucent collider outline for the selected entity (editing only).
+    void drawColliderOf(const Scene& scene, entt::entity e);
 
     EditorContext& ctx_;
     FlyCameraController camera_;

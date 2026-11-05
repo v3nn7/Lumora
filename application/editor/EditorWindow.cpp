@@ -20,6 +20,7 @@
 #include "runtime/Simulation.hpp"
 #include "assets/AssetImport.hpp"
 #include "scene/ModelInstance.hpp"
+#include "scene/PhysicsHelpers.hpp"
 #include "scene/SceneSerializer.hpp"
 
 #include <QActionGroup>
@@ -109,6 +110,17 @@ EditorWindow::EditorWindow(app::AppContext& app, Project project, QWidget* paren
         if (simulation_ && !paused_) simulation_->advance(dt);
     };
     client_->onShortcut = [this](int key, Qt::KeyboardModifiers mods) { return handleShortcut(key, mods); };
+    ctx_.onComponentAdded = [this](Scene& scene, entt::entity e, const ComponentDesc& component) {
+        // A new collider starts out matching the entity's mesh.
+        if (component.id != "Collider") return;
+        const auto* mesh = scene.registry().try_get<MeshRendererComponent>(e);
+        if (mesh == nullptr) return;
+        const Aabb* bounds = nullptr;
+        if (!mesh->meshAsset.empty()) {
+            if (auto asset = assets_.mesh(mesh->meshAsset)) bounds = &(*asset)->data.bounds;
+        }
+        fitColliderToMesh(scene.registry().get<ColliderComponent>(e), *mesh, bounds);
+    };
 
     buildActions();
     buildCentral();

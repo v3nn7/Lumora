@@ -46,6 +46,7 @@ lumora_engine_module(scene
         scene/Camera.cpp
         scene/Picking.cpp
         scene/ModelInstance.cpp
+        scene/PhysicsHelpers.cpp
     DEPS lumora_core lumora_assets lumora_input EnTT::EnTT glm::glm nlohmann_json::nlohmann_json)
 
 lumora_engine_module(project

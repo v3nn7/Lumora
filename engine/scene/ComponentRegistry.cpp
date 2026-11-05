@@ -88,6 +88,31 @@ ComponentRegistry makeBuiltin() {
         reg.add(std::move(d));
     }
     {
+        auto d = R::describe<RigidBodyComponent>("RigidBody", "Rigid Body");
+        d.fields = {
+            enumerated(R::field(&RigidBodyComponent::motion, "motion", "Motion", FieldKind::Enum),
+                       {"Static", "Kinematic", "Dynamic"}),
+            ranged(R::field(&RigidBodyComponent::mass, "mass", "Mass (kg)", FieldKind::Float), 0.001f, 1e6f, 0.1f),
+            ranged(R::field(&RigidBodyComponent::friction, "friction", "Friction", FieldKind::Float), 0.0f, 1.0f, 0.01f),
+            ranged(R::field(&RigidBodyComponent::restitution, "restitution", "Bounciness", FieldKind::Float), 0.0f, 1.0f, 0.01f),
+            ranged(R::field(&RigidBodyComponent::linearDamping, "linearDamping", "Linear Damping", FieldKind::Float), 0.0f, 10.0f, 0.01f),
+            ranged(R::field(&RigidBodyComponent::angularDamping, "angularDamping", "Angular Damping", FieldKind::Float), 0.0f, 10.0f, 0.01f),
+            ranged(R::field(&RigidBodyComponent::gravityFactor, "gravityFactor", "Gravity Factor", FieldKind::Float), -10.0f, 10.0f, 0.05f),
+        };
+        reg.add(std::move(d));
+    }
+    {
+        auto d = R::describe<ColliderComponent>("Collider", "Collider");
+        d.fields = {
+            enumerated(R::field(&ColliderComponent::shape, "shape", "Shape", FieldKind::Enum), {"Box", "Sphere", "Capsule"}),
+            ranged(R::field(&ColliderComponent::size, "size", "Box Size", FieldKind::Vec3), 0.001f, 1e5f, 0.05f),
+            ranged(R::field(&ColliderComponent::radius, "radius", "Radius", FieldKind::Float), 0.001f, 1e5f, 0.01f),
+            ranged(R::field(&ColliderComponent::height, "height", "Height", FieldKind::Float), 0.0f, 1e5f, 0.05f),
+            R::field(&ColliderComponent::offset, "offset", "Offset", FieldKind::Vec3),
+        };
+        reg.add(std::move(d));
+    }
+    {
         auto d = R::describe<RotatorComponent>("Rotator", "Rotator");
         d.fields = {
             R::field(&RotatorComponent::axis, "axis", "Axis", FieldKind::Vec3),

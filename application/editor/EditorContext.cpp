@@ -152,6 +152,7 @@ void EditorContext::addComponent(Uuid id, const ComponentDesc& component) {
     if (e == entt::null || component.has(scene_->registry(), e)) return;
     structuralEdit(tr("Add %1").arg(QString::fromStdString(component.label)), [&] {
         component.add(scene_->registry(), e);
+        if (onComponentAdded) onComponentAdded(*scene_, e, component);
         scene_->updateWorldTransforms();
     });
     emit structureChanged();

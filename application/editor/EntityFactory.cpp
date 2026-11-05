@@ -37,6 +37,35 @@ void populateCreateMenu(QMenu& menu, EditorContext& ctx, bool asChild) {
             scene.registry().get<TransformComponent>(e).scale = {10.0f, 1.0f, 10.0f};
         }, asChild);
     });
+    QMenu* physics = menu.addMenu(icon(QStringLiteral("sparkle")), QObject::tr("Physics"));
+    auto physicsBody = [](MeshPrimitive primitive, ColliderShape shape, float y) {
+        return [primitive, shape, y](Scene& scene, entt::entity e) {
+            auto& mesh = scene.registry().emplace<MeshRendererComponent>(e);
+            mesh.mesh = primitive;
+            mesh.baseColor = shape == ColliderShape::Sphere ? glm::vec3(0.9f, 0.55f, 0.15f) : glm::vec3(0.25f, 0.55f, 0.9f);
+            auto& collider = scene.registry().emplace<ColliderComponent>(e);
+            collider.shape = shape;
+            scene.registry().emplace<RigidBodyComponent>(e);
+            scene.registry().get<TransformComponent>(e).position.y = y;
+        };
+    };
+    physics->addAction(icon(QStringLiteral("cube")), QObject::tr("Dynamic Cube"), [&ctx, asChild, physicsBody] {
+        ctx.createEntity(QObject::tr("Physics Cube"), physicsBody(MeshPrimitive::Cube, ColliderShape::Box, 3.0f), asChild);
+    });
+    physics->addAction(icon(QStringLiteral("sphere")), QObject::tr("Dynamic Sphere"), [&ctx, asChild, physicsBody] {
+        ctx.createEntity(QObject::tr("Physics Sphere"), physicsBody(MeshPrimitive::Sphere, ColliderShape::Sphere, 3.0f), asChild);
+    });
+    physics->addAction(icon(QStringLiteral("plane")), QObject::tr("Static Floor"), [&ctx, asChild] {
+        ctx.createEntity(QObject::tr("Floor"), [](Scene& scene, entt::entity e) {
+            auto& mesh = scene.registry().emplace<MeshRendererComponent>(e);
+            mesh.mesh = MeshPrimitive::Plane;
+            mesh.pattern = SurfacePattern::Grid;
+            auto& collider = scene.registry().emplace<ColliderComponent>(e);
+            collider.size = {1.0f, 0.02f, 1.0f};
+            collider.offset = {0.0f, -0.01f, 0.0f};
+            scene.registry().get<TransformComponent>(e).scale = {20.0f, 1.0f, 20.0f};
+        }, asChild);
+    });
     menu.addSeparator();
     menu.addAction(icon(QStringLiteral("sun")), QObject::tr("Directional Light"), [&ctx, asChild] {
         ctx.createEntity(QObject::tr("Directional Light"), [](Scene& scene, entt::entity e) {

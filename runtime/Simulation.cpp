@@ -1,5 +1,6 @@
 #include "runtime/Simulation.hpp"
 
+#include "runtime/PhysicsWorld.hpp"
 #include "scene/Scene.hpp"
 
 #include <glm/geometric.hpp>
@@ -31,7 +32,12 @@ void runRotatorSystem(Scene& scene, float dt) {
 
 } // namespace
 
-Simulation::Simulation(Scene& scene, double fixedStep) : scene_(scene), fixedStep_(fixedStep > 0.0 ? fixedStep : kDefaultFixedStep) {}
+Simulation::Simulation(Scene& scene, double fixedStep)
+    : scene_(scene), fixedStep_(fixedStep > 0.0 ? fixedStep : kDefaultFixedStep) {
+    if (PhysicsWorld::sceneHasColliders(scene_)) physics_ = std::make_unique<PhysicsWorld>(scene_);
+}
+
+Simulation::~Simulation() = default;
 
 int Simulation::advance(double frameSeconds) {
     accumulator_ += std::clamp(frameSeconds, 0.0, fixedStep_ * kMaxStepsPerFrame);
@@ -50,6 +56,10 @@ void Simulation::step() {
     const auto dt = static_cast<float>(fixedStep_);
     runRotatorSystem(scene_, dt);
     scene_.updateWorldTransforms();
+    if (physics_) {
+        physics_->step(dt);
+        scene_.updateWorldTransforms();
+    }
     ++steps_;
 }
 

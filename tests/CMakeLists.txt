@@ -14,7 +14,8 @@ add_executable(lumora_tests
     CommandLineTests.cpp
     GltfTests.cpp
     StbWriteImpl.cpp
-    JobSystemTests.cpp)
+    JobSystemTests.cpp
+    PhysicsTests.cpp)
 target_link_libraries(lumora_tests PRIVATE
     lumora_core lumora_scene lumora_project lumora_runtime lumora_renderer lumora_cli
     GTest::gtest lumora_compile_options)

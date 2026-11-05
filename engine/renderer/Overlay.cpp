@@ -101,6 +101,32 @@ void OverlayBuilder::box(const glm::vec3& center, const glm::vec3& h, const glm:
     quad(p[4], p[5], p[1], p[0], color);
 }
 
+void OverlayBuilder::solidBox(const glm::vec3& c, const glm::vec3 h[3], const glm::vec4& color) {
+    const glm::vec3 x = h[0], y = h[1], z = h[2];
+    const glm::vec3 p[8] = {c - x - y - z, c + x - y - z, c + x + y - z, c - x + y - z,
+                            c - x - y + z, c + x - y + z, c + x + y + z, c - x + y + z};
+    quad(p[0], p[1], p[2], p[3], color);
+    quad(p[5], p[4], p[7], p[6], color);
+    quad(p[4], p[0], p[3], p[7], color);
+    quad(p[1], p[5], p[6], p[2], color);
+    quad(p[3], p[2], p[6], p[7], color);
+    quad(p[4], p[5], p[1], p[0], color);
+}
+
+void OverlayBuilder::wireBox(const glm::vec3& c, const glm::vec3 h[3], float thickness, const glm::vec4& color) {
+    for (int axis = 0; axis < 3; ++axis) {
+        const glm::vec3& a = h[axis];
+        const glm::vec3& u = h[(axis + 1) % 3];
+        const glm::vec3& v = h[(axis + 2) % 3];
+        for (const float su : {-1.0f, 1.0f}) {
+            for (const float sv : {-1.0f, 1.0f}) {
+                const glm::vec3 base = c + u * su + v * sv;
+                cylinder(base - a, base + a, thickness, color, 6);
+            }
+        }
+    }
+}
+
 void OverlayBuilder::torus(const glm::vec3& center, const glm::vec3& axis, float radius, float thickness,
                            const glm::vec4& color, int segments, int sides) {
     const glm::vec3 n = glm::normalize(axis);

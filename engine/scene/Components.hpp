@@ -85,6 +85,31 @@ struct RotatorComponent {
     float speedDeg = 45.0f;
 };
 
+enum class BodyMotion : std::int32_t { Static = 0, Kinematic = 1, Dynamic = 2 };
+
+/// Simulated body. Without a RigidBody, an entity with a Collider is a static obstacle.
+/// Kinematic bodies follow the entity transform (e.g. animated by a Rotator) and push dynamic ones.
+struct RigidBodyComponent {
+    BodyMotion motion = BodyMotion::Dynamic;
+    float mass = 1.0f;  // kg; inertia is derived from the collider shape
+    float friction = 0.5f;
+    float restitution = 0.1f;
+    float linearDamping = 0.05f;
+    float angularDamping = 0.05f;
+    float gravityFactor = 1.0f;
+};
+
+enum class ColliderShape : std::int32_t { Box = 0, Sphere = 1, Capsule = 2 };
+
+/// Collision shape in the entity's local space; the entity's world scale is applied.
+struct ColliderComponent {
+    ColliderShape shape = ColliderShape::Box;
+    glm::vec3 size{1.0f};    // box full extents
+    float radius = 0.5f;     // sphere / capsule
+    float height = 1.0f;     // capsule cylinder part (total = height + 2 * radius)
+    glm::vec3 offset{0.0f};  // local-space centre offset
+};
+
 /// Scene-wide settings stored alongside entities.
 struct EnvironmentSettings {
     glm::vec3 skyZenithColor{0.07f, 0.20f, 0.56f};

@@ -5,6 +5,7 @@
 #include "launcher/EditorInstaller.hpp"
 #include "launcher/EditorRegistry.hpp"
 #include "launcher/FileList.hpp"
+#include "launcher/HubUpdate.hpp"
 #include "launcher/ReleaseManifest.hpp"
 #include "launcher/Signature.hpp"
 #include "launcher/ZipExtractor.hpp"
@@ -201,6 +202,32 @@ TEST(LauncherChannels, FilterFromStableToAlpha) {
     EXPECT_EQ(manifest->visible(linux, Channel::Beta).size(), 3u);
     EXPECT_EQ(manifest->visible(linux, Channel::Alpha).size(), 4u);
     EXPECT_TRUE(manifest->visible(QStringLiteral("windows-x64"), Channel::Alpha).empty());
+}
+
+TEST(LauncherHubUpdate, OffersNewerReleasesOnTheHubsChannel) {
+    const std::string sha(64, 'c');
+    auto release = [&](const char* version, const char* channel) {
+        return std::string(R"({"version":")") + version + R"(","channel":")" + channel +
+               R"(","packages":{"linux-x64":{"url":"a.zip","size":1,"sha256":")" + sha + R"("}}})";
+    };
+    const QByteArray feed = QByteArray::fromStdString(R"({"format":"lumora.releases","version":1,"releases":[)" +
+                                                      release("0.4.0", "stable") + "," + release("0.5.0-beta.1", "beta") +
+                                                      "," + release("0.6.0-alpha.3", "alpha") + "]}");
+    auto manifest = ReleaseManifest::parse(feed, QUrl(QStringLiteral("https://x/editor/manifest.json")));
+    ASSERT_TRUE(manifest.has_value());
+    const QString linux = QStringLiteral("linux-x64");
+    auto offer = [&](const char* current, Channel preferred, const char* skipped = "") {
+        return hubUpdateAvailable(*manifest, QString::fromLatin1(current), preferred, linux, QString::fromLatin1(skipped));
+    };
+    EXPECT_EQ(offer("0.3.0", Channel::Stable), std::optional<QString>(QStringLiteral("0.4.0")));
+    EXPECT_EQ(offer("0.4.0", Channel::Stable), std::nullopt) << "already the newest stable";
+    EXPECT_EQ(offer("0.4.0", Channel::Beta), std::optional<QString>(QStringLiteral("0.5.0-beta.1")));
+    EXPECT_EQ(offer("0.6.0-alpha.1", Channel::Stable), std::optional<QString>(QStringLiteral("0.6.0-alpha.3")))
+        << "an alpha Hub follows alphas even when the Editors page shows stable only";
+    EXPECT_EQ(offer("0.3.0", Channel::Stable, "0.4.0"), std::nullopt) << "the user skipped this version";
+    EXPECT_EQ(offer("0.7.0", Channel::Alpha), std::nullopt) << "a development build newer than any release";
+    EXPECT_EQ(hubUpdateAvailable(*manifest, QStringLiteral("0.3.0"), Channel::Alpha, QStringLiteral("windows-x64"), {}),
+              std::nullopt) << "no release for this platform";
 }
 
 TEST(LauncherManifest, RejectsMalformedFeeds) {

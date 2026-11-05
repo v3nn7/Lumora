@@ -51,6 +51,9 @@ private:
     void updateAbout();
     void updateEmptyState();
     void renderHero();
+    /// Looks for a newer release in the feed once per start and offers it in a small dialog.
+    /// Installing stays manual: the dialog links to the download page.
+    void checkForHubUpdate();
     void openProjectSettings(const QString& descriptor);
     void removeFromList(const QString& descriptor);
     void selectDescriptor(const QString& descriptor);
@@ -68,6 +71,7 @@ private:
     QLabel* countLabel_ = nullptr;
     bool aboutFilled_ = false;
     bool heroRendered_ = false;
+    bool updateChecked_ = false;
     EditorsPage* editorsPage_ = nullptr;
     QButtonGroup* nav_ = nullptr;
 };

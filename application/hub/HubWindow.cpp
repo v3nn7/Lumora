@@ -12,6 +12,10 @@
 #include "hub/ProjectDetailsPanel.hpp"
 #include "hub/ProjectCardDelegate.hpp"
 #include "hub/ProjectListModel.hpp"
+#include "launcher/EditorInstaller.hpp"
+#include "launcher/EditorRegistry.hpp"
+#include "launcher/HubUpdate.hpp"
+#include "launcher/Signature.hpp"
 #include "project/ProjectTemplates.hpp"
 #include "renderer/RenderContext.hpp"
 #include "renderer/Renderer.hpp"
@@ -25,6 +29,7 @@
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -33,6 +38,7 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
+#include <QSettings>
 #include <QStackedWidget>
 #include <QTimer>
 #include <QUrl>
@@ -110,6 +116,55 @@ void HubWindow::showEvent(QShowEvent* event) {
         // After the first paint, so the window appears immediately even while Vulkan starts.
         QTimer::singleShot(60, this, &HubWindow::renderHero);
     }
+    if (!updateChecked_) {
+        updateChecked_ = true;
+        QTimer::singleShot(1500, this, &HubWindow::checkForHubUpdate);
+    }
+}
+
+void HubWindow::checkForHubUpdate() {
+    const QString feed = launcher::EditorRegistry::feedUrl();
+    // Headless test runs and builds without a feed never ask.
+    if (feed.isEmpty() || QGuiApplication::platformName() == QLatin1String("offscreen") ||
+        qEnvironmentVariableIsSet("LUMORA_NO_UPDATE_CHECK")) {
+        return;
+    }
+    auto* installer = new launcher::EditorInstaller(launcher::EditorInstaller::defaultInstallRoot(), this);
+    installer->setPublicKey(launcher::releasePublicKey());  // same signature rules as installing
+    connect(installer, &launcher::EditorInstaller::manifestFailed, installer, [installer](const QString& error) {
+        log::info("Hub", "update check skipped: {}", error.toStdString());
+        installer->deleteLater();
+    });
+    connect(installer, &launcher::EditorInstaller::manifestReady, this,
+            [this, installer](const launcher::ReleaseManifest& manifest) {
+                installer->deleteLater();
+                const QString skippedKey = QStringLiteral("hub/skippedUpdate");
+                const QString current = QString::fromLatin1(version::kString);
+                const auto newer = launcher::hubUpdateAvailable(manifest, current, launcher::EditorRegistry::preferredChannel(),
+                                                                launcher::currentPlatform(),
+                                                                QSettings().value(skippedKey).toString());
+                if (!newer) return;
+                log::info("Hub", "Lumora Hub {} is available (running {})", newer->toStdString(), current.toStdString());
+                auto* box = new QMessageBox(QMessageBox::Information, tr("Lumora Hub update"),
+                                            tr("<b>Lumora Hub %1 is available.</b><br>You are using %2.").arg(*newer, current),
+                                            QMessageBox::NoButton, this);
+                box->setInformativeText(tr("Download it from the website and install it over this one. "
+                                           "Your editors and projects stay as they are."));
+                QPushButton* download = box->addButton(tr("Download"), QMessageBox::AcceptRole);
+                QPushButton* skip = box->addButton(tr("Skip This Version"), QMessageBox::RejectRole);
+                box->addButton(tr("Later"), QMessageBox::RejectRole);
+                box->setDefaultButton(download);
+                box->setAttribute(Qt::WA_DeleteOnClose);
+                connect(box, &QMessageBox::buttonClicked, this, [download, skip, skippedKey, version = *newer](QAbstractButton* b) {
+                    if (b == download) {
+                        QDesktopServices::openUrl(QUrl(QStringLiteral("https://lumoraengine.xyz/#download")));
+                    } else if (b == skip) {
+                        QSettings().setValue(skippedKey, version);
+                    }
+                });
+                box->open();
+            });
+    installer->fetchManifest(QUrl::fromUserInput(feed));
 }
 
 void HubWindow::renderHero() {

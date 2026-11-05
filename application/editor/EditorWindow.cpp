@@ -284,6 +284,7 @@ void EditorWindow::buildCentral() {
     container->setFocusPolicy(Qt::StrongFocus);
     container->setMinimumSize(320, 200);
     app::registerViewportContainer(container, viewport_);
+    viewport_->setInputContainer(container);
     viewportStack_->addWidget(container);
     // Clicking the viewport takes focus away from text fields, so keys fly the camera; the
     // container also starts with focus instead of the first line edit in the tab chain.

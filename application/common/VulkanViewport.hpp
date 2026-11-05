@@ -23,6 +23,8 @@ namespace lumora::render {
 class PresentTarget;
 }
 
+class QWidget;
+
 namespace lumora::app {
 
 class AppContext;
@@ -78,6 +80,9 @@ public:
     [[nodiscard]] const InputState& input() const noexcept { return input_; }
     /// Offscreen render of what the viewport currently shows (null image if unavailable).
     [[nodiscard]] QImage captureFrame(QSize pixels);
+    /// The widget from QWidget::createWindowContainer that embeds this viewport. On Wayland the
+    /// viewport then lets pointer input through to it (see setInputContainer in the .cpp).
+    void setInputContainer(QWidget* container);
 
 signals:
     void frameRendered();
@@ -120,6 +125,7 @@ private:
     std::unique_ptr<render::PresentTarget> target_;
     std::unique_ptr<Scene> emptyScene_;
     std::unique_ptr<WaylandPointerLock> pointerLock_;  // Wayland: holds the cursor while looking
+    QWidget* inputContainer_ = nullptr;  // receives the pointer for us on Wayland (pass-through)
     QTimer pointerDrain_;                               // keeps its private event queue drained
     InputState input_;
     QElapsedTimer frameTimer_;

@@ -9,6 +9,7 @@
 
 #include <QAbstractSpinBox>
 #include <QApplication>
+#include <QWidget>
 #include <QComboBox>
 #include <QCursor>
 #include <QLineEdit>
@@ -124,6 +125,20 @@ void VulkanViewport::stopLooking() {
     if (!looking_) return;
     looking_ = false;
     unsetCursor();
+    if (inputContainer_ != nullptr) inputContainer_->unsetCursor();
+}
+
+void VulkanViewport::setInputContainer(QWidget* container) {
+    inputContainer_ = container;
+    if (pointerLock_ == nullptr || container == nullptr) return;
+    // Compositors lock the pointer only on a window's main surface: KWin activates a lock just
+    // when the surface under the pointer is the window's own surface, and an embedded QWindow
+    // like this one is a subsurface. So on Wayland this surface takes no pointer input (empty
+    // input region). The pointer lands on the main window, where the container widget receives
+    // the events and eventFilter() hands them to the handlers below; the lock then goes on the
+    // main surface, which is the one the pointer is over.
+    setFlag(Qt::WindowTransparentForInput, true);
+    container->setMouseTracking(true);
 }
 
 rhi::PresentPolicy VulkanViewport::policy() const noexcept {
@@ -326,6 +341,32 @@ void VulkanViewport::updateEngagement(bool hovered, bool clickFocus) {
 }
 
 bool VulkanViewport::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == inputContainer_ && inputContainer_ != nullptr && flags().testFlag(Qt::WindowTransparentForInput)) {
+        // Pointer pass-through (Wayland): the container's coordinates are the viewport's.
+        switch (event->type()) {
+            case QEvent::MouseButtonPress:
+            case QEvent::MouseButtonDblClick:  // widgets turn a quick second press into this
+                mousePressEvent(static_cast<QMouseEvent*>(event));
+                return true;
+            case QEvent::MouseButtonRelease:
+                mouseReleaseEvent(static_cast<QMouseEvent*>(event));
+                return true;
+            case QEvent::MouseMove:
+                mouseMoveEvent(static_cast<QMouseEvent*>(event));
+                return true;
+            case QEvent::Wheel:
+                wheelEvent(static_cast<QWheelEvent*>(event));
+                return true;
+            case QEvent::Enter:
+                updateEngagement(true, clickFocus_);
+                break;
+            case QEvent::Leave:
+                updateEngagement(false, clickFocus_);
+                break;
+            default:
+                break;
+        }
+    }
     switch (event->type()) {
         case QEvent::MouseButtonPress:
             // A click in another window (panel, menu, dialog) hands the keyboard back to it.
@@ -392,6 +433,7 @@ void VulkanViewport::mousePressEvent(QMouseEvent* e) {
     if (e->button() == Qt::RightButton) {
         looking_ = true;
         setCursor(Qt::BlankCursor);
+        if (inputContainer_ != nullptr) inputContainer_->setCursor(Qt::BlankCursor);
         if (pointerLock_) pointerLock_->lock();  // the cursor stays put; motion comes as deltas
     }
 }

@@ -1,9 +1,13 @@
 #include "assets/GltfImporter.hpp"
 
+#include "assets/Primitives.hpp"
+#include "core/FileSystem.hpp"
+
 #include <cgltf.h>
 #include <glm/geometric.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
+#include <cstdlib>
 #include <cstring>
 #include <format>
 #include <memory>
@@ -61,7 +65,7 @@ std::string nameOr(const char* name, const std::string& fallback) {
 
 /// Appends one triangle primitive to `out`. Returns false (with a warning) if unsupported.
 bool appendPrimitive(const cgltf_primitive& prim, MeshData& out, std::vector<std::string>& warnings,
-                     const std::string& meshName) {
+                     const std::string& meshName, bool& hasTangents) {
     if (prim.type != cgltf_primitive_type_triangles) {
         warnings.push_back(std::format("mesh '{}': skipped non-triangle primitive", meshName));
         return false;
@@ -69,16 +73,19 @@ bool appendPrimitive(const cgltf_primitive& prim, MeshData& out, std::vector<std
     const cgltf_accessor* positions = nullptr;
     const cgltf_accessor* normals = nullptr;
     const cgltf_accessor* uvs = nullptr;
+    const cgltf_accessor* tangents = nullptr;
     for (cgltf_size i = 0; i < prim.attributes_count; ++i) {
         const cgltf_attribute& a = prim.attributes[i];
         if (a.type == cgltf_attribute_type_position) positions = a.data;
         if (a.type == cgltf_attribute_type_normal) normals = a.data;
         if (a.type == cgltf_attribute_type_texcoord && a.index == 0) uvs = a.data;
+        if (a.type == cgltf_attribute_type_tangent) tangents = a.data;
     }
     if (positions == nullptr || positions->count == 0) {
         warnings.push_back(std::format("mesh '{}': primitive without positions skipped", meshName));
         return false;
     }
+    hasTangents = hasTangents && tangents != nullptr;
     if (prim.targets_count > 0) {
         warnings.push_back(std::format("mesh '{}': morph targets are ignored", meshName));
     }
@@ -95,6 +102,7 @@ bool appendPrimitive(const cgltf_primitive& prim, MeshData& out, std::vector<std
             vert.normal = glm::vec3(0.0f);
         }
         if (uvs != nullptr && v < uvs->count) cgltf_accessor_read_float(uvs, v, &vert.uv.x, 2);
+        if (tangents != nullptr && v < tangents->count) cgltf_accessor_read_float(tangents, v, &vert.tangent.x, 4);
     }
 
     const std::size_t firstIndex = out.indices.size();
@@ -136,6 +144,57 @@ bool appendPrimitive(const cgltf_primitive& prim, MeshData& out, std::vector<std
     return true;
 }
 
+/// Encoded bytes of an image: buffer view (.glb), base64 data URI, or external file.
+Result<std::vector<std::byte>> imageBytes(const cgltf_image& image, const std::filesystem::path& modelDir) {
+    if (image.buffer_view != nullptr) {
+        const cgltf_buffer_view& view = *image.buffer_view;
+        if (view.buffer == nullptr || view.buffer->data == nullptr || view.offset + view.size > view.buffer->size) {
+            return makeError("image buffer view is out of range");
+        }
+        const auto* begin = static_cast<const std::byte*>(view.buffer->data) + view.offset;
+        return std::vector<std::byte>(begin, begin + view.size);
+    }
+    if (image.uri == nullptr) return makeError("image has neither a URI nor a buffer view");
+    if (std::strncmp(image.uri, "data:", 5) == 0) {
+        const char* comma = std::strchr(image.uri, ',');
+        if (comma == nullptr || std::strstr(image.uri, ";base64,") == nullptr) return makeError("unsupported data URI");
+        const char* b64 = comma + 1;
+        const std::size_t length = std::strlen(b64);
+        std::size_t padding = 0;
+        if (length >= 1 && b64[length - 1] == '=') ++padding;
+        if (length >= 2 && b64[length - 2] == '=') ++padding;
+        const std::size_t size = length / 4 * 3 - padding;
+        void* decoded = nullptr;
+        cgltf_options options{};
+        if (cgltf_load_buffer_base64(&options, size, b64, &decoded) != cgltf_result_success) {
+            return makeError("invalid base64 image data");
+        }
+        std::vector<std::byte> bytes(static_cast<const std::byte*>(decoded), static_cast<const std::byte*>(decoded) + size);
+        std::free(decoded);
+        return bytes;
+    }
+    std::string relative(image.uri);
+    cgltf_decode_uri(relative.data());
+    relative.resize(std::strlen(relative.c_str()));
+    const std::filesystem::path path = (modelDir / relative).lexically_normal();
+    return fs::readBinaryFile(path);
+}
+
+int imageIndexOf(const cgltf_data& data, const cgltf_texture_view& view, std::vector<std::string>& warnings,
+                 const std::string& material) {
+    if (view.texture == nullptr) return -1;
+    if (view.texcoord != 0) {
+        warnings.push_back(std::format("material '{}': texture uses UV set {} (only set 0 is supported)", material,
+                                       view.texcoord));
+    }
+    if (view.texture->image == nullptr) {
+        warnings.push_back(std::format("material '{}': texture without a PNG/JPEG image (e.g. KTX2/WebP) skipped",
+                                       material));
+        return -1;
+    }
+    return static_cast<int>(cgltf_image_index(&data, view.texture->image));
+}
+
 } // namespace
 
 Result<ImportedModel> importGltf(const std::filesystem::path& file) {
@@ -154,21 +213,37 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
                                       pbr.base_color_factor[3]);
             mat.metallic = pbr.metallic_factor;
             mat.roughness = pbr.roughness_factor;
-            if (pbr.base_color_texture.texture != nullptr) {
-                model.warnings.push_back(std::format("material '{}': textures are not imported yet", mat.name));
-            }
+            mat.baseColorTexture = imageIndexOf(data, pbr.base_color_texture, model.warnings, mat.name);
+            mat.metallicRoughnessTexture = imageIndexOf(data, pbr.metallic_roughness_texture, model.warnings, mat.name);
         }
         mat.emissive = glm::vec3(src.emissive_factor[0], src.emissive_factor[1], src.emissive_factor[2]);
+        if (src.has_emissive_strength) mat.emissive *= src.emissive_strength.emissive_strength;
+        mat.emissiveTexture = imageIndexOf(data, src.emissive_texture, model.warnings, mat.name);
+        mat.normalTexture = imageIndexOf(data, src.normal_texture, model.warnings, mat.name);
         model.materials.push_back(std::move(mat));
+    }
+
+    for (cgltf_size i = 0; i < data.images_count; ++i) {
+        const cgltf_image& src = data.images[i];
+        ImportedImage image;
+        image.name = nameOr(src.name, std::format("Image {}", i));
+        image.mimeType = src.mime_type != nullptr ? src.mime_type : "";
+        if (auto bytes = imageBytes(src, file.parent_path())) {
+            image.encoded = std::move(*bytes);
+        } else {
+            model.warnings.push_back(std::format("image '{}': {}", image.name, bytes.error().message));
+        }
+        model.images.push_back(std::move(image));
     }
 
     for (cgltf_size m = 0; m < data.meshes_count; ++m) {
         const cgltf_mesh& src = data.meshes[m];
         ImportedMesh mesh;
         mesh.name = nameOr(src.name, std::format("Mesh {}", m));
+        bool hasTangents = true;
         for (cgltf_size p = 0; p < src.primitives_count; ++p) {
             const cgltf_primitive& prim = src.primitives[p];
-            if (appendPrimitive(prim, mesh.data, model.warnings, mesh.name) && mesh.material < 0 &&
+            if (appendPrimitive(prim, mesh.data, model.warnings, mesh.name, hasTangents) && mesh.material < 0 &&
                 prim.material != nullptr) {
                 mesh.material = static_cast<int>(cgltf_material_index(&data, prim.material));
             }
@@ -177,6 +252,7 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
             model.warnings.push_back(std::format("mesh '{}': {} primitives merged (first material used)", mesh.name,
                                                  src.primitives_count));
         }
+        if (!hasTangents) generateTangents(mesh.data);
         mesh.data.bounds = computeBounds(mesh.data.vertices);
         model.meshes.push_back(std::move(mesh));
     }

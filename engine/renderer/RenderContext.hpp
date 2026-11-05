@@ -1,6 +1,7 @@
 #pragma once
 
 #include "renderer/MeshCache.hpp"
+#include "renderer/TextureCache.hpp"
 #include "renderer/vulkan/BindlessTable.hpp"
 #include "renderer/vulkan/Device.hpp"
 #include "renderer/vulkan/Instance.hpp"
@@ -43,11 +44,14 @@ public:
     [[nodiscard]] rhi::ShaderLibrary& shaders() noexcept { return *shaders_; }
     [[nodiscard]] rhi::PipelineCache& pipelineCache() noexcept { return *pipelineCache_; }
     [[nodiscard]] MeshCache& meshes() noexcept { return *meshes_; }
+    [[nodiscard]] TextureCache& textures() noexcept { return *textures_; }
 
     [[nodiscard]] VkDescriptorSetLayout frameSetLayout() const noexcept { return frameSetLayout_.get(); }
     [[nodiscard]] VkPipelineLayout pipelineLayout() const noexcept { return pipelineLayout_.get(); }
     [[nodiscard]] std::uint32_t linearClampSampler() const noexcept { return linearClampIndex_; }
     [[nodiscard]] std::uint32_t shadowCompareSampler() const noexcept { return shadowCompareIndex_; }
+    /// Trilinear, anisotropic (when supported), repeating: for material textures.
+    [[nodiscard]] std::uint32_t materialSampler() const noexcept { return materialSamplerIndex_; }
     [[nodiscard]] VkFormat hdrFormat() const noexcept { return hdrFormat_; }
     [[nodiscard]] VkFormat depthFormat() const noexcept { return depthFormat_; }
 
@@ -62,12 +66,15 @@ private:
     std::unique_ptr<rhi::ShaderLibrary> shaders_;
     std::unique_ptr<rhi::PipelineCache> pipelineCache_;
     std::unique_ptr<MeshCache> meshes_;
+    std::unique_ptr<TextureCache> textures_;
     rhi::UniqueDescriptorSetLayout frameSetLayout_;
     rhi::UniquePipelineLayout pipelineLayout_;
     rhi::UniqueSampler linearClamp_;
     std::uint32_t linearClampIndex_ = 0;
     rhi::UniqueSampler shadowCompare_;
     std::uint32_t shadowCompareIndex_ = 0;
+    rhi::UniqueSampler materialSampler_;
+    std::uint32_t materialSamplerIndex_ = 0;
     VkFormat hdrFormat_ = VK_FORMAT_R16G16B16A16_SFLOAT;
     VkFormat depthFormat_ = VK_FORMAT_D32_SFLOAT;
 };

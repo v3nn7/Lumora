@@ -15,6 +15,22 @@ bool isModelFile(const std::filesystem::path& file) {
     return ext == ".glb" || ext == ".gltf";
 }
 
+Result<std::filesystem::path> importFile(const std::filesystem::path& source,
+                                         const std::filesystem::path& destinationDir) {
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(source, ec)) return makeError("'{}' is not a file", source.string());
+    std::filesystem::create_directories(destinationDir, ec);
+    if (ec) return makeError("cannot create '{}': {}", destinationDir.string(), ec.message());
+    if (std::filesystem::equivalent(source.parent_path(), destinationDir, ec)) return source;
+    std::filesystem::path target = destinationDir / source.filename();
+    for (int n = 1; std::filesystem::exists(target, ec); ++n) {
+        target = destinationDir / std::format("{}_{}{}", source.stem().string(), n, source.extension().string());
+    }
+    std::filesystem::copy_file(source, target, ec);
+    if (ec) return makeError("cannot copy '{}': {}", source.string(), ec.message());
+    return target;
+}
+
 Result<std::filesystem::path> importModelFile(const std::filesystem::path& source,
                                               const std::filesystem::path& destinationDir) {
     std::error_code ec;

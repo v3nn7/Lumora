@@ -14,4 +14,8 @@ namespace lumora {
 [[nodiscard]] Result<std::filesystem::path> importModelFile(const std::filesystem::path& source,
                                                             const std::filesystem::path& destinationDir);
 
+/// Copies a single file (e.g. a texture) into `destinationDir` without overwriting.
+[[nodiscard]] Result<std::filesystem::path> importFile(const std::filesystem::path& source,
+                                                       const std::filesystem::path& destinationDir);
+
 } // namespace lumora

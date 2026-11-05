@@ -32,7 +32,9 @@ lumora_engine_module(assets
         assets/CgltfImpl.cpp
         assets/AssetLibrary.cpp
         assets/AssetImport.cpp
-    DEPS lumora_core glm::glm cgltf)
+        assets/Image.cpp
+        assets/StbImpl.cpp
+    DEPS lumora_core glm::glm cgltf stb)
 
 lumora_engine_module(scene
     SOURCES
@@ -67,6 +69,7 @@ lumora_engine_module(renderer
         renderer/GpuProfiler.cpp
         renderer/TransientImagePool.cpp
         renderer/MeshCache.cpp
+        renderer/TextureCache.cpp
         renderer/RenderContext.cpp
         renderer/Renderer.cpp
         renderer/SceneRenderer.cpp

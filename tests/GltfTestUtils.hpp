@@ -2,6 +2,8 @@
 
 #include "assets/Primitives.hpp"
 
+#include <stb_image_write.h>
+
 #include <cstring>
 #include <filesystem>
 #include <format>
@@ -25,10 +27,29 @@ inline std::string base64(const std::vector<unsigned char>& data) {
     return out;
 }
 
+/// Solid-colour PNG (RGBA8) encoded in memory.
+inline std::vector<unsigned char> solidPng(int width, int height, unsigned char r, unsigned char g, unsigned char b) {
+    std::vector<unsigned char> pixels(static_cast<std::size_t>(width * height * 4));
+    for (std::size_t i = 0; i < pixels.size(); i += 4) {
+        pixels[i] = r;
+        pixels[i + 1] = g;
+        pixels[i + 2] = b;
+        pixels[i + 3] = 255;
+    }
+    std::vector<unsigned char> png;
+    stbi_write_png_to_func(
+        [](void* context, void* data, int size) {
+            auto* out = static_cast<std::vector<unsigned char>*>(context);
+            out->insert(out->end(), static_cast<unsigned char*>(data), static_cast<unsigned char*>(data) + size);
+        },
+        &png, width, height, 4, pixels.data(), width * 4);
+    return png;
+}
+
 /// Writes a glTF 2.0 file containing one cube mesh (positions, normals, uint16 indices) under a
 /// two-level node hierarchy, with a red material. `externalBuffer` stores the binary data in
 /// "data/cube.bin" next to the file instead of a data URI.
-inline void writeCubeGltf(const std::filesystem::path& file, bool externalBuffer) {
+inline void writeCubeGltf(const std::filesystem::path& file, bool externalBuffer, bool greenTexture = false) {
     const MeshData cube = makeCube(1.0f);
     std::vector<unsigned char> bin;
     auto append = [&](const void* p, std::size_t n) {
@@ -38,6 +59,8 @@ inline void writeCubeGltf(const std::filesystem::path& file, bool externalBuffer
     for (const Vertex& v : cube.vertices) append(&v.position, 12);
     const std::size_t normalOffset = bin.size();
     for (const Vertex& v : cube.vertices) append(&v.normal, 12);
+    const std::size_t uvOffset = bin.size();
+    for (const Vertex& v : cube.vertices) append(&v.uv, 8);
     const std::size_t indexOffset = bin.size();
     for (std::uint32_t i : cube.indices) {
         const auto s = static_cast<std::uint16_t>(i);
@@ -53,6 +76,11 @@ inline void writeCubeGltf(const std::filesystem::path& file, bool externalBuffer
         uri = "data:application/octet-stream;base64," + base64(bin);
     }
     const std::size_t n = cube.vertices.size();
+    const std::string material = greenTexture
+        ? R"("materials": [{"name": "Textured", "pbrMetallicRoughness": {"baseColorFactor": [1, 1, 1, 1], "baseColorTexture": {"index": 0}, "metallicFactor": 0.0, "roughnessFactor": 0.6}}],
+  "textures": [{"source": 0}],
+  "images": [{"name": "Green", "uri": "data:image/png;base64,)" + base64(solidPng(8, 8, 20, 220, 40)) + R"("}],)"
+        : R"("materials": [{"name": "Red", "pbrMetallicRoughness": {"baseColorFactor": [0.9, 0.1, 0.05, 1], "metallicFactor": 0.0, "roughnessFactor": 0.5}}],)";
     std::ofstream(file) << std::format(R"({{
   "asset": {{"version": "2.0"}},
   "scene": 0,
@@ -61,22 +89,24 @@ inline void writeCubeGltf(const std::filesystem::path& file, bool externalBuffer
     {{"name": "Root", "translation": [0, 1, 0], "children": [1]}},
     {{"name": "Box", "mesh": 0, "rotation": [0, 0.7071068, 0, 0.7071068], "scale": [2, 2, 2]}}
   ],
-  "meshes": [{{"name": "CubeMesh", "primitives": [{{"attributes": {{"POSITION": 0, "NORMAL": 1}}, "indices": 2, "material": 0}}]}}],
-  "materials": [{{"name": "Red", "pbrMetallicRoughness": {{"baseColorFactor": [0.9, 0.1, 0.05, 1], "metallicFactor": 0.0, "roughnessFactor": 0.5}}}}],
+  "meshes": [{{"name": "CubeMesh", "primitives": [{{"attributes": {{"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 3}}, "indices": 2, "material": 0}}]}}],
+  {}
   "buffers": [{{"byteLength": {}, "uri": "{}"}}],
   "bufferViews": [
     {{"buffer": 0, "byteOffset": 0, "byteLength": {}}},
+    {{"buffer": 0, "byteOffset": {}, "byteLength": {}}},
     {{"buffer": 0, "byteOffset": {}, "byteLength": {}}},
     {{"buffer": 0, "byteOffset": {}, "byteLength": {}}}
   ],
   "accessors": [
     {{"bufferView": 0, "componentType": 5126, "count": {}, "type": "VEC3", "min": [-0.5, -0.5, -0.5], "max": [0.5, 0.5, 0.5]}},
     {{"bufferView": 1, "componentType": 5126, "count": {}, "type": "VEC3"}},
-    {{"bufferView": 2, "componentType": 5123, "count": {}, "type": "SCALAR"}}
+    {{"bufferView": 2, "componentType": 5123, "count": {}, "type": "SCALAR"}},
+    {{"bufferView": 3, "componentType": 5126, "count": {}, "type": "VEC2"}}
   ]
 }})",
-                                       total, uri, n * 12, normalOffset, n * 12, indexOffset, cube.indices.size() * 2, n,
-                                       n, cube.indices.size());
+                                       material, total, uri, n * 12, normalOffset, n * 12, indexOffset,
+                                       cube.indices.size() * 2, uvOffset, n * 8, n, n, cube.indices.size(), n);
 }
 
 } // namespace lumora::test

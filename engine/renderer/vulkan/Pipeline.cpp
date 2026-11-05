@@ -94,10 +94,11 @@ UniquePipeline createGraphicsPipeline(const Device& device, const PipelineCache&
     stages[1].pName = d.fragmentEntry;
 
     const VkVertexInputBindingDescription binding{0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX};
-    const VkVertexInputAttributeDescription attributes[3] = {
+    const VkVertexInputAttributeDescription attributes[4] = {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<std::uint32_t>(offsetof(Vertex, position))},
         {1, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<std::uint32_t>(offsetof(Vertex, normal))},
         {2, 0, VK_FORMAT_R32G32_SFLOAT, static_cast<std::uint32_t>(offsetof(Vertex, uv))},
+        {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, static_cast<std::uint32_t>(offsetof(Vertex, tangent))},
     };
     const VkVertexInputBindingDescription overlayBinding{0, 16, VK_VERTEX_INPUT_RATE_VERTEX};
     const VkVertexInputAttributeDescription overlayAttributes[2] = {
@@ -114,7 +115,7 @@ UniquePipeline createGraphicsPipeline(const Device& device, const PipelineCache&
     if (d.meshVertexInput) {
         vertexInput.vertexBindingDescriptionCount = 1;
         vertexInput.pVertexBindingDescriptions = &binding;
-        vertexInput.vertexAttributeDescriptionCount = d.positionOnly ? 1u : 3u;
+        vertexInput.vertexAttributeDescriptionCount = d.positionOnly ? 1u : 4u;
         vertexInput.pVertexAttributeDescriptions = attributes;
     }
 

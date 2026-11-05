@@ -36,13 +36,21 @@ FetchContent_Declare(cgltf
     URL_HASH SHA256=84e352092e5cd6aab7f66de62ddb66beb5e6f18d412ca9d12950d7a55bfef25a
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 
+# stb (stb_image for PNG/JPEG decoding; stb_image_write for tests). Pinned commit (2026-08-02).
+FetchContent_Declare(stb
+    URL https://github.com/nothings/stb/archive/2c980bb59875b0d32144a71867fbdebb2f77cd20.tar.gz
+    URL_HASH SHA256=9a955b1b49a4410088a2e0ee2a9c057c3c907d0c1d75454144cb980aca0ba515
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+
 set(GLM_BUILD_TESTS OFF CACHE INTERNAL "")
 set(GLM_BUILD_LIBRARY OFF CACHE INTERNAL "")
 set(JSON_BuildTests OFF CACHE INTERNAL "")
 set(JSON_Install OFF CACHE INTERNAL "")
 set(VMA_ENABLE_INSTALL OFF CACHE INTERNAL "")
 
-FetchContent_MakeAvailable(glm EnTT VulkanMemoryAllocator nlohmann_json cgltf)
+FetchContent_MakeAvailable(glm EnTT VulkanMemoryAllocator nlohmann_json cgltf stb)
+add_library(stb INTERFACE)
+target_include_directories(stb SYSTEM INTERFACE ${stb_SOURCE_DIR})
 add_library(cgltf INTERFACE)
 target_include_directories(cgltf SYSTEM INTERFACE ${cgltf_SOURCE_DIR})
 

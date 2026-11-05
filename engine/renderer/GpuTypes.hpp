@@ -32,12 +32,14 @@ struct FrameConstants {
     glm::vec4 sunDirection{0.0f};
     glm::vec4 sunColor{0.0f};
     glm::vec4 gridParams{0.0f};
-    glm::uvec4 counts{0u};                  // x light count, y index of the shadowed sun (or ~0u)
+    glm::uvec4 counts{0u};                  // x light count, y shadowed sun (or ~0u), z material sampler
     glm::mat4 lightViewProjection{1.0f};    // sun shadow map transform
     glm::vec4 shadowParams{0.0f};           // x enabled, y comparison sampler, z texel size (uv), w normal offset (m)
     glm::vec4 fogParams{0.0f};              // x density, y height falloff, z max opacity
     GpuLight lights[kMaxLights]{};
 };
+
+inline constexpr std::uint32_t kNoTexture = 0xffffffffu;
 
 struct GpuObject {
     glm::mat4 world{1.0f};
@@ -45,6 +47,7 @@ struct GpuObject {
     glm::vec4 baseColorMetallic{0.0f};
     glm::vec4 emissiveRoughness{0.0f};
     glm::vec4 flags{0.0f};
+    glm::uvec4 textures{kNoTexture};  // bindless: base colour, metallic-roughness, emissive, normal
 };
 
 struct PushConstants {
@@ -67,7 +70,8 @@ static_assert(offsetof(FrameConstants, shadowParams) == 464);
 static_assert(offsetof(FrameConstants, fogParams) == 480);
 static_assert(offsetof(FrameConstants, lights) == 496);
 static_assert(sizeof(FrameConstants) == 496 + 48 * kMaxLights);
-static_assert(sizeof(GpuObject) == 176);
+static_assert(sizeof(GpuObject) == 192);
+static_assert(offsetof(GpuObject, textures) == 176);
 static_assert(offsetof(GpuObject, flags) == 160);
 static_assert(sizeof(PushConstants) == 32);
 

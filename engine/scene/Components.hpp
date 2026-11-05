@@ -55,6 +55,11 @@ struct MeshRendererComponent {
     glm::vec3 emissive{0.0f};
     float emissiveStrength = 0.0f;
     SurfacePattern pattern = SurfacePattern::None;
+    // Texture maps (project-relative keys, see AssetLibrary). Empty = none.
+    std::string baseColorTexture;
+    std::string metallicRoughnessTexture;  // glTF packing: G = roughness, B = metallic
+    std::string normalTexture;
+    std::string emissiveTexture;
     bool visible = true;
 };
 

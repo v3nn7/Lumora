@@ -27,7 +27,7 @@ struct FrameData {
     float4 sunDirection;        // xyz towards the sun, w = 1 if a sun exists
     float4 sunColor;            // rgb radiance
     float4 gridParams;          // x enabled, y cell size, z fade distance
-    uint4 counts;               // x light count, y shadowed sun index (0xFFFFFFFF = none)
+    uint4 counts;               // x light count, y shadowed sun index (0xFFFFFFFF = none), z material sampler
     column_major float4x4 lightViewProjection;
     float4 shadowParams;        // x enabled, y comparison sampler, z texel size (uv), w normal offset
     float4 fogParams;           // x density, y height falloff, z max opacity
@@ -40,7 +40,10 @@ struct GpuObject {
     float4 baseColorMetallic;   // rgb base color, w metallic
     float4 emissiveRoughness;   // rgb emissive radiance, w roughness
     float4 flags;               // x selected, y surface pattern (0 none, 1 grid, 2 checker)
+    uint4 textures;             // bindless: base colour, metallic-roughness, emissive, normal (NO_TEXTURE = none)
 };
+
+static const uint NO_TEXTURE = 0xFFFFFFFFu;
 
 [[vk::binding(0, 0)]] cbuffer FrameCB { FrameData gFrame; };
 [[vk::binding(1, 0)]] StructuredBuffer<GpuObject> gObjects;

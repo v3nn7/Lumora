@@ -166,3 +166,27 @@ TEST_F(RendererTest, RendersImportedGltfModel) {
     ASSERT_TRUE(renderer_->capture(*scene, cam.view(1.0f), {32, 32}, {}).has_value());
     EXPECT_EQ(renderer_->stats().scene.visibleObjects, 0u);
 }
+
+TEST_F(RendererTest, SamplesMaterialTextures) {
+    test::TempDir project;
+    std::filesystem::create_directories(project.path() / "Content" / "Models");
+    test::writeCubeGltf(project.path() / "Content" / "Models" / "textured.gltf", false, true);
+    AssetLibrary assets(project.path());
+    auto model = assets.model(project.path() / "Content" / "Models" / "textured.gltf");
+    ASSERT_TRUE(model.has_value()) << model.error().message;
+    auto scene = sceneWithSun();
+    const entt::entity root = instantiateModel(*scene, **model, "Content/Models/textured.gltf", "Model");
+    scene->registry().get<TransformComponent>(root).position = {0.0f, -1.0f, 0.0f};
+    scene->updateWorldTransforms();
+
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.0f, 4.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    RenderSettings settings;
+    settings.assets = &assets;
+    auto image = renderer_->capture(*scene, cam.view(1.0f), {96, 96}, settings);
+    ASSERT_TRUE(image.has_value()) << image.error().message;
+    const auto center = pixel(*image, 48, 48);
+    EXPECT_GT(center.g, center.r + 40) << "white material * green texture renders green";
+    EXPECT_GT(center.g, center.b + 40);
+}

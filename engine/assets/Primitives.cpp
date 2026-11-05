@@ -20,6 +20,39 @@ Aabb computeBounds(const std::vector<Vertex>& vertices) {
     return box;
 }
 
+void generateTangents(MeshData& mesh) {
+    std::vector<glm::vec3> tan1(mesh.vertices.size(), glm::vec3(0.0f));
+    std::vector<glm::vec3> tan2(mesh.vertices.size(), glm::vec3(0.0f));
+    for (std::size_t t = 0; t + 2 < mesh.indices.size(); t += 3) {
+        const std::uint32_t i0 = mesh.indices[t], i1 = mesh.indices[t + 1], i2 = mesh.indices[t + 2];
+        const Vertex& a = mesh.vertices[i0];
+        const Vertex& b = mesh.vertices[i1];
+        const Vertex& c = mesh.vertices[i2];
+        const glm::vec3 e1 = b.position - a.position, e2 = c.position - a.position;
+        const glm::vec2 d1 = b.uv - a.uv, d2 = c.uv - a.uv;
+        const float det = d1.x * d2.y - d2.x * d1.y;
+        if (std::abs(det) < 1e-12f) continue;
+        const float r = 1.0f / det;
+        const glm::vec3 sdir = (e1 * d2.y - e2 * d1.y) * r;
+        const glm::vec3 tdir = (e2 * d1.x - e1 * d2.x) * r;
+        for (std::uint32_t i : {i0, i1, i2}) {
+            tan1[i] += sdir;
+            tan2[i] += tdir;
+        }
+    }
+    for (std::size_t i = 0; i < mesh.vertices.size(); ++i) {
+        Vertex& v = mesh.vertices[i];
+        glm::vec3 t = tan1[i] - v.normal * glm::dot(v.normal, tan1[i]);
+        if (glm::dot(t, t) < 1e-12f) {
+            const glm::vec3 helper = std::abs(v.normal.y) < 0.99f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+            t = glm::cross(helper, v.normal);
+        }
+        t = glm::normalize(t);
+        const float w = glm::dot(glm::cross(v.normal, t), tan2[i]) < 0.0f ? -1.0f : 1.0f;
+        v.tangent = glm::vec4(t, w);
+    }
+}
+
 std::string_view toString(MeshPrimitive primitive) noexcept {
     switch (primitive) {
         case MeshPrimitive::Cube: return "Cube";
@@ -155,14 +188,16 @@ MeshData makeCylinder(float radius, float height, std::uint32_t segments) {
 }
 
 MeshData makePrimitive(MeshPrimitive primitive) {
+    MeshData mesh;
     switch (primitive) {
-        case MeshPrimitive::Cube: return makeCube();
-        case MeshPrimitive::Sphere: return makeUvSphere();
-        case MeshPrimitive::Plane: return makePlane(1.0f, 1);
-        case MeshPrimitive::Cylinder: return makeCylinder();
-        case MeshPrimitive::Count: break;
+        case MeshPrimitive::Cube: mesh = makeCube(); break;
+        case MeshPrimitive::Sphere: mesh = makeUvSphere(); break;
+        case MeshPrimitive::Plane: mesh = makePlane(1.0f, 1); break;
+        case MeshPrimitive::Cylinder: mesh = makeCylinder(); break;
+        case MeshPrimitive::Count: mesh = makeCube(); break;
     }
-    return makeCube();
+    generateTangents(mesh);
+    return mesh;
 }
 
 } // namespace lumora

@@ -128,3 +128,47 @@ TEST(Gltf, ParsingIgnoresTheProcessLocale) {
     EXPECT_FLOAT_EQ(model->materials[0].roughness, 0.5f);
     EXPECT_NEAR(glm::angle(model->nodes[1].rotation), glm::radians(90.0f), 1e-4f);
 }
+
+TEST(Gltf, ImportsEmbeddedTextures) {
+    test::TempDir dir;
+    std::filesystem::create_directories(dir.path() / "Content" / "Models");
+    test::writeCubeGltf(dir.path() / "Content" / "Models" / "textured.gltf", false, true);
+    auto model = importGltf(dir.path() / "Content" / "Models" / "textured.gltf");
+    ASSERT_TRUE(model.has_value()) << model.error().message;
+    ASSERT_EQ(model->images.size(), 1u);
+    EXPECT_FALSE(model->images[0].encoded.empty());
+    EXPECT_EQ(model->materials[0].baseColorTexture, 0);
+    EXPECT_EQ(model->materials[0].normalTexture, -1);
+    EXPECT_FLOAT_EQ(model->meshes[0].data.vertices[2].uv.x, 1.0f) << "TEXCOORD_0 imported";
+
+    Scene scene;
+    const entt::entity root = instantiateModel(scene, *model, "Content/Models/textured.gltf", "T");
+    const entt::entity box = scene.childrenOf(scene.childrenOf(root)[0])[0];
+    EXPECT_EQ(scene.registry().get<MeshRendererComponent>(box).baseColorTexture, "Content/Models/textured.gltf#tex0");
+
+    AssetLibrary library(dir.path());
+    auto texture = library.texture("Content/Models/textured.gltf#tex0");
+    ASSERT_TRUE(texture.has_value()) << texture.error().message;
+    EXPECT_EQ((*texture)->width, 8u);
+    EXPECT_EQ((*texture)->rgba[1], 220) << "green channel";
+    EXPECT_FALSE(library.texture("Content/Models/textured.gltf#tex1").has_value());
+    EXPECT_FALSE(library.texture("Content/Models/textured.gltf#mesh").has_value());
+}
+
+TEST(AssetLibrary, LoadsStandaloneImageTextures) {
+    test::TempDir dir;
+    std::filesystem::create_directories(dir.path() / "Content" / "Textures");
+    const auto png = test::solidPng(4, 2, 10, 20, 30);
+    std::ofstream(dir.path() / "Content" / "Textures" / "a.png", std::ios::binary)
+        .write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    std::ofstream(dir.path() / "Content" / "Textures" / "broken.png") << "not a png";
+    AssetLibrary library(dir.path());
+    auto texture = library.texture("Content/Textures/a.png");
+    ASSERT_TRUE(texture.has_value()) << texture.error().message;
+    EXPECT_EQ((*texture)->width, 4u);
+    EXPECT_EQ((*texture)->height, 2u);
+    EXPECT_EQ((*texture)->rgba[2], 30);
+    EXPECT_FALSE(library.texture("Content/Textures/broken.png").has_value());
+    EXPECT_FALSE(library.texture("Content/Textures/a.txt").has_value());
+    EXPECT_FALSE(library.texture("../a.png").has_value());
+}

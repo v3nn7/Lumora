@@ -76,6 +76,7 @@ private:
     void openSceneDialog();
     void importModelDialog();
     [[nodiscard]] std::optional<std::string> pickMeshAsset(QWidget* parent);
+    [[nodiscard]] std::optional<std::string> pickTextureAsset(QWidget* parent);
     bool saveSceneAs();
     bool maybeSave();
     void saveThumbnail();

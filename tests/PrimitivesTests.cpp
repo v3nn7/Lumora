@@ -62,3 +62,20 @@ TEST(Primitives, CubeHasExpectedTopology) {
     EXPECT_FLOAT_EQ(cube.bounds.min.x, -1.0f);
     EXPECT_FLOAT_EQ(cube.bounds.max.y, 1.0f);
 }
+
+TEST_P(PrimitiveTest, TangentsAreUnitAndOrthogonalToNormals) {
+    const MeshData mesh = makePrimitive(GetParam());
+    for (const Vertex& v : mesh.vertices) {
+        const glm::vec3 t(v.tangent);
+        EXPECT_NEAR(glm::length(t), 1.0f, 1e-3f);
+        EXPECT_NEAR(glm::dot(t, v.normal), 0.0f, 1e-3f);
+        EXPECT_TRUE(v.tangent.w == 1.0f || v.tangent.w == -1.0f);
+    }
+}
+
+TEST(Primitives, PlaneTangentFollowsU) {
+    MeshData plane = makePlane(2.0f, 1);
+    generateTangents(plane);
+    // u increases along +X on the plane.
+    EXPECT_NEAR(plane.vertices[0].tangent.x, 1.0f, 1e-5f);
+}

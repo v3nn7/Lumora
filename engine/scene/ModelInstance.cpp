@@ -37,6 +37,15 @@ entt::entity instantiateModel(Scene& scene, const ImportedModel& model, std::str
                 renderer.roughness = std::max(m.roughness, 0.02f);
                 renderer.emissive = m.emissive;
                 renderer.emissiveStrength = glm::length(m.emissive) > 0.0f ? 1.0f : 0.0f;
+                auto texture = [&](int image) {
+                    return image >= 0 ? AssetLibrary::textureKey(relativeFile, image) : std::string{};
+                };
+                renderer.baseColorTexture = texture(m.baseColorTexture);
+                renderer.metallicRoughnessTexture = texture(m.metallicRoughnessTexture);
+                renderer.normalTexture = texture(m.normalTexture);
+                renderer.emissiveTexture = texture(m.emissiveTexture);
+                // Emissive maps multiply the factor; make sure a map alone still shows up.
+                if (m.emissiveTexture >= 0 && renderer.emissiveStrength == 0.0f) renderer.emissiveStrength = 1.0f;
             }
         }
     }

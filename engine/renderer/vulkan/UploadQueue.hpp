@@ -27,6 +27,11 @@ public:
 
     /// Creates a device-local buffer with `usage | TRANSFER_DST` and schedules the copy.
     [[nodiscard]] Buffer uploadBuffer(std::span<const std::byte> data, VkBufferUsageFlags usage, const char* name);
+    /// Creates a sampled 2D image from tightly packed RGBA8 pixels, generating the full mip
+    /// chain with linear blits when the format supports it. The image ends up in
+    /// SHADER_READ_ONLY_OPTIMAL once the returned upload completes.
+    [[nodiscard]] Image uploadImage(std::span<const std::byte> rgba, VkExtent2D extent, VkFormat format, bool mipmaps,
+                                    const char* name);
 
     [[nodiscard]] VkSemaphore timeline() const noexcept { return timeline_.get(); }
     /// Highest value signalled by a submitted upload (0 if none).
@@ -37,6 +42,9 @@ public:
     void waitIdle();
 
 private:
+    VkCommandBuffer beginCommands();
+    void submit(VkCommandBuffer cmd, Buffer staging);
+
     struct Pending {
         std::uint64_t value;
         Buffer staging;

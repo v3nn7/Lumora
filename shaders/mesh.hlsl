@@ -4,6 +4,7 @@ struct VSInput {
     [[vk::location(0)]] float3 position : POSITION;
     [[vk::location(1)]] float3 normal : NORMAL;
     [[vk::location(2)]] float2 uv : TEXCOORD0;
+    [[vk::location(3)]] float4 tangent : TANGENT;
 };
 
 struct VSOutput {
@@ -11,6 +12,7 @@ struct VSOutput {
     float3 worldPosition : TEXCOORD0;
     float3 normal : TEXCOORD1;
     float2 uv : TEXCOORD2;
+    float4 tangent : TEXCOORD3;  // world-space tangent, w = bitangent sign
 };
 
 VSOutput VSMain(VSInput input) {
@@ -21,6 +23,7 @@ VSOutput VSMain(VSInput input) {
     o.worldPosition = world.xyz;
     o.normal = mul((float3x3)object.normalMatrix, input.normal);
     o.uv = input.uv;
+    o.tangent = float4(mul((float3x3)object.world, input.tangent.xyz), input.tangent.w);
     return o;
 }
 
@@ -79,15 +82,45 @@ float sunShadow(float3 worldPosition, float3 normal) {
     return lerp(visibility, 1.0, fade);
 }
 
+#if defined(LUMORA_STAGE_FRAG)
+// Implicit-LOD sampling is fragment-only; glslang mis-compiles it when merely present in the
+// vertex stage, so fragment code is compiled only for that stage.
+float4 sampleMaterial(uint textureIndex, float2 uv) {
+    return gTextures[textureIndex].Sample(gSamplers[gFrame.counts.z], uv);
+}
+
 float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     GpuObject object = gObjects[gPush.index0];
     Surface s;
     s.position = input.worldPosition;
-    s.normal = normalize(input.normal) * (frontFace ? 1.0 : -1.0);
+    float faceSign = frontFace ? 1.0 : -1.0;
+    float3 geometricNormal = normalize(input.normal) * faceSign;
+    s.normal = geometricNormal;
+    if (object.textures.w != NO_TEXTURE) {
+        // Tangent-space normal map (glTF convention: +Y up in the texture, bitangent sign in w).
+        float3 n = geometricNormal;
+        float3 t = input.tangent.xyz - n * dot(n, input.tangent.xyz);
+        if (dot(t, t) > 1e-10) {
+            t = normalize(t);
+            float3 b = cross(n, t) * input.tangent.w * faceSign;
+            float3 m = sampleMaterial(object.textures.w, input.uv).xyz * 2.0 - 1.0;
+            s.normal = normalize(t * m.x + b * m.y + n * m.z);
+        }
+    }
     s.view = normalize(gFrame.cameraPositionTime.xyz - input.worldPosition);
-    s.albedo = object.baseColorMetallic.rgb * surfacePattern(input.worldPosition, s.normal, (uint)object.flags.y);
+    float3 albedo = object.baseColorMetallic.rgb;
+    if (object.textures.x != NO_TEXTURE) {
+        albedo *= sampleMaterial(object.textures.x, input.uv).rgb;  // sRGB view: sampled in linear
+    }
+    s.albedo = albedo * surfacePattern(input.worldPosition, geometricNormal, (uint)object.flags.y);
     s.metallic = saturate(object.baseColorMetallic.w);
-    s.roughness = clamp(object.emissiveRoughness.w, 0.02, 1.0);
+    s.roughness = object.emissiveRoughness.w;
+    if (object.textures.y != NO_TEXTURE) {
+        float4 mr = sampleMaterial(object.textures.y, input.uv);  // glTF: G = roughness, B = metallic
+        s.roughness *= mr.g;
+        s.metallic *= mr.b;
+    }
+    s.roughness = clamp(s.roughness, 0.02, 1.0);
 
     float3 color = evaluateAmbient(s);
     uint lightCount = min(gFrame.counts.x, (uint)MAX_LIGHTS);
@@ -108,7 +141,11 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
             }
         }
     }
-    color += object.emissiveRoughness.rgb;
+    float3 emissive = object.emissiveRoughness.rgb;
+    if (object.textures.z != NO_TEXTURE) {
+        emissive *= sampleMaterial(object.textures.z, input.uv).rgb;
+    }
+    color += emissive;
     color = applyFog(color, s.position);
 
     if (object.flags.x > 0.5) {
@@ -118,3 +155,4 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     }
     return float4(color, 1.0);
 }
+#endif

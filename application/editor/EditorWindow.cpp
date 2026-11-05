@@ -266,7 +266,9 @@ void EditorWindow::onRenderFailed(const QString& message) {
 
 void EditorWindow::buildDocks() {
     auto* hierarchy = makeDock(this, tr("Hierarchy"), QStringLiteral("dock.hierarchy"), QStringLiteral("hierarchy"), new SceneHierarchyPanel(ctx_));
-    auto* inspector = makeDock(this, tr("Inspector"), QStringLiteral("dock.inspector"), QStringLiteral("settings"), new InspectorPanel(ctx_, [this](QWidget* parent, const FieldDesc&) { return pickMeshAsset(parent); }));
+    auto* inspector = makeDock(this, tr("Inspector"), QStringLiteral("dock.inspector"), QStringLiteral("settings"), new InspectorPanel(ctx_, [this](QWidget* parent, const FieldDesc& field) {
+                     return field.id.ends_with("Texture") ? pickTextureAsset(parent) : pickMeshAsset(parent);
+                 }));
     auto* content = new ContentBrowserPanel(app::toQString(project_.contentDir()));
     auto* contentDock = makeDock(this, tr("Content Browser"), QStringLiteral("dock.content"), QStringLiteral("folder"), content);
     auto* console = makeDock(this, tr("Console"), QStringLiteral("dock.console"), QStringLiteral("console"), new ConsolePanel(app_.logBridge()));
@@ -574,6 +576,45 @@ std::optional<std::string> EditorWindow::pickMeshAsset(QWidget* parent) {
         index = static_cast<int>(names.indexOf(chosen));
     }
     return AssetLibrary::meshKey(relative, index);
+}
+
+std::optional<std::string> EditorWindow::pickTextureAsset(QWidget* parent) {
+    const QString file = QFileDialog::getOpenFileName(
+        parent, tr("Choose Texture"), app::toQString(project_.contentDir()),
+        tr("Images (*.png *.jpg *.jpeg *.tga *.bmp);;Images inside a glTF model (*.glb *.gltf)"));
+    if (file.isEmpty()) return std::nullopt;
+    std::filesystem::path path = std::filesystem::absolute(app::toPath(file));
+    const bool model = isModelFile(path);
+    if (project_.relativePath(path).starts_with("..")) {
+        auto imported = model ? importModelFile(path, project_.contentDir() / "Models")
+                              : importFile(path, project_.contentDir() / "Textures");
+        if (!imported) {
+            QMessageBox::critical(parent, tr("Import failed"), QString::fromStdString(imported.error().message));
+            return std::nullopt;
+        }
+        path = *imported;
+    }
+    const std::string relative = project_.relativePath(path);
+    if (!model) {
+        auto image = assets_.texture(relative);
+        if (!image) {
+            QMessageBox::critical(parent, tr("Cannot use image"), QString::fromStdString(image.error().message));
+            return std::nullopt;
+        }
+        return relative;
+    }
+    auto loaded = assets_.model(path);
+    if (!loaded || (*loaded)->images.empty()) {
+        QMessageBox::critical(parent, tr("Cannot use model"),
+                              loaded ? tr("The model contains no images.") : QString::fromStdString(loaded.error().message));
+        return std::nullopt;
+    }
+    QStringList names;
+    for (const ImportedImage& image : (*loaded)->images) names << QString::fromStdString(image.name);
+    bool ok = false;
+    const QString chosen = QInputDialog::getItem(parent, tr("Choose Texture"), tr("Image"), names, 0, false, &ok);
+    if (!ok) return std::nullopt;
+    return AssetLibrary::textureKey(relative, static_cast<int>(names.indexOf(chosen)));
 }
 
 void EditorWindow::openSceneDialog() {

@@ -4,6 +4,7 @@
 #include "platform/Paths.hpp"
 #include "renderer/GpuTypes.hpp"
 
+#include <algorithm>
 #include <format>
 
 namespace lumora::render {
@@ -89,7 +90,21 @@ RenderContext::RenderContext(const RenderContextConfig& config) {
     shadowCompare_ = rhi::UniqueSampler(device_->handle(), cmpSampler);
     shadowCompareIndex_ = bindless_->registerSampler(cmpSampler);
 
+    VkSamplerCreateInfo materialInfo = samplerInfo;
+    materialInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    materialInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    materialInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    if (device_->caps().samplerAnisotropy) {
+        materialInfo.anisotropyEnable = VK_TRUE;
+        materialInfo.maxAnisotropy = std::min(8.0f, device_->caps().maxAnisotropy);
+    }
+    VkSampler material = VK_NULL_HANDLE;
+    LUMORA_VK_CHECK(vkCreateSampler(device_->handle(), &materialInfo, nullptr, &material));
+    materialSampler_ = rhi::UniqueSampler(device_->handle(), material);
+    materialSamplerIndex_ = bindless_->registerSampler(material);
+
     meshes_ = std::make_unique<MeshCache>(*uploads_);
+    textures_ = std::make_unique<TextureCache>(*uploads_, *bindless_);
 }
 
 RenderContext::~RenderContext() {

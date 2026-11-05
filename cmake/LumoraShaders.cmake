@@ -11,6 +11,7 @@ function(lumora_add_shader out_list)
     set(src ${CMAKE_CURRENT_SOURCE_DIR}/${SH_SOURCE})
     set(out ${LUMORA_SHADER_OUTPUT_DIR}/${SH_OUTPUT})
     set(dep ${CMAKE_CURRENT_BINARY_DIR}/${SH_OUTPUT}.d)
+    string(TOUPPER "${SH_STAGE}" stage_upper)
     set(opt -O)
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         set(opt -g -O0)
@@ -19,7 +20,7 @@ function(lumora_add_shader out_list)
         OUTPUT ${out}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${LUMORA_SHADER_OUTPUT_DIR}
         COMMAND ${LUMORA_GLSLC} -x hlsl -fshader-stage=${SH_STAGE} -fentry-point=${SH_ENTRY}
-                --target-env=vulkan1.4 ${opt} -Werror
+                --target-env=vulkan1.4 ${opt} -Werror -DLUMORA_STAGE_${stage_upper}=1
                 -I ${CMAKE_CURRENT_SOURCE_DIR}
                 -MD -MF ${dep} -MT ${out}
                 -o ${out} ${src}

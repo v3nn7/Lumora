@@ -244,7 +244,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         }
     }
     const bool shadows = settings.shadows && haveSun && settings.shadowResolution > 0;
-    fc.counts = glm::uvec4(lightCount, shadows ? sunIndex : UINT32_MAX, 0, 0);
+    fc.counts = glm::uvec4(lightCount, shadows ? sunIndex : UINT32_MAX, ctx_.materialSampler(), 0);
     stats.lights = lightCount;
     if (shadows) {
         const ShadowFit fit = fitSunShadow(camera, sunTravel, settings.shadowDistance, settings.shadowResolution);
@@ -287,6 +287,13 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         obj.baseColorMetallic = glm::vec4(mesh.baseColor, mesh.metallic);
         obj.emissiveRoughness = glm::vec4(mesh.emissive * mesh.emissiveStrength, mesh.roughness);
         obj.flags = glm::vec4(e == settings.selected ? 1.0f : 0.0f, static_cast<float>(mesh.pattern), 0.0f, 0.0f);
+        if (settings.assets != nullptr) {
+            TextureCache& textures = ctx_.textures();
+            obj.textures = glm::uvec4(textures.index(*settings.assets, mesh.baseColorTexture, TextureColorSpace::Srgb),
+                                      textures.index(*settings.assets, mesh.metallicRoughnessTexture, TextureColorSpace::Linear),
+                                      textures.index(*settings.assets, mesh.emissiveTexture, TextureColorSpace::Srgb),
+                                      textures.index(*settings.assets, mesh.normalTexture, TextureColorSpace::Linear));
+        }
         draws.push_back({gpuMeshPtr, static_cast<std::uint32_t>(objects.size())});
         objects.push_back(obj);
     }

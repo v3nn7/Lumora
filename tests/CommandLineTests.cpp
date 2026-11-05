@@ -58,3 +58,23 @@ TEST(CommandLine, GlobalOptions) {
     EXPECT_EQ(o->vsync, false);
     EXPECT_EQ(o->logLevel, lumora::LogLevel::Debug);
 }
+
+TEST(CommandLine, JoinAndHostSessions) {
+    auto join = parseCommandLine({"--join", "bright-fox.at.ply.gg:23145", "--user", "Ada", "--password", "pw"});
+    ASSERT_TRUE(join.has_value());
+    EXPECT_EQ(join->mode, AppMode::Join);
+    EXPECT_EQ(join->joinAddress, "bright-fox.at.ply.gg:23145");
+    EXPECT_EQ(join->userName, "Ada");
+    EXPECT_EQ(join->sessionPassword, "pw");
+
+    auto host = parseCommandLine({"--editor", "Game", "--host", "7777"});
+    ASSERT_TRUE(host.has_value());
+    EXPECT_EQ(host->mode, AppMode::Editor);
+    EXPECT_EQ(host->hostPort, std::optional<std::uint16_t>(7777));
+
+    EXPECT_FALSE(parseCommandLine({"--host", "7777"}).has_value());                       // no project
+    EXPECT_FALSE(parseCommandLine({"--editor", "Game", "--host", "0"}).has_value());      // bad port
+    EXPECT_FALSE(parseCommandLine({"--editor", "Game", "--host", "70000"}).has_value());
+    EXPECT_FALSE(parseCommandLine({"--join", "x:1", "--editor", "Game"}).has_value());    // exclusive
+    EXPECT_FALSE(parseCommandLine({"--join"}).has_value());
+}

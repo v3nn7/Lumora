@@ -1,10 +1,12 @@
 // Lumora: single executable hosting the Hub, the Editor, the standalone Player and headless mode.
 
+#include "collab/CollabUi.hpp"
 #include "common/AppContext.hpp"
 #include "common/Preferences.hpp"
 #include "common/Theme.hpp"
 #include "core/Log.hpp"
 #include "core/Version.hpp"
+#include "editor/EditorWindow.hpp"
 #include "main/Application.hpp"
 #include "main/CommandLine.hpp"
 #include "main/Headless.hpp"
@@ -13,6 +15,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QMessageBox>
+#include <QTimer>
 
 #include <cstdio>
 #include <exception>
@@ -46,8 +49,25 @@ int runGui(int argc, char** argv, lumora::app::AppOptions options) {
             application.showHub();
             break;
         case AppMode::Editor:
-            application.openEditor(QString::fromStdString(options.projectPath));
+            if (application.openEditor(QString::fromStdString(options.projectPath)) && options.hostPort) {
+                const auto prefs = lumora::collab::CollabPreferences::load();
+                const QString name = options.userName.empty() ? prefs.name : QString::fromStdString(options.userName);
+                if (auto hosted = application.editor()->startHosting(
+                        {*options.hostPort, name, QString::fromStdString(options.sessionPassword), prefs.publicAddress});
+                    !hosted) {
+                    lumora::log::error("Collab", "cannot host: {}", hosted.error().message);
+                }
+            }
             break;
+        case AppMode::Join: {
+            const auto prefs = lumora::collab::CollabPreferences::load();
+            const QString name = options.userName.empty() ? prefs.name : QString::fromStdString(options.userName);
+            QTimer::singleShot(0, &application, [&application, &options, name] {
+                application.joinSessionAt(QString::fromStdString(options.joinAddress), name,
+                                          QString::fromStdString(options.sessionPassword));
+            });
+            break;
+        }
         case AppMode::Play:
             if (!application.runPlayer(QString::fromStdString(options.projectPath))) return 1;
             break;

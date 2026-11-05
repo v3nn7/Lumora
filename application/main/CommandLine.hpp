@@ -10,13 +10,14 @@
 
 namespace lumora::app {
 
-enum class AppMode { Hub, Editor, Play, Headless };
+enum class AppMode { Hub, Editor, Play, Headless, Join };
 
 /// Parsed command line. Modes:
 ///   Lumora                               Hub
 ///   Lumora --editor <project>            Editor
 ///   Lumora --project <project> --play    Standalone runtime
 ///   Lumora --headless [...]              Automation (no window)
+///   Lumora --join <host:port>            Join a live editing session
 struct AppOptions {
     AppMode mode = AppMode::Hub;
     std::string projectPath;
@@ -27,6 +28,12 @@ struct AppOptions {
     std::optional<std::uint32_t> gpuIndex;
     std::optional<bool> vsync;          // --no-vsync (default: preferences, then on)
     std::optional<LogLevel> logLevel;
+
+    // Live collaboration
+    std::string joinAddress;             // --join <host:port> (LAN or tunnel address)
+    std::optional<std::uint16_t> hostPort;  // --host <port>: host the opened project
+    std::string userName;                // --user <name>
+    std::string sessionPassword;         // --password <pw>
 
     // Headless actions
     bool printInfo = false;

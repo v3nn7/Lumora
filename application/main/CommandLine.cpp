@@ -94,6 +94,21 @@ Result<AppOptions> parseCommandLine(const std::vector<std::string>& args) {
         } else if (a == "--import") {
             LUMORA_TRY_VALUE(v);
             o.importFiles.push_back(*v);
+        } else if (a == "--join") {
+            LUMORA_TRY_VALUE(v);
+            o.joinAddress = *v;
+        } else if (a == "--host") {
+            LUMORA_TRY_VALUE(v);
+            auto n = parseNumber<std::uint32_t>(a, *v);
+            if (!n) return std::unexpected(n.error());
+            if (*n == 0 || *n > 65535) return makeError("--host needs a port between 1 and 65535");
+            o.hostPort = static_cast<std::uint16_t>(*n);
+        } else if (a == "--user") {
+            LUMORA_TRY_VALUE(v);
+            o.userName = *v;
+        } else if (a == "--password") {
+            LUMORA_TRY_VALUE(v);
+            o.sessionPassword = *v;
         } else if (a == "--validate") {
             o.validateProject = true;
         } else if (a == "--simulate") {
@@ -107,8 +122,16 @@ Result<AppOptions> parseCommandLine(const std::vector<std::string>& args) {
 #undef LUMORA_TRY_VALUE
     }
 
-    if (static_cast<int>(editor) + static_cast<int>(play) + static_cast<int>(headless) > 1) {
-        return makeError("--editor, --play and --headless are mutually exclusive");
+    const bool join = !o.joinAddress.empty();
+    if (static_cast<int>(editor) + static_cast<int>(play) + static_cast<int>(headless) + static_cast<int>(join) > 1) {
+        return makeError("--editor, --play, --headless and --join are mutually exclusive");
+    }
+    if (o.hostPort && (play || headless || join || o.projectPath.empty())) {
+        return makeError("--host needs a project opened in the editor (--editor <project> --host <port>)");
+    }
+    if (join) {
+        o.mode = AppMode::Join;
+        return o;
     }
     if (headless) {
         o.mode = AppMode::Headless;
@@ -141,6 +164,10 @@ Usage:
   Lumora --editor <project>                Open a project in the editor
   Lumora --project <project> --play        Run a project standalone
   Lumora --headless [actions]              Automation / build mode (no window)
+  Lumora --join <host:port>                Join a live session (LAN address, or the address of
+                                           a playit.gg tunnel such as name.at.ply.gg:23145)
+  Lumora --editor <project> --host <port>  Open a project and host a live session on <port>
+                                           (TCP + UDP; tunnel it with playit.gg for the internet)
 
 Headless actions:
   --info                                   Print engine and GPU information (default)
@@ -157,6 +184,7 @@ Options:
   --validation | --no-validation           Toggle Vulkan validation layers (default: on in Debug)
   --no-vsync                               Prefer MAILBOX/IMMEDIATE presentation
   --log-level <trace|debug|info|warn|error>
+  --user <name>, --password <pw>           Name and session password for --join / --host
   --version, --help
 )";
 }

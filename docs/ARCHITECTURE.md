@@ -65,7 +65,7 @@ extensions).
 
 ### Descriptor model
 
-- **Set 0 (per frame slot):** `FrameConstants` UBO (camera, environment, lights, shadow transform)
+- **Set 0 (per frame slot):** `FrameConstants` UBO (camera, environment, lights, cascade transforms)
   and a `GpuObject[]` storage buffer (world matrix, normal matrix, material).
 - **Set 1 (global, bindless):** `Texture2D[]` and `SamplerState[]`, with update-after-bind and
   partially bound. The sampler array is also declared as `SamplerComparisonState[]` (descriptor
@@ -84,13 +84,34 @@ Renderer::render(target, scene, camera, settings)
   ├─ wait for this slot's fence → resolve GPU timestamps → recycle transient images
   ├─ acquire image (20 ms timeout: Timeout → skip frame, UI thread never stalls)
   ├─ record:  RenderGraph
-  │     SunShadow (depth) → Sky → Opaque PBR (samples shadow map) → Grid → Tonemap → [Readback]
+  │     SunShadow (4 cascades → atlas) → Sky → Opaque PBR (samples atlas) → Grid → Tonemap → [Readback]
   │     graph: realise transients from the slot's pool, plan barriers, begin/end dynamic rendering,
   │            debug labels, timestamps per pass
   ├─ submit2: wait acquire (COLOR_ATTACHMENT_OUTPUT) + upload timeline value; signal per-image
   │           present semaphore; fence
   └─ present (OUT_OF_DATE / SUBOPTIMAL → recreate next frame)
 ```
+
+### Sun shadows
+
+Four cascades share one depth atlas (2×2 tiles, `shadowResolution` each, clamped to the device's
+`maxImageDimension2D`). Cascade *i* covers the view frustum from the near plane to split *i*
+(practical scheme, λ = 0.8 between logarithmic and uniform), so the cascades are nested and every
+visible point within the shadow distance has one. Each cascade is a bounding-sphere ortho box
+(rotation-invariant size) snapped to whole texels, which keeps edges from shimmering as the camera
+moves; its depth range is centred on the slice so that depth 0.5 is the centre.
+
+Casters are culled per cascade against the box's side planes, never against the camera frustum,
+so objects outside the view still cast into it. The light-facing plane does not cull.
+
+The fragment shader picks the finest cascade whose tile keeps the filter footprint inside it,
+blends into the next cascade over the outer 20 % (in x, y and depth) and fades shadows out over
+the last 15 % of the shadow distance. Filtering is Castaño's optimised 7×7 PCF: 16 bilinear
+comparisons whose weights form a smooth tent, with no noise and therefore no need for TAA.
+Acne is handled by a slope-scaled raster bias in the shadow pass, a normal offset sized to the
+cascade texel (larger at grazing angles) and a receiver-plane depth bias. That bias is computed
+from world-position derivatives taken in uniform control flow and mapped through the affine
+cascade transform. `RenderSettings::debugCascades` tints surfaces red/green/blue/yellow by cascade.
 
 `Renderer::capture` runs the same path into an offscreen `R8G8B8A8_SRGB` image followed by a
 readback pass. The headless renderer, Hub template previews, project thumbnails and the GPU
@@ -181,6 +202,17 @@ simulates the copy and discards it on Stop, so play-mode changes never reach the
   `QWidget::createWindowContainer`. It owns the swapchain and releases it on
   `SurfaceAboutToBeDestroyed`, before Qt destroys the surface. Input is translated to the
   engine's `InputState`.
+  - **Keyboard:** on Wayland the embedded (subsurface) window never receives keyboard focus, so
+    the viewport installs an application event filter and takes keys that reach its own
+    top-level window while it is hovered, was clicked last, or is looking. Text fields keep their
+    keys. WASDQE/arrows/Space are consumed for the camera; other keys go to the client's
+    shortcut handler.
+  - **Mouse look:** X11 recentres the cursor with `QCursor::setPos`. Wayland forbids warping, so
+    `WaylandPointerLock` locks the pointer (pointer-constraints) and reads relative motion
+    (relative-pointer). Qt does not expose these protocols: the client code is generated with
+    `wayland-scanner` from pinned XML (`cmake/LumoraWayland.cmake`). Its objects, including a
+    second `wl_pointer` that tracks which surface has the pointer, live on a private event queue
+    dispatched only on the UI thread, so Qt's own Wayland objects are untouched.
 - `ViewportClient` is the seam between a viewport and its owner (`EditorViewportClient`,
   `PlayerWindow`).
 - `EditorContext` holds the active scene, the selection, the undo stack, mutation entry points

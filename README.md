@@ -17,11 +17,11 @@ works today from what is planned, and nothing listed as planned exists yet.
 | Hub | Hero banner rendered live by the engine, recent projects grid with thumbnails, search and sort, project creation from 3 templates with live-rendered previews (saved as the project thumbnail), project settings, GPU/engine info |
 | Editor | Embedded Vulkan viewport, fly camera, click picking with selection highlight, move/rotate/scale gizmos (snapping, parent-space aware), undo/redo for every edit, hierarchy (drag & drop re-parenting, rename, duplicate, delete, filter), reflection-driven inspector with asset pickers, content browser (open scenes, add/drop-import models), console, GPU profiler, play/pause/stop, scene save/load, dockable and persisted layout |
 | Renderer | Vulkan 1.4 instance/device with capability detection, VMA, dynamic rendering, synchronization2, render graph with automatic barriers, bindless descriptors (update-after-bind), timeline-semaphore uploads, persistent pipeline cache, GPU timestamp profiling, frames in flight, swapchain recreation, device-loss reporting |
-| Rendering | HDR forward PBR (GGX / Smith / Schlick) with base colour, metallic-roughness, normal and emissive maps (mipmapped, anisotropic), directional + point lights, sun shadow map (camera-fitted, texel-snapped, hardware PCF), procedural sky with horizon haze and sun glow, exponential height fog (aerial perspective), physically based bloom, vignette, ACES tonemapping, procedural grid/checker surface patterns, hemispherical ambient, editor grid and gizmo overlay pass, CPU frustum culling |
+| Rendering | HDR forward PBR (GGX / Smith / Schlick) with base colour, metallic-roughness, normal and emissive maps (mipmapped, anisotropic), directional + point lights, cascaded sun shadows (4 texel-snapped cascades in one atlas, blended borders, smooth 7x7 PCF with receiver-plane bias; off-screen casters included), procedural sky with horizon haze and sun glow, exponential height fog (aerial perspective), physically based bloom, vignette, ACES tonemapping, procedural grid/checker surface patterns, hemispherical ambient, editor grid and gizmo overlay pass, CPU frustum culling |
 | Scene | EnTT ECS, UUID identity, hierarchy, component reflection → JSON serialization + inspector |
 | Assets | glTF 2.0 import (.gltf/.glb: meshes, node hierarchy, PBR materials and textures), PNG/JPEG/TGA/BMP textures, portable project-relative asset references, import copies files into the project without overwriting |
 | Runtime | Fixed-timestep simulation (deterministic), built-in `Rotator` behaviour |
-| Tests | 116 GoogleTest cases: core, scene, serialization, projects, CLI, glTF/texture import (incl. a locale regression), render-graph barrier planning, gizmo math, undo/redo, **GPU tests that render real frames and check pixels**, Hub/Editor UI integration tests |
+| Tests | 121 GoogleTest cases: core, scene, serialization, projects, CLI, glTF/texture import (incl. a locale regression), render-graph barrier planning, gizmo math, undo/redo, **GPU tests that render real frames and check pixels**, Hub/Editor UI integration tests |
 
 Verified on Parrot OS 7.4 (KDE Plasma, Wayland) with an NVIDIA GTX 1650 (Mesa NVK, Vulkan
 1.4.354) and on Mesa llvmpipe. Validation layers and GPU-assisted validation report no errors.
@@ -43,11 +43,13 @@ rejected.
 Parrot OS / Debian:
 
 ```bash
-sudo apt install build-essential cmake ninja-build qt6-base-dev qt6-svg-dev libvulkan-dev vulkan-validationlayers glslc mesa-vulkan-drivers
+sudo apt install build-essential cmake ninja-build qt6-base-dev qt6-svg-dev libvulkan-dev vulkan-validationlayers glslc mesa-vulkan-drivers libwayland-dev
 ```
 
-The first configure downloads GLM, EnTT, Vulkan Memory Allocator, nlohmann/json and GoogleTest
-(pinned versions, SHA-256 verified).
+The first configure downloads GLM, EnTT, Vulkan Memory Allocator, nlohmann/json, cgltf, stb,
+Jolt, GoogleTest and the wayland-protocols XML (pinned versions, SHA-256 verified).
+`libwayland-dev` (wayland-client + wayland-scanner) is optional: without it the mouse look cannot
+lock the cursor on Wayland.
 
 ## Build
 
@@ -107,7 +109,7 @@ Global options: `--gpu <index>`, `--validation` / `--no-validation`, `--no-vsync
 | Input | Action |
 |---|---|
 | W A S D (or arrows) / Q E | Fly / down, up while the pointer is over the viewport or after clicking it (Shift = faster) |
-| Right mouse + drag | Look (Right mouse + wheel = fly speed) |
+| Right mouse + drag | Look; the cursor stays locked in place (Right mouse + wheel = fly speed) |
 | Middle mouse + drag | Pan |
 | Wheel | Dolly |
 | Left click | Select |
@@ -160,14 +162,16 @@ The module boundaries, frame flow and the reasons behind key decisions are in
 - **Wayland:** the editor runs natively. Presentation uses MAILBOX, which never blocks the UI
   thread, and frames are paced to the display refresh. When the compositor reports the window
   as hidden (minimised, or the session locked), rendering pauses until the window is visible
-  again. To force XWayland, run with `QT_QPA_PLATFORM=xcb`.
+  again. Wayland clients cannot warp the cursor, so right-mouse look locks it in place through
+  the pointer-constraints and relative-pointer protocols (supported by KWin, Mutter and
+  wlroots compositors). To force XWayland, run with `QT_QPA_PLATFORM=xcb`.
 - **Windows:** the code has Windows paths (paths, Win32 surface extension, MSVC flags), but it
   has not been built or tested on Windows.
 
 ## Roadmap
 
 Planned, in rough order: KTX2/Basis and HDR/EXR textures with an asset database and
-background loading; skinned meshes and multiple materials per mesh; image-based lighting and cascaded / virtual shadow maps; a render
+background loading; skinned meshes and multiple materials per mesh; image-based lighting and virtual shadow maps; a render
 thread with multithreaded command recording and a job system; clustered lighting; TAA and
 temporal upscaling; GPU-driven culling, meshlets and mesh shaders (the capabilities are already
 detected); hardware ray tracing (RT GI and reflections); Jolt physics; miniaudio; skeletal

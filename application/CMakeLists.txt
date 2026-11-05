@@ -30,6 +30,17 @@ if(LUMORA_WAYLAND_POINTER_LOCK)
     target_compile_definitions(lumora_appcommon PRIVATE LUMORA_HAS_WAYLAND_POINTER_LOCK=1)
 endif()
 
+# Live collaboration: session server, client, scene sync (Qt Network, no widgets).
+lumora_qt_module(collab
+    SOURCES
+        collab/Protocol.cpp
+        collab/AssetTransfer.cpp
+        collab/CollabServer.cpp
+        collab/CollabClient.cpp
+        collab/SceneSync.cpp
+        collab/CollabSession.cpp
+    DEPS lumora_scene lumora_core Qt6::Network Qt6::Gui)
+
 lumora_qt_module(hub
     SOURCES
         hub/HubWindow.cpp

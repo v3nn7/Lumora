@@ -3,7 +3,7 @@ include(FetchContent)
 set(FETCHCONTENT_QUIET ON)
 
 find_package(Vulkan 1.4 REQUIRED)
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Svg)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Svg Network)
 find_package(Threads REQUIRED)
 
 FetchContent_Declare(glm

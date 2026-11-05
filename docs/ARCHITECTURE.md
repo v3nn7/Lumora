@@ -149,6 +149,21 @@ multithreaded command recording.
   Adding a reflected component therefore requires no serializer or editor changes. Unknown
   components and fields are skipped with a warning (forward compatibility).
 
+## Assets
+
+- `importGltf` (cgltf) turns a .gltf/.glb into `ImportedModel`: meshes (triangle primitives
+  merged, missing normals/tangents generated), node hierarchy (TRS or decomposed matrices),
+  metallic-roughness materials and still-encoded images. `instantiateModel` mirrors the node
+  hierarchy as entities.
+- `AssetLibrary` (per project) resolves portable keys, `<file>#<mesh>`, `<file>#tex<image>` and
+  plain image paths. Keys must be relative and stay inside the project. It caches models,
+  decoded textures and failures, so a broken reference is reported once.
+- The renderer's `MeshCache` and `TextureCache` upload on first use (non-blocking timeline
+  uploads; textures get a full blit-generated mip chain, sRGB views for colour maps) and key
+  GPU data by absolute path, so projects never collide.
+- JSON numbers are parsed locale-independently. Qt switches `LC_NUMERIC` to the user's locale,
+  and cgltf's default `atof` read `0.01` as `0` under pl_PL; a regression test covers this.
+
 ## Runtime
 
 `Simulation` advances gameplay systems at a fixed timestep (60 Hz by default), with a bounded
@@ -168,8 +183,16 @@ simulates the copy and discards it on Stop, so play-mode changes never reach the
   engine's `InputState`.
 - `ViewportClient` is the seam between a viewport and its owner (`EditorViewportClient`,
   `PlayerWindow`).
-- `EditorContext` holds the active scene, the selection, mutation entry points and change
-  signals. Panels never modify the scene behind each other's backs.
+- `EditorContext` holds the active scene, the selection, the undo stack, mutation entry points
+  and change signals. Panels never modify the scene behind each other's backs.
+- **Undo/redo** (`QUndoStack`): structural edits record whole-scene snapshots and restore them
+  in place (`SceneSerializer::loadInto`), so the `Scene` object and every pointer to it stay
+  valid and UUIDs survive. Field and environment edits are typed commands that merge bursts
+  (scrubbing, sliders) into one step. Gizmo drags record one transform command on release.
+  The dirty flag follows the stack's clean state; play-mode edits are never recorded.
+- **Gizmos**: `TransformGizmo` picks handles in screen space and constrains drags to the picked
+  axis (world-space move/rotate, local-space scale, parent-space aware, Ctrl snapping). Its
+  geometry goes through the renderer's overlay pass (unlit, alpha-blended, after tone mapping).
 - `Application` owns the top-level windows and performs the Hub ↔ Editor transitions. On
   teardown it flushes deferred deletions before the `AppContext` is destroyed (a use-after-free
   that ASan found).
@@ -192,6 +215,7 @@ with the Vulkan viewports composited in.
 
 | Decision | Reason |
 |---|---|
+| Whole-scene snapshots for structural undo | Exact and simple for today's scene sizes; per-entity diffs can replace it without changing the command API |
 | HLSL compiled by `glslc` (shaderc) | Ships with the Vulkan SDK and Debian. Slang is not packaged here; shaders are plain HLSL, so a later switch to `slangc` only changes `cmake/LumoraShaders.cmake`. glslang quirks are documented in `shaders/common.hlsli` (`vk::push_constant` only works on `ConstantBuffer<T>`; there is no `NonUniformResourceIndex`) |
 | Vulkan C API with thin RAII wrappers | Full control and fast compile times; Vulkan-Hpp RAII adds a lot of compile time |
 | One process for Hub and Editor | A requirement. It also lets them share the Vulkan context, log history and recent-project state |

@@ -15,12 +15,13 @@ works today from what is planned, and nothing listed as planned exists yet.
 | Build | CMake + Ninja presets, pinned and hash-verified FetchContent dependencies, HLSL → SPIR-V at build time |
 | Application | One `Lumora` executable; Hub → Editor → Hub transitions in one process; Player and headless modes |
 | Hub | Hero banner rendered live by the engine, recent projects grid with thumbnails, search and sort, project creation from 3 templates with live-rendered previews (saved as the project thumbnail), project settings, GPU/engine info |
-| Editor | Embedded Vulkan viewport, fly camera, click picking with selection highlight, hierarchy (drag & drop re-parenting, rename, duplicate, delete, filter), reflection-driven inspector, content browser, console, GPU profiler, play/pause/stop, scene save/load, dockable and persisted layout |
+| Editor | Embedded Vulkan viewport, fly camera, click picking with selection highlight, move/rotate/scale gizmos (snapping, parent-space aware), undo/redo for every edit, hierarchy (drag & drop re-parenting, rename, duplicate, delete, filter), reflection-driven inspector with asset pickers, content browser (open scenes, add/drop-import models), console, GPU profiler, play/pause/stop, scene save/load, dockable and persisted layout |
 | Renderer | Vulkan 1.4 instance/device with capability detection, VMA, dynamic rendering, synchronization2, render graph with automatic barriers, bindless descriptors (update-after-bind), timeline-semaphore uploads, persistent pipeline cache, GPU timestamp profiling, frames in flight, swapchain recreation, device-loss reporting |
-| Rendering | HDR forward PBR (GGX / Smith / Schlick), directional + point lights, sun shadow map (camera-fitted, texel-snapped, hardware PCF), procedural sky with horizon haze and sun glow, exponential height fog (aerial perspective), physically based bloom, vignette, ACES tonemapping, procedural grid/checker surface patterns, hemispherical ambient, editor grid, CPU frustum culling |
+| Rendering | HDR forward PBR (GGX / Smith / Schlick) with base colour, metallic-roughness, normal and emissive maps (mipmapped, anisotropic), directional + point lights, sun shadow map (camera-fitted, texel-snapped, hardware PCF), procedural sky with horizon haze and sun glow, exponential height fog (aerial perspective), physically based bloom, vignette, ACES tonemapping, procedural grid/checker surface patterns, hemispherical ambient, editor grid and gizmo overlay pass, CPU frustum culling |
 | Scene | EnTT ECS, UUID identity, hierarchy, component reflection → JSON serialization + inspector |
+| Assets | glTF 2.0 import (.gltf/.glb: meshes, node hierarchy, PBR materials and textures), PNG/JPEG/TGA/BMP textures, portable project-relative asset references, import copies files into the project without overwriting |
 | Runtime | Fixed-timestep simulation (deterministic), built-in `Rotator` behaviour |
-| Tests | 73 GoogleTest cases: core, scene, serialization, projects, CLI, render-graph barrier planning, **GPU tests that render real frames and check pixels**, Hub/Editor UI integration tests |
+| Tests | 97 GoogleTest cases: core, scene, serialization, projects, CLI, glTF/texture import (incl. a locale regression), render-graph barrier planning, gizmo math, undo/redo, **GPU tests that render real frames and check pixels**, Hub/Editor UI integration tests |
 
 Verified on Parrot OS 7.4 (KDE Plasma, Wayland) with an NVIDIA GTX 1650 (Mesa NVK, Vulkan
 1.4.354) and on Mesa llvmpipe. Validation layers and GPU-assisted validation report no errors.
@@ -91,6 +92,10 @@ Headless examples:
 ```
 
 ```bash
+./build/release/bin/Lumora --headless --project ~/LumoraProjects/Demo --import ~/Downloads/DamagedHelmet.glb
+```
+
+```bash
 ./build/release/bin/Lumora --headless --project ~/LumoraProjects/Demo --validate --simulate 2 --render demo.png --width 1920 --height 1080
 ```
 
@@ -106,6 +111,9 @@ Global options: `--gpu <index>`, `--validation` / `--no-validation`, `--no-vsync
 | Middle mouse + drag | Pan |
 | Wheel | Dolly |
 | Left click | Select |
+| W / E / R | Move / rotate / scale gizmo (Ctrl snaps: 0.25 m, 15°, 0.1×) |
+| Ctrl+Z / Ctrl+Shift+Z | Undo / redo |
+| Ctrl+I | Import a glTF model |
 | F | Frame selection |
 | G | Toggle grid |
 | Delete, Ctrl+D | Delete, duplicate |
@@ -118,8 +126,13 @@ Global options: `--gpu <index>`, `--validation` / `--no-validation`, `--no-vsync
 MyGame/
   MyGame.lumora              project descriptor (JSON)
   Content/Scenes/Main.lscene scene (JSON, component data written through reflection)
+  Content/Models/            imported glTF models (+ their buffers/images)
+  Content/Textures/          imported images
   Saved/Thumbnail.png        written by the editor on save, shown in the Hub
 ```
+
+Assets are referenced by project-relative keys: `Content/Models/Helmet.glb#0` (mesh 0),
+`Content/Models/Helmet.glb#tex2` (image 2 inside the model) or `Content/Textures/Wood.png`.
 
 Recent projects are stored in `~/.config/Lumora/recent_projects.json`. The Hub's
 "Remove from List" never deletes project files.
@@ -152,8 +165,8 @@ The module boundaries, frame flow and the reasons behind key decisions are in
 
 ## Roadmap
 
-Planned, in rough order: undo/redo and transform gizmos; glTF 2.0 / KTX2 / HDR asset import
-with an asset database; image-based lighting and cascaded / virtual shadow maps; a render
+Planned, in rough order: KTX2/Basis and HDR/EXR textures with an asset database and
+background loading; skinned meshes and multiple materials per mesh; image-based lighting and cascaded / virtual shadow maps; a render
 thread with multithreaded command recording and a job system; clustered lighting; TAA and
 temporal upscaling; GPU-driven culling, meshlets and mesh shaders (the capabilities are already
 detected); hardware ray tracing (RT GI and reflections); Jolt physics; miniaudio; skeletal

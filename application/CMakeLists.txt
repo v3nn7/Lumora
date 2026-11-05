@@ -42,6 +42,8 @@ lumora_qt_module(collab
         collab/CollabUi.cpp
     DEPS lumora_scene lumora_core Qt6::Network Qt6::Widgets)
 
+add_subdirectory(launcher)
+
 lumora_qt_module(hub
     SOURCES
         hub/HubWindow.cpp

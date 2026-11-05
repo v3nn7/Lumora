@@ -1,0 +1,60 @@
+#pragma once
+
+#include "core/Error.hpp"
+
+#include <QByteArray>
+#include <QString>
+#include <QUrl>
+
+#include <vector>
+
+namespace lumora::launcher {
+
+/// Package key of the machine this runs on, e.g. "linux-x64" or "windows-x64".
+[[nodiscard]] QString currentPlatform();
+/// Editor executable inside an installed package ("bin/lumora-editor[.exe]").
+[[nodiscard]] QString editorExecutable();
+
+/// Versions are "MAJOR.MINOR.PATCH" with an optional pre-release suffix ("0.5.0-beta.2").
+/// They also name install folders, so anything else is rejected.
+[[nodiscard]] bool isValidVersion(const QString& version);
+/// <0, 0, >0 like strcmp. Numeric parts compare numerically; a pre-release sorts before its
+/// release ("1.0.0-rc.1" < "1.0.0").
+[[nodiscard]] int compareVersions(const QString& a, const QString& b);
+
+struct PackageInfo {
+    QString platform;
+    QUrl url;            // absolute (relative entries are resolved against the feed)
+    quint64 size = 0;
+    QByteArray sha256;   // lower-case hex
+};
+
+struct ReleaseInfo {
+    QString version;
+    QString channel;     // "stable", "beta", ...
+    QString date;
+    QString notes;
+    std::vector<PackageInfo> packages;
+
+    [[nodiscard]] const PackageInfo* packageFor(const QString& platform) const;
+};
+
+/// The release feed the Hub reads (manifest.json, published by CI next to the packages):
+///
+///   {"format": "lumora.releases", "version": 1,
+///    "releases": [{"version": "0.4.0", "channel": "stable", "date": "2026-11-05", "notes": "...",
+///                  "packages": {"linux-x64": {"url": "editor/0.4.0/lumora-editor-0.4.0-linux-x64.zip",
+///                                             "size": 123, "sha256": "..."}}}]}
+///
+/// A detached Ed25519 signature of the exact bytes lives in manifest.json.sig; package hashes
+/// are covered by it.
+struct ReleaseManifest {
+    std::vector<ReleaseInfo> releases;  // newest first
+
+    [[nodiscard]] static Result<ReleaseManifest> parse(const QByteArray& json, const QUrl& feedUrl);
+    /// Newest release for the platform, optionally limited to one channel.
+    [[nodiscard]] const ReleaseInfo* latest(const QString& platform, const QString& channel = {}) const;
+    [[nodiscard]] const ReleaseInfo* find(const QString& version) const;
+};
+
+} // namespace lumora::launcher

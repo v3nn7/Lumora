@@ -29,3 +29,9 @@ set_target_properties(lumora_ui_tests PROPERTIES AUTORCC ON)
 target_link_libraries(lumora_ui_tests PRIVATE lumora_shell lumora_collab GTest::gtest lumora_compile_options)
 gtest_discover_tests(lumora_ui_tests DISCOVERY_TIMEOUT 30
     PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# Editor installer (release feed, signatures, ZIP extraction, installs from file:// feeds).
+add_executable(lumora_launcher_tests LauncherTestMain.cpp LauncherTests.cpp)
+target_link_libraries(lumora_launcher_tests PRIVATE lumora_launcher lumora_miniz lumora_monocypher
+    GTest::gtest lumora_compile_options)
+gtest_discover_tests(lumora_launcher_tests DISCOVERY_TIMEOUT 30)

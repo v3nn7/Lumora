@@ -86,17 +86,19 @@ lumora_qt_module(shell
 # All of Lumora in one shared library; the executables below are thin launchers around it, so
 # packages ship it as liblumora.so / lumora.dll next to Qt's libraries. Only runLumora() is
 # exported; symbols of the static engine libraries stay internal.
-add_library(lumora SHARED main/Launch.cpp common/resources.qrc)  # icons registered when it loads
-target_link_libraries(lumora PRIVATE lumora_shell lumora_compile_options)
-target_compile_definitions(lumora PRIVATE LUMORA_BUILDING_LIBRARY)
-set_target_properties(lumora PROPERTIES
+# Target lumora_library (not 'lumora': it would clash with 'Lumora' on case-insensitive file systems).
+add_library(lumora_library SHARED main/Launch.cpp common/resources.qrc)  # icons registered when it loads
+target_link_libraries(lumora_library PRIVATE lumora_shell lumora_compile_options)
+target_compile_definitions(lumora_library PRIVATE LUMORA_BUILDING_LIBRARY)
+set_target_properties(lumora_library PROPERTIES
+    OUTPUT_NAME lumora
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN ON
     INSTALL_RPATH "$ORIGIN")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_link_options(lumora PRIVATE "LINKER:--exclude-libs,ALL" "LINKER:--as-needed" "LINKER:--no-undefined")
+    target_link_options(lumora_library PRIVATE "LINKER:--exclude-libs,ALL" "LINKER:--as-needed" "LINKER:--no-undefined")
 endif()
-add_dependencies(lumora lumora_shaders)
+add_dependencies(lumora_library lumora_shaders)
 
 # Lumora: development build (Hub + editor in one process). lumora-editor: one installable editor
 # version. lumora-hub: the Hub, which installs editors and opens projects in them.
@@ -110,7 +112,7 @@ foreach(app IN ITEMS Lumora lumora-editor lumora-hub)
     endif()
     qt_add_executable(${app} ${entry})  # Qt records the plugins its deployment must copy
     target_include_directories(${app} PRIVATE ${CMAKE_SOURCE_DIR}/application)
-    target_link_libraries(${app} PRIVATE lumora lumora_compile_options)
+    target_link_libraries(${app} PRIVATE lumora_library lumora_compile_options)
     set_target_properties(${app} PROPERTIES WIN32_EXECUTABLE $<CONFIG:Release> INSTALL_RPATH "$ORIGIN/../lib")
 endforeach()
 
@@ -118,7 +120,7 @@ endforeach()
 #   bin/lumora-editor (or lumora-hub), bin/shaders/*.spv, lib/liblumora.so + Qt libraries and
 #   plugins on Linux; everything in bin/ on Windows (DLLs next to the executable).
 foreach(component editor hub)
-    install(TARGETS lumora
+    install(TARGETS lumora_library
         RUNTIME DESTINATION bin COMPONENT ${component}
         LIBRARY DESTINATION lib COMPONENT ${component})
     install(DIRECTORY ${LUMORA_SHADER_OUTPUT_DIR}/ DESTINATION bin/shaders COMPONENT ${component}

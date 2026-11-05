@@ -184,7 +184,8 @@ jobs:
           export LUMORA_SIGNING_KEY=$(cat "$RUNNER_TEMP/check.key")
           public=$(sed -n 's/^LUMORA_RELEASE_PUBLIC_KEY = //p' <<< "$keys")
           mkdir -p check/editor
-          cp out/lumora-editor-*.zip check/editor/
+          cp out/lumora-editor-*.zip out/lumora-editor-*.files.json check/editor/
+          cp -r out/blobs check/blobs
           python scripts/release/manifest.py update --manifest check/manifest.json \
             --version "${{ steps.version.outputs.version }}" --package out/lumora-editor-*.zip.json --url-prefix editor/
           python scripts/release/manifest.py sign --manifest check/manifest.json
@@ -202,6 +203,8 @@ jobs:
           path: |
             out/*.zip
             out/*.zip.json
+            out/*.files.json
+            out/blobs/
           if-no-files-found: error
 
   publish:
@@ -242,7 +245,12 @@ jobs:
         run: |
           for zip in out/lumora-editor-*.zip; do
             aws s3 cp "$zip" "$BUCKET/editor/$VERSION/$(basename "$zip")" $R2 --content-type application/zip
+            aws s3 cp "$zip.files.json" "$BUCKET/editor/$VERSION/$(basename "$zip").files.json" $R2 \
+              --content-type application/json
           done
+          # Delta updates: every file once, named by its SHA-256. Files unchanged since an earlier
+          # release are already there and are skipped.
+          aws s3 sync out/blobs "$BUCKET/editor/blobs" $R2 --size-only --content-type application/octet-stream
           for zip in out/lumora-hub-*.zip; do
             aws s3 cp "$zip" "$BUCKET/hub/$VERSION/$(basename "$zip")" $R2 --content-type application/zip
             # Stable link for the download page: hub/latest/lumora-hub-<platform>.zip

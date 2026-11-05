@@ -2,6 +2,7 @@
 
 #include "core/Log.hpp"
 #include "core/Version.hpp"
+#include "launcher/FileList.hpp"
 #include "launcher/Signature.hpp"
 #include "launcher/ZipExtractor.hpp"
 
@@ -17,6 +18,8 @@
 #include <QThread>
 
 #include <algorithm>
+#include <filesystem>
+#include <map>
 
 namespace lumora::launcher {
 
@@ -158,52 +161,78 @@ void EditorInstaller::finishManifest(const QByteArray& body, const QUrl& feedUrl
 // ---- Install ----------------------------------------------------------------------------------
 
 void EditorInstaller::install(const ReleaseInfo& release, const PackageInfo& package) {
-    if (busy()) return emit installFailed(tr("Another installation is in progress."));
+    if (busy() || installing_) return emit installFailed(tr("Another installation is in progress."));
     if (!isValidVersion(release.version)) return emit installFailed(tr("Invalid version '%1'.").arg(release.version));
     if (find(release.version)) return emit installFailed(tr("Lumora %1 is already installed.").arg(release.version));
-    const QDir root(root_);
-    if (!root.mkpath(QStringLiteral(".downloads"))) {
-        return emit installFailed(tr("Cannot create %1.").arg(root.filePath(QStringLiteral(".downloads"))));
+    if (!QDir(root_).mkpath(QStringLiteral(".downloads"))) {
+        return emit installFailed(tr("Cannot create %1.").arg(QDir(root_).filePath(QStringLiteral(".downloads"))));
     }
     release_ = release;
     package_ = package;
-    download_ = std::make_unique<QFile>(
-        root.filePath(QStringLiteral(".downloads/lumora-editor-%1-%2.zip.part").arg(release.version, package.platform)));
+    installing_ = true;
+    cancelled_ = false;
+    staging_ = QDir(root_).filePath(QStringLiteral(".staging-") + release.version);
+    QDir(staging_).removeRecursively();
+    // With an earlier version installed, fetch only the files that changed.
+    if (package.supportsDelta() && !installed().empty()) {
+        startDelta();
+    } else {
+        startZip();
+    }
+}
+
+bool EditorInstaller::busy() const noexcept { return installing_; }
+
+void EditorInstaller::startZip() {
+    download_ = std::make_unique<QFile>(QDir(root_).filePath(
+        QStringLiteral(".downloads/lumora-editor-%1-%2.zip.part").arg(release_.version, package_.platform)));
     if (!download_->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        const QString why = download_->errorString();
-        download_.reset();
-        return emit installFailed(tr("Cannot write the download: %1").arg(why));
+        return failInstall(tr("Cannot write the download: %1").arg(download_->errorString()));
     }
     hash_ = std::make_unique<QCryptographicHash>(QCryptographicHash::Sha256);
     received_ = 0;
-    log::info("Launcher", "downloading Lumora {} from {}", release.version.toStdString(), package.url.toString().toStdString());
-    reply_ = get(package.url);
-    connect(reply_, &QNetworkReply::readyRead, this, [this] {
+    log::info("Launcher", "downloading Lumora {} from {}", release_.version.toStdString(),
+              package_.url.toString().toStdString());
+    streamTo(package_.url, package_.size, [this] { finishDownload(); });
+}
+
+void EditorInstaller::streamTo(const QUrl& url, quint64 expected, std::function<void()> done) {
+    reply_ = get(url);
+    const qint64 base = received_;
+    connect(reply_, &QNetworkReply::readyRead, this, [this, expected, base] {
         const QByteArray chunk = reply_->readAll();
         received_ += chunk.size();
-        if (static_cast<quint64>(received_) > package_.size) {
-            reply_->disconnect(this);
-            reply_->abort();
-            reply_->deleteLater();
-            reply_ = nullptr;
+        if (static_cast<quint64>(received_ - base) > expected) {
+            abortReply();
             return failInstall(tr("The download is larger than announced."));
         }
         hash_->addData(chunk);
         if (download_->write(chunk) != chunk.size()) {
-            reply_->disconnect(this);
-            reply_->abort();
-            reply_->deleteLater();
-            reply_ = nullptr;
+            abortReply();
             return failInstall(tr("Cannot write the download: %1").arg(download_->errorString()));
         }
-        emit progress(received_, static_cast<qint64>(package_.size));
+        emit progress(received_, progressTotal());
     });
-    connect(reply_, &QNetworkReply::finished, this, &EditorInstaller::finishDownload);
+    connect(reply_, &QNetworkReply::finished, this, std::move(done));
+}
+
+void EditorInstaller::abortReply() {
+    if (!reply_) return;
+    QNetworkReply* reply = reply_;
+    reply_ = nullptr;
+    reply->disconnect(this);
+    reply->abort();
+    reply->deleteLater();
+}
+
+qint64 EditorInstaller::progressTotal() const {
+    return static_cast<qint64>(delta_ ? deltaTotal_ : package_.size);
 }
 
 void EditorInstaller::cancel() {
-    if (!reply_) return;
-    reply_->abort();  // finished() follows with OperationCanceledError
+    if (!installing_) return;
+    cancelled_ = true;
+    if (reply_) reply_->abort();  // finished() follows with OperationCanceledError
 }
 
 void EditorInstaller::failInstall(const QString& error) {
@@ -213,16 +242,29 @@ void EditorInstaller::failInstall(const QString& error) {
         download_.reset();
     }
     hash_.reset();
+    if (!staging_.isEmpty()) QDir(staging_).removeRecursively();
+    installing_ = false;
+    delta_ = false;
     log::warn("Launcher", "install failed: {}", error.toStdString());
     emit installFailed(error);
 }
 
-void EditorInstaller::finishDownload() {
-    QNetworkReply* reply = reply_;
+/// Common end of a finished reply: false (after reporting) if it failed or was cancelled.
+bool EditorInstaller::takeReply(QNetworkReply*& reply) {
+    reply = reply_;
     reply_ = nullptr;
-    if (reply == nullptr) return;
+    if (reply == nullptr) return false;
     reply->deleteLater();
-    if (reply->error() == QNetworkReply::OperationCanceledError) return failInstall(tr("Installation cancelled."));
+    if (cancelled_ || reply->error() == QNetworkReply::OperationCanceledError) {
+        failInstall(tr("Installation cancelled."));
+        return false;
+    }
+    return true;
+}
+
+void EditorInstaller::finishDownload() {
+    QNetworkReply* reply = nullptr;
+    if (!takeReply(reply)) return;
     if (reply->error() != QNetworkReply::NoError) return failInstall(tr("Download failed: %1").arg(reply->errorString()));
     const QByteArray rest = reply->readAll();
     received_ += rest.size();
@@ -236,54 +278,208 @@ void EditorInstaller::finishDownload() {
         return failInstall(tr("The download is corrupted (checksum mismatch)."));
     }
 
-    // Extract off the UI thread, then move into place here.
+    // Extract (and index the files for later delta updates) off the UI thread.
     const QString archive = download_->fileName();
-    const QString staging = QDir(root_).filePath(QStringLiteral(".staging-") + release_.version);
-    QDir(staging).removeRecursively();
-    auto result = std::make_shared<Result<ExtractStats>>(makeError("not run"));
-    QThread* worker = QThread::create([archive, staging, result] { *result = extractZip(archive, staging); });
-    connect(worker, &QThread::finished, this, [this, worker, archive, staging, result] {
+    struct Outcome {
+        QString error;
+        QString content;
+        std::vector<FileEntry> entries;
+    };
+    auto outcome = std::make_shared<Outcome>();
+    QThread* worker = QThread::create([archive, staging = staging_, outcome] {
+        if (auto extracted = extractZip(archive, staging); !extracted) {
+            outcome->error = tr("Cannot unpack the package: %1").arg(QString::fromStdString(extracted.error().message));
+            return;
+        }
+        outcome->content = contentFolder(staging);
+        if (outcome->content.isEmpty()) {
+            outcome->error = tr("The package does not contain %1.").arg(editorExecutable());
+            return;
+        }
+        if (auto scanned = scanFolder(outcome->content)) outcome->entries = std::move(*scanned);
+    });
+    connect(worker, &QThread::finished, this, [this, worker, archive, outcome] {
         worker->deleteLater();
         QFile::remove(archive);
         download_.reset();
         hash_.reset();
-        if (!*result) {
-            QDir(staging).removeRecursively();
-            return failInstall(tr("Cannot unpack the package: %1").arg(QString::fromStdString(result->error().message)));
-        }
-        const QString content = contentFolder(staging);
-        if (content.isEmpty()) {
-            QDir(staging).removeRecursively();
-            return failInstall(tr("The package does not contain %1.").arg(editorExecutable()));
-        }
-        const json info = {{"version", release_.version.toStdString()},
-                           {"executable", editorExecutable().toStdString()},
-                           {"source", package_.url.toString().toStdString()},
-                           {"sha256", package_.sha256.toStdString()},
-                           {"installedAt", QDateTime::currentDateTimeUtc().toString(Qt::ISODate).toStdString()}};
-        QSaveFile file(QDir(content).filePath(QString::fromLatin1(kInstallFile)));
-        const std::string text = info.dump(2);
-        if (!file.open(QIODevice::WriteOnly) || file.write(text.data(), static_cast<qint64>(text.size())) < 0 ||
-            !file.commit()) {
-            QDir(staging).removeRecursively();
-            return failInstall(tr("Cannot record the installation."));
-        }
-        const QString target = QDir(root_).filePath(release_.version);
-        if (!QDir().rename(content, target)) {
-            QDir(staging).removeRecursively();
-            return failInstall(tr("Cannot move the editor into %1.").arg(target));
-        }
-        QDir(staging).removeRecursively();  // empty wrapper folder, if any
-        log::info("Launcher", "installed Lumora {} ({} files, {:.1f} MiB) in {}", release_.version.toStdString(),
-                  result->value().files, static_cast<double>(result->value().bytes) / (1024.0 * 1024.0),
-                  target.toStdString());
-        if (auto editor = find(release_.version)) {
-            emit installCompleted(*editor);
-        } else {
-            failInstall(tr("The installed editor could not be found."));
-        }
+        if (!outcome->error.isEmpty()) return failInstall(outcome->error);
+        finalize(outcome->content, outcome->entries);
     });
     worker->start();
+}
+
+// ---- Delta updates ----------------------------------------------------------------------------
+
+void EditorInstaller::startDelta() {
+    delta_ = true;
+    log::info("Launcher", "updating to Lumora {}: fetching the file list", release_.version.toStdString());
+    reply_ = get(package_.filesUrl);
+    connect(reply_, &QNetworkReply::finished, this, &EditorInstaller::finishFileList);
+}
+
+void EditorInstaller::fallBackToZip(const QString& why) {
+    log::warn("Launcher", "delta update not possible ({}); downloading the full package", why.toStdString());
+    abortReply();
+    if (download_) {
+        download_->close();
+        download_->remove();
+        download_.reset();
+    }
+    QDir(staging_).removeRecursively();
+    delta_ = false;
+    received_ = 0;
+    startZip();
+}
+
+void EditorInstaller::finishFileList() {
+    QNetworkReply* reply = nullptr;
+    if (!takeReply(reply)) return;
+    if (reply->error() != QNetworkReply::NoError) return fallBackToZip(reply->errorString());
+    const QByteArray body = reply->read(static_cast<qint64>(package_.filesSize) + 1);
+    if (static_cast<quint64>(body.size()) != package_.filesSize ||
+        QCryptographicHash::hash(body, QCryptographicHash::Sha256).toHex() != package_.filesSha256) {
+        return fallBackToZip(QStringLiteral("file list does not match the feed"));
+    }
+    auto entries = parseFileList(body);
+    if (!entries) return fallBackToZip(QString::fromStdString(entries.error().message));
+    entries_ = std::move(*entries);
+
+    // Files already on disk (in installed versions) by hash.
+    auto local = std::make_shared<std::map<QByteArray, QString>>();
+    for (const InstalledEditor& e : installed()) {
+        QFile list(QDir(e.directory).filePath(QString::fromLatin1(kInstalledFileList)));
+        if (!list.open(QIODevice::ReadOnly)) continue;
+        auto files = parseFileList(list.readAll());
+        if (!files) continue;
+        for (const FileEntry& f : *files) {
+            if (f.link.isEmpty()) local->emplace(f.sha256, QDir(e.directory).filePath(f.path));
+        }
+    }
+    // Copy what can be reused off the UI thread; the rest is downloaded.
+    auto missing = std::make_shared<std::vector<std::size_t>>();
+    auto error = std::make_shared<QString>();
+    QThread* worker = QThread::create([entries = entries_, staging = staging_, local, missing, error] {
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+            const FileEntry& f = entries[i];
+            if (!f.link.isEmpty()) continue;
+            const QString target = QDir(staging).filePath(f.path);
+            if (!QDir().mkpath(QFileInfo(target).absolutePath())) {
+                *error = QStringLiteral("cannot create %1").arg(QFileInfo(target).absolutePath());
+                return;
+            }
+            const auto it = local->find(f.sha256);
+            if (it != local->end() && QFileInfo(it->second).size() == static_cast<qint64>(f.size) &&
+                QFile::copy(it->second, target)) {
+                continue;
+            }
+            missing->push_back(i);
+        }
+    });
+    connect(worker, &QThread::finished, this, [this, worker, missing, error] {
+        worker->deleteLater();
+        if (cancelled_) return failInstall(tr("Installation cancelled."));
+        if (!error->isEmpty()) return fallBackToZip(*error);
+        missing_ = std::move(*missing);
+        nextMissing_ = 0;
+        deltaTotal_ = 0;
+        for (std::size_t i : missing_) deltaTotal_ += static_cast<qint64>(entries_[i].size);
+        received_ = 0;
+        log::info("Launcher", "update to Lumora {}: {} of {} files changed ({:.1f} MiB to download)",
+                  release_.version.toStdString(), missing_.size(), entries_.size(),
+                  static_cast<double>(deltaTotal_) / (1024.0 * 1024.0));
+        downloadNextBlob();
+    });
+    worker->start();
+}
+
+void EditorInstaller::downloadNextBlob() {
+    if (nextMissing_ >= missing_.size()) return finishDelta();
+    const FileEntry& f = entries_[missing_[nextMissing_]];
+    download_ = std::make_unique<QFile>(QDir(staging_).filePath(f.path));
+    if (!download_->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        return fallBackToZip(download_->errorString());
+    }
+    hash_ = std::make_unique<QCryptographicHash>(QCryptographicHash::Sha256);
+    blobStart_ = received_;
+    streamTo(package_.blobsUrl.resolved(QUrl(QString::fromLatin1(f.sha256))), f.size, [this] { finishBlob(); });
+}
+
+void EditorInstaller::finishBlob() {
+    QNetworkReply* reply = nullptr;
+    if (!takeReply(reply)) return;
+    if (reply->error() != QNetworkReply::NoError) return fallBackToZip(reply->errorString());
+    const QByteArray rest = reply->readAll();
+    received_ += rest.size();
+    hash_->addData(rest);
+    download_->write(rest);
+    download_->close();
+    const FileEntry& f = entries_[missing_[nextMissing_]];
+    if (static_cast<quint64>(received_ - blobStart_) != f.size || hash_->result().toHex() != f.sha256) {
+        return fallBackToZip(QStringLiteral("%1 does not match its checksum").arg(f.path));
+    }
+    download_.reset();
+    hash_.reset();
+    ++nextMissing_;
+    downloadNextBlob();
+}
+
+void EditorInstaller::finishDelta() {
+    for (const FileEntry& f : entries_) {
+        const QString target = QDir(staging_).filePath(f.path);
+        if (!f.link.isEmpty()) {
+#if !defined(Q_OS_WIN)
+            QDir().mkpath(QFileInfo(target).absolutePath());
+            std::error_code ec;
+            std::filesystem::create_symlink(f.link.toStdString(), target.toStdString(), ec);
+            if (ec) return fallBackToZip(QString::fromStdString(ec.message()));
+#endif
+            continue;
+        }
+#if !defined(Q_OS_WIN)
+        QFile::setPermissions(target, (f.mode & 0100) ? QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                                             QFileDevice::ExeOwner | QFileDevice::ReadGroup |
+                                                             QFileDevice::ExeGroup | QFileDevice::ReadOther |
+                                                             QFileDevice::ExeOther
+                                                       : QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                                             QFileDevice::ReadGroup | QFileDevice::ReadOther);
+#endif
+    }
+    const QString content = contentFolder(staging_);
+    if (content.isEmpty()) return fallBackToZip(tr("the file list has no %1").arg(editorExecutable()));
+    finalize(content, entries_);
+}
+
+void EditorInstaller::finalize(const QString& content, const std::vector<FileEntry>& entries) {
+    const json info = {{"version", release_.version.toStdString()},
+                       {"executable", editorExecutable().toStdString()},
+                       {"source", package_.url.toString().toStdString()},
+                       {"sha256", package_.sha256.toStdString()},
+                       {"update", delta_ ? "delta" : "full"},
+                       {"installedAt", QDateTime::currentDateTimeUtc().toString(Qt::ISODate).toStdString()}};
+    const std::string text = info.dump(2);
+    QSaveFile record(QDir(content).filePath(QString::fromLatin1(kInstallFile)));
+    QSaveFile list(QDir(content).filePath(QString::fromLatin1(kInstalledFileList)));
+    const QByteArray listing = fileListJson(entries);
+    if (!record.open(QIODevice::WriteOnly) || record.write(text.data(), static_cast<qint64>(text.size())) < 0 ||
+        !record.commit() || !list.open(QIODevice::WriteOnly) || list.write(listing) < 0 || !list.commit()) {
+        return failInstall(tr("Cannot record the installation."));
+    }
+    const QString target = QDir(root_).filePath(release_.version);
+    if (!QDir().rename(content, target)) return failInstall(tr("Cannot move the editor into %1.").arg(target));
+    QDir(staging_).removeRecursively();  // empty wrapper folder, if any
+    log::info("Launcher", "installed Lumora {} ({}, {} files) in {}", release_.version.toStdString(),
+              delta_ ? "delta update" : "full package", entries.size(), target.toStdString());
+    const bool wasDelta = delta_;
+    installing_ = false;
+    delta_ = false;
+    staging_.clear();
+    lastWasDelta_ = wasDelta;
+    if (auto editor = find(release_.version)) {
+        emit installCompleted(*editor);
+    } else {
+        failInstall(tr("The installed editor could not be found."));
+    }
 }
 
 Result<> EditorInstaller::uninstall(const QString& version) {

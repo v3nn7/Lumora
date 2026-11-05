@@ -89,16 +89,24 @@ def cmd_update(args):
             sys.exit(f"error: {args.manifest} is not a Lumora release feed")
     else:
         feed = {"format": "lumora.releases", "version": 1, "releases": []}
+    feed.setdefault("blobs", "blobs/")  # content-addressed files for delta updates, relative to the feed
 
     packages = {}
     for path in args.package:
         with open(path) as f:
             fragment = json.load(f)
-        packages[fragment["platform"]] = {
+        package = {
             "url": args.url_prefix + fragment["file"],
             "size": fragment["size"],
             "sha256": fragment["sha256"],
         }
+        if "files" in fragment:  # delta updates: file list + blobs/<sha256> next to the feed
+            package["files"] = {
+                "url": args.url_prefix + fragment["files"]["file"],
+                "size": fragment["files"]["size"],
+                "sha256": fragment["files"]["sha256"],
+            }
+        packages[fragment["platform"]] = package
     if not packages:
         sys.exit("error: no packages given")
     release = {

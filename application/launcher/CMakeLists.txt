@@ -40,6 +40,7 @@ lumora_qt_module(launcher
         ZipExtractor.cpp
         EditorInstaller.cpp
         EditorRegistry.cpp
+        FileList.cpp
     DEPS lumora_core Qt6::Network nlohmann_json::nlohmann_json)
 target_link_libraries(lumora_launcher PRIVATE lumora_miniz lumora_monocypher)
 target_include_directories(lumora_launcher PUBLIC ${CMAKE_SOURCE_DIR}/application)

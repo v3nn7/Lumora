@@ -13,9 +13,9 @@ works today from what is planned, and nothing listed as planned exists yet.
 | Area | Status |
 |---|---|
 | Build | CMake + Ninja presets, pinned and hash-verified FetchContent dependencies, HLSL → SPIR-V at build time |
-| Application | Everything lives in one shared library (`liblumora.so` / `lumora.dll`) behind thin executables: `lumora-hub` (the Hub), `lumora-editor` (editor, player, headless tools of one version) and `Lumora` (development build: Hub → Editor → Hub in one process) |
+| Application | Every module is its own shared library (`liblumora_core.so`, `…_renderer.so`, `…_editor.so`; `lumora_<module>.dll` on Windows) behind thin executables: `lumora-hub` (the Hub), `lumora-editor` (editor, player, headless tools of one version) and `Lumora` (development build: Hub → Editor → Hub in one process) |
 | Hub | Hero banner rendered live by the engine, recent projects grid with thumbnails, search and sort, project creation from 3 templates with live-rendered previews (saved as the project thumbnail), project settings, GPU/engine info; **Editors page**: editor versions installed side by side from a signed release feed, projects opened in the version they were made with |
-| Distribution | Packages per platform (editor and Hub ZIPs with the shared library, Qt libraries and plugins; system libraries never bundled), Ed25519-signed release feed, GitHub Actions workflow publishing to Cloudflare R2, installer that verifies size, SHA-256 and signature and refuses hostile archives |
+| Distribution | Packages per platform (editor and Hub ZIPs with the shared library, Qt libraries and plugins; system libraries never bundled), Ed25519-signed release feed, GitHub Actions workflow publishing to Cloudflare R2, installer that verifies size, SHA-256 and signature and refuses hostile archives; **delta updates** that download only the files (modules) that changed |
 | Editor | Embedded Vulkan viewport, fly camera, click picking with selection highlight, move/rotate/scale gizmos (snapping, parent-space aware), undo/redo for every edit, hierarchy (drag & drop re-parenting, rename, duplicate, delete, filter), reflection-driven inspector with asset pickers, content browser (open scenes, add/drop-import models), console, GPU profiler, play/pause/stop, scene save/load, dockable and persisted layout |
 | Collaboration | Live multi-user editing of one scene: host on a port (TCP + UDP), others join by LAN address or a playit.gg tunnel address; edits merge per field, collaborators' cameras and selections are drawn in their colour, chat, missing models/textures are transferred automatically, optional password |
 | Renderer | Vulkan 1.4 instance/device with capability detection, VMA, dynamic rendering, synchronization2, render graph with automatic barriers, bindless descriptors (update-after-bind), timeline-semaphore uploads, persistent pipeline cache, GPU timestamp profiling, frames in flight, swapchain recreation, device-loss reporting |
@@ -64,7 +64,8 @@ cmake --build --preset release
 ```
 
 The executables are in `build/release/bin/` (`Lumora`, `lumora-editor`, `lumora-hub`, all thin
-launchers) with compiled shaders in `bin/shaders/`; the engine itself is `build/release/lib/liblumora.so`.
+launchers) with compiled shaders in `bin/shaders/`; the modules are `build/release/lib/liblumora_*.so`.
+`-DLUMORA_SHARED_MODULES=OFF` builds static modules instead.
 Use `debug` instead of `release` for a Debug build, which also enables Vulkan validation by default.
 
 Run the tests (the GPU tests are skipped, not faked, when no Vulkan 1.4 device exists):
@@ -180,7 +181,7 @@ An editor package is a ZIP:
 ```
 bin/lumora-editor        thin launcher (RPATH $ORIGIN/../lib)
 bin/qt.conf, bin/shaders/*.spv
-lib/liblumora.so         the engine, editor and tools
+lib/liblumora_*.so       one library per module (core, scene, renderer, ..., editor, hub, shell)
 lib/libQt6*.so*, libicu* Qt and its ICU only - glibc, libstdc++, X11/Wayland, the Vulkan loader
                          and OpenSSL always come from the system
 plugins/                 Qt platform (xcb, Wayland), TLS, image-format and icon plugins
@@ -194,6 +195,12 @@ with `-DLUMORA_RELEASE_PUBLIC_KEY=<key>` refuses feeds not signed by that key, a
 download must match the size and SHA-256 the signed feed lists. Packages unpack into a staging
 folder and only then move into place. Archives with absolute paths, `..` or links pointing
 outside are refused.
+
+**Updates download only what changed.** Next to each ZIP, the feed lists the package's files
+(`<zip>.files.json`: path, size, SHA-256, mode), and every file is stored once in
+`editor/blobs/<sha256>`. When a version is already installed, the Hub copies the files it
+already has (matched by hash) and downloads only the others - usually the few modules a release
+touched. If anything on that path fails, it downloads the full ZIP instead.
 
 ### Publishing (GitHub Actions → Cloudflare R2)
 
@@ -235,7 +242,7 @@ beta, or everything including alpha. *Install Latest* installs the newest one of
 
 The workflow `.github/workflows/release.yml` builds and tests on Linux and Windows. It packages
 the editor and the Hub, then installs the fresh editor package with the Hub's own installer. If
-that works, it uploads `editor/<version>/…` and `hub/<version>/…` (plus
+that works, it uploads `editor/<version>/…`, the new blobs and `hub/<version>/…` (plus
 `hub/latest/lumora-hub-<platform>.zip` for stable releases) and updates and signs the feed.
 *Run workflow* builds without publishing unless you tick *publish*. It takes a channel and
 an optional suffix; alpha and beta default to `<channel>.<run number>`.

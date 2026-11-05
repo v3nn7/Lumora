@@ -8,9 +8,7 @@ where the current design leaves room for them.
 ```
          Lumora · lumora-editor · lumora-hub   (thin executables: main() → runLumora(flavor))
                                  │
-                        liblumora.so / lumora.dll   (shared: Launch.cpp + every module below)
-                                 │
-                           lumora_shell  (window orchestration, headless mode)
+                           lumora_shell  (entry point, window orchestration, headless mode)
                 ┌────────────────┼────────────────┐
            lumora_hub       lumora_editor     lumora_player
                 ├── lumora_launcher  (editor installer: release feed, signatures, ZIP)
@@ -28,11 +26,15 @@ where the current design leaves room for them.
 
 - Nothing under `engine/` or `runtime/` includes Qt. The editor is a client of the engine, not
   part of it. The same renderer runs headless.
-- Each module is a static library with an explicit dependency list
-  (`engine/CMakeLists.txt`, `application/CMakeLists.txt`). Tests link them directly. The
-  shipped binaries link them once, into the shared library, which exports a single symbol
-  (`runLumora`; static-library symbols are hidden with `--exclude-libs`), so there is no
-  cross-DLL template or EnTT type-identity issue.
+- Each module is a shared library (`liblumora_<module>.so`, `lumora_<module>.dll`) with an
+  explicit dependency list (`engine/CMakeLists.txt`, `application/CMakeLists.txt`,
+  `cmake/LumoraModules.cmake`), linked with `--no-undefined` on Linux. A release that touches
+  one module changes one file, which delta updates exploit. On Windows functions are exported
+  automatically (`CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS`); QObject classes, whose `staticMetaObject`
+  other modules reference, carry `LUMORA_<MODULE>_API`. Singletons (`Logger::instance`,
+  `JobSystem::global`, `ComponentRegistry::builtin`) are defined out of line, so each exists
+  once; third-party static libraries (Jolt, miniz, Monocypher) are linked into exactly one
+  module. `LUMORA_SHARED_MODULES=OFF` builds static modules.
 
 ## Conventions
 
@@ -272,6 +274,13 @@ simulates the copy and discards it on Stop, so play-mode changes never reach the
   paths, sizes and entry counts are bounded, and Unix modes are restored.
   `EditorRegistry` merges installed versions with local builds registered in `QSettings`
   (version read from `--version`).
+- **Delta updates.** `package.py` also writes the package's file list and copies each file to
+  `blobs/<sha256>`; the signed feed carries the list's URL, size and hash. With a version
+  installed, `EditorInstaller` downloads and verifies the list, copies every file whose hash an
+  installed version has (from that version's `lumora-files.json`, written at install time) on a
+  worker thread, downloads the remaining blobs one by one (each checked against its hash), then
+  recreates links and modes and finalises like a full install. Any failure falls back to the
+  full ZIP.
 - **Release pipeline.** `scripts/release/package.py` writes deterministic ZIPs (fixed
   timestamps, Unix modes, symlinks kept) plus a size/SHA-256 fragment. `manifest.py` merges
   releases into the feed, signs and verifies it, and generates keys. The workflow builds and

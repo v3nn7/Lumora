@@ -36,6 +36,12 @@ struct PackageInfo {
     QUrl url;            // absolute (relative entries are resolved against the feed)
     quint64 size = 0;
     QByteArray sha256;   // lower-case hex
+    // Delta updates (optional): the package's file list and where its files live, by SHA-256.
+    QUrl filesUrl;
+    quint64 filesSize = 0;
+    QByteArray filesSha256;
+    QUrl blobsUrl;       // <blobsUrl>/<sha256> is one file of the package
+    [[nodiscard]] bool supportsDelta() const noexcept { return filesUrl.isValid() && !filesUrl.isEmpty(); }
 };
 
 struct ReleaseInfo {

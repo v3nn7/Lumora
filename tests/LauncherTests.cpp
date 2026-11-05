@@ -4,6 +4,7 @@
 
 #include "launcher/EditorInstaller.hpp"
 #include "launcher/EditorRegistry.hpp"
+#include "launcher/FileList.hpp"
 #include "launcher/ReleaseManifest.hpp"
 #include "launcher/Signature.hpp"
 #include "launcher/ZipExtractor.hpp"
@@ -25,6 +26,7 @@ extern "C" {
 
 #include <filesystem>
 #include <functional>
+#include <map>
 
 using namespace lumora;
 using namespace lumora::launcher;
@@ -120,6 +122,11 @@ bool writeFile(const QString& path, const QByteArray& bytes) {
     QDir().mkpath(QFileInfo(path).absolutePath());
     QFile f(path);
     return f.open(QIODevice::WriteOnly) && f.write(bytes) == bytes.size();
+}
+
+QByteArray readFileBytes(const QString& path) {
+    QFile f(path);
+    return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
 }
 
 QByteArray sha256Hex(const QByteArray& bytes) { return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex(); }
@@ -470,10 +477,124 @@ TEST(LauncherInstall, InstallsFromAPublishedFeed) {
     const auto key = decodeBinary(qEnvironmentVariable("LUMORA_TEST_FEED_KEY"), 32);
     ASSERT_TRUE(key.has_value()) << "LUMORA_TEST_FEED_KEY must be the base64 public key";
     test::TempDir dir;
-    EditorInstaller installer(qpath(dir.path()));
+    // LUMORA_TEST_INSTALL_ROOT keeps installs between runs, to check updates (delta) as well.
+    const QString root = qEnvironmentVariableIsSet("LUMORA_TEST_INSTALL_ROOT") ? qEnvironmentVariable("LUMORA_TEST_INSTALL_ROOT")
+                                                                              : qpath(dir.path());
+    EditorInstaller installer(root);
     installer.setPublicKey(*key);
     const Outcome o = fetchAndInstall(installer, url);
     ASSERT_TRUE(o.installed.has_value()) << o.error.toStdString();
     EXPECT_TRUE(QFileInfo(o.installed->executable).isExecutable());
-    std::printf("installed Lumora %s into %s\n", qPrintable(o.installed->version), qPrintable(o.installed->directory));
+    std::printf("installed Lumora %s into %s (%s)\n", qPrintable(o.installed->version), qPrintable(o.installed->directory),
+                installer.lastInstallWasDelta() ? "delta update" : "full package");
+}
+
+// ---- Delta updates -----------------------------------------------------------------------------
+
+namespace {
+
+/// Publishes a release the way package.py + manifest.py do: ZIP, file list and blobs/<sha256>.
+struct DeltaFeed {
+    test::TempDir dir;
+    KeyPair key;
+    QString root() const { return qpath(dir.path() / "installs"); }
+    QString blobs() const { return qpath(dir.path() / "feed" / "editor" / "blobs"); }
+    QUrl url() const { return QUrl::fromLocalFile(qpath(dir.path() / "feed" / "editor" / "manifest.json")); }
+
+    void publish(const QString& version, const std::map<std::string, std::pair<QByteArray, int>>& files) {
+        ZipWriter zip;
+        std::vector<FileEntry> entries;
+        QDir().mkpath(blobs());
+        for (const auto& [path, content] : files) {
+            zip.file(path, content.first, 0100000u | static_cast<std::uint32_t>(content.second));
+            FileEntry e;
+            e.path = QString::fromStdString(path);
+            e.size = static_cast<quint64>(content.first.size());
+            e.sha256 = sha256Hex(content.first);
+            e.mode = content.second;
+            entries.push_back(e);
+            ASSERT_TRUE(writeFile(blobs() + "/" + QString::fromLatin1(e.sha256), content.first));
+        }
+        zip.symlink("lib/libLumora.so", "libLumora.so.1");
+        FileEntry link;
+        link.path = QStringLiteral("lib/libLumora.so");
+        link.link = QStringLiteral("libLumora.so.1");
+        entries.push_back(link);
+        const QString folder = qpath(dir.path() / "feed" / "editor") + "/" + version;
+        QDir().mkpath(folder);
+        ASSERT_TRUE(zip.save(folder + "/package.zip"));
+        QFile zipFile(folder + "/package.zip");
+        ASSERT_TRUE(zipFile.open(QIODevice::ReadOnly));
+        const QByteArray zipBytes = zipFile.readAll();
+        const QByteArray listing = fileListJson(entries);
+        ASSERT_TRUE(writeFile(folder + "/files.json", listing));
+        const QByteArray manifest =
+            QStringLiteral(R"({"format":"lumora.releases","version":1,"blobs":"blobs/","releases":[
+                {"version":"%1","channel":"stable","packages":{"%2":{"url":"%1/package.zip","size":%3,"sha256":"%4",
+                 "files":{"url":"%1/files.json","size":%5,"sha256":"%6"}}}}]})")
+                .arg(version, currentPlatform())
+                .arg(zipBytes.size())
+                .arg(QString::fromLatin1(sha256Hex(zipBytes)))
+                .arg(listing.size())
+                .arg(QString::fromLatin1(sha256Hex(listing)))
+                .toUtf8();
+        ASSERT_TRUE(writeFile(qpath(dir.path() / "feed" / "editor" / "manifest.json"), manifest));
+        ASSERT_TRUE(writeFile(qpath(dir.path() / "feed" / "editor" / "manifest.json.sig"), key.sign(manifest).toBase64()));
+    }
+};
+
+std::map<std::string, std::pair<QByteArray, int>> editorFiles(const QByteArray& editorModule) {
+    return {{editorExecutable().toStdString(), {"#!/bin/sh\nexit 0\n", 0755}},
+            {"lib/libLumora.so.1", {QByteArray(4096, 'c'), 0644}},
+            {"lib/liblumora_renderer.so", {QByteArray(8192, 'r'), 0644}},
+            {"lib/liblumora_editor.so", {editorModule, 0644}}};
+}
+
+} // namespace
+
+TEST(LauncherDelta, UpdatesDownloadOnlyChangedFiles) {
+    DeltaFeed feed;
+    feed.publish(QStringLiteral("0.4.0"), editorFiles(QByteArray(1000, '4')));
+    EditorInstaller installer(feed.root());
+    installer.setPublicKey(feed.key.pub);
+    Outcome first = fetchAndInstall(installer, feed.url());
+    ASSERT_TRUE(first.installed.has_value()) << first.error.toStdString();
+    EXPECT_FALSE(installer.lastInstallWasDelta()) << "nothing installed yet: full package";
+    EXPECT_TRUE(QFileInfo::exists(first.installed->directory + "/" + kInstalledFileList));
+
+    // 0.5.0 changes only the editor module. Every other blob disappears from the server, so the
+    // update can only succeed by reusing the installed copies.
+    feed.publish(QStringLiteral("0.5.0"), editorFiles(QByteArray(1200, '5')));
+    QDir blobs(feed.blobs());
+    const QByteArray changed = sha256Hex(QByteArray(1200, '5'));
+    for (const QString& name : blobs.entryList(QDir::Files)) {
+        if (name.toLatin1() != changed) blobs.remove(name);
+    }
+    QFile::remove(qpath(feed.dir.path() / "feed" / "editor" / "0.5.0" / "package.zip"));  // no fallback either
+    Outcome second = fetchAndInstall(installer, feed.url());
+    ASSERT_TRUE(second.installed.has_value()) << second.error.toStdString();
+    EXPECT_TRUE(installer.lastInstallWasDelta());
+    const QString dir = second.installed->directory;
+    EXPECT_EQ(readFileBytes(dir + "/lib/liblumora_editor.so"), QByteArray(1200, '5'));
+    EXPECT_EQ(readFileBytes(dir + "/lib/liblumora_renderer.so"), QByteArray(8192, 'r'));
+#if !defined(Q_OS_WIN)
+    EXPECT_TRUE(QFileInfo(second.installed->executable).isExecutable());
+    EXPECT_TRUE(QFileInfo(dir + "/lib/libLumora.so").isSymLink());
+#endif
+    EXPECT_EQ(installer.installed().size(), 2u);
+}
+
+TEST(LauncherDelta, FallsBackToTheFullPackage) {
+    DeltaFeed feed;
+    feed.publish(QStringLiteral("0.4.0"), editorFiles(QByteArray(1000, '4')));
+    EditorInstaller installer(feed.root());
+    installer.setPublicKey(feed.key.pub);
+    ASSERT_TRUE(fetchAndInstall(installer, feed.url()).installed.has_value());
+
+    feed.publish(QStringLiteral("0.5.0"), editorFiles(QByteArray(1200, '5')));
+    ASSERT_TRUE(QFile::remove(feed.blobs() + "/" + QString::fromLatin1(sha256Hex(QByteArray(1200, '5')))));
+    Outcome o = fetchAndInstall(installer, feed.url());
+    ASSERT_TRUE(o.installed.has_value()) << o.error.toStdString();
+    EXPECT_FALSE(installer.lastInstallWasDelta()) << "a missing blob means the full package";
+    EXPECT_EQ(readFileBytes(o.installed->directory + "/lib/liblumora_editor.so"), QByteArray(1200, '5'));
 }

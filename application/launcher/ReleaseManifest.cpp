@@ -116,6 +116,7 @@ Result<ReleaseManifest> ReleaseManifest::parse(const QByteArray& bytes, const QU
     if (list == root.end() || !list->is_array()) return makeError("the release feed has no 'releases' list");
 
     static const QRegularExpression hexSha(QStringLiteral("^[0-9a-f]{64}$"));
+    const QUrl blobs = feedUrl.resolved(QUrl(QString::fromStdString(root.value("blobs", std::string("blobs/")))));
     ReleaseManifest manifest;
     for (const json& r : *list) {
         if (!r.is_object()) return makeError("release entry is not an object");
@@ -142,6 +143,15 @@ Result<ReleaseManifest> ReleaseManifest::parse(const QByteArray& bytes, const QU
             if (!package.url.isValid() || package.url.isEmpty() || package.size == 0 ||
                 !hexSha.match(QString::fromLatin1(package.sha256)).hasMatch()) {
                 return makeError("package {} of {} needs url, size and sha256", platform, release.version.toStdString());
+            }
+            if (const auto files = p.find("files"); files != p.end() && files->is_object()) {
+                package.filesUrl = feedUrl.resolved(QUrl(QString::fromStdString(files->value("url", std::string{}))));
+                package.filesSize = files->value("size", std::uint64_t{0});
+                package.filesSha256 = QByteArray::fromStdString(files->value("sha256", std::string{})).toLower();
+                package.blobsUrl = blobs;
+                if (package.filesSize == 0 || !hexSha.match(QString::fromLatin1(package.filesSha256)).hasMatch()) {
+                    package.filesUrl = QUrl();  // malformed: fall back to the full package
+                }
             }
             release.packages.push_back(std::move(package));
         }

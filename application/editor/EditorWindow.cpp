@@ -26,6 +26,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFrame>
+#include <QHBoxLayout>
 #include <QImage>
 #include <QLabel>
 #include <QMenuBar>
@@ -42,12 +43,49 @@ namespace lumora::editor {
 
 namespace {
 
-QDockWidget* makeDock(QMainWindow* window, const QString& title, const QString& objectName, QWidget* content) {
+/// Compact dock title bar: panel icon + title, float/close buttons on the right.
+QWidget* makeDockTitleBar(QDockWidget* dock, const QString& iconName) {
+    auto* bar = new QWidget;
+    bar->setObjectName(QStringLiteral("dockTitle"));
+    bar->setAttribute(Qt::WA_StyledBackground);
+    bar->setStyleSheet(QStringLiteral(
+        "#dockTitle { background: #16181d; border-bottom: 1px solid #23262e; }"
+        "#dockTitle QLabel#dockTitleText { color: #d3d7de; font-weight: 600; }"
+        "#dockTitle QToolButton { border: none; padding: 2px; border-radius: 4px; }"
+        "#dockTitle QToolButton:hover { background: #262a32; }"));
+    auto* layout = new QHBoxLayout(bar);
+    layout->setContentsMargins(10, 5, 6, 5);
+    layout->setSpacing(7);
+    auto* icon = new QLabel;
+    icon->setPixmap(app::theme::icon(iconName).pixmap(QSize(15, 15), bar->devicePixelRatioF()));
+    auto* title = new QLabel(dock->windowTitle());
+    title->setObjectName(QStringLiteral("dockTitleText"));
+    layout->addWidget(icon);
+    layout->addWidget(title);
+    layout->addStretch();
+    for (const auto& [iconId, tip, isClose] : {std::tuple{"open", "Float / dock", false}, std::tuple{"close", "Close panel", true}}) {
+        auto* button = new QToolButton;
+        button->setIcon(app::theme::icon(QString::fromLatin1(iconId)));
+        button->setIconSize(QSize(12, 12));
+        button->setToolTip(QObject::tr(tip));
+        layout->addWidget(button);
+        if (isClose) {
+            QObject::connect(button, &QToolButton::clicked, dock, &QDockWidget::close);
+        } else {
+            QObject::connect(button, &QToolButton::clicked, dock, [dock] { dock->setFloating(!dock->isFloating()); });
+        }
+    }
+    return bar;
+}
+
+QDockWidget* makeDock(QMainWindow* window, const QString& title, const QString& objectName, const QString& iconName,
+                      QWidget* content) {
     auto* dock = new QDockWidget(title, window);
     dock->setObjectName(objectName);
     dock->setWidget(content);
     dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |
                       QDockWidget::DockWidgetClosable);
+    dock->setTitleBarWidget(makeDockTitleBar(dock, iconName));
     return dock;
 }
 
@@ -199,16 +237,16 @@ void EditorWindow::onRenderFailed(const QString& message) {
 }
 
 void EditorWindow::buildDocks() {
-    auto* hierarchy = makeDock(this, tr("Hierarchy"), QStringLiteral("dock.hierarchy"), new SceneHierarchyPanel(ctx_));
-    auto* inspector = makeDock(this, tr("Inspector"), QStringLiteral("dock.inspector"), new InspectorPanel(ctx_));
+    auto* hierarchy = makeDock(this, tr("Hierarchy"), QStringLiteral("dock.hierarchy"), QStringLiteral("hierarchy"), new SceneHierarchyPanel(ctx_));
+    auto* inspector = makeDock(this, tr("Inspector"), QStringLiteral("dock.inspector"), QStringLiteral("settings"), new InspectorPanel(ctx_));
     auto* content = new ContentBrowserPanel(app::toQString(project_.contentDir()));
-    auto* contentDock = makeDock(this, tr("Content Browser"), QStringLiteral("dock.content"), content);
-    auto* console = makeDock(this, tr("Console"), QStringLiteral("dock.console"), new ConsolePanel(app_.logBridge()));
+    auto* contentDock = makeDock(this, tr("Content Browser"), QStringLiteral("dock.content"), QStringLiteral("folder"), content);
+    auto* console = makeDock(this, tr("Console"), QStringLiteral("dock.console"), QStringLiteral("console"), new ConsolePanel(app_.logBridge()));
     profiler_ = new ProfilerPanel(app_.renderContext(), [this]() -> const render::FrameStats* {
         render::Renderer* r = app_.renderer();
         return r ? &r->stats() : nullptr;
     });
-    auto* profilerDock = makeDock(this, tr("Profiler"), QStringLiteral("dock.profiler"), profiler_);
+    auto* profilerDock = makeDock(this, tr("Profiler"), QStringLiteral("dock.profiler"), QStringLiteral("chart"), profiler_);
 
     addDockWidget(Qt::LeftDockWidgetArea, hierarchy);
     addDockWidget(Qt::RightDockWidgetArea, inspector);
@@ -270,6 +308,24 @@ void EditorWindow::buildToolbar() {
     bar->setObjectName(QStringLiteral("toolbar.main"));
     bar->setMovable(false);
     bar->setIconSize(QSize(18, 18));
+    bar->setStyleSheet(QStringLiteral("QToolBar { padding: 5px 10px; spacing: 6px; }"));
+
+    // Left: brand + breadcrumb (project › scene).
+    auto* logo = new QLabel;
+    logo->setPixmap(app::theme::icon(QStringLiteral("logo")).pixmap(QSize(22, 22), devicePixelRatioF()));
+    logo->setContentsMargins(2, 0, 6, 0);
+    bar->addWidget(logo);
+    auto* projectLabel = new QLabel(QString::fromStdString(project_.name()));
+    projectLabel->setStyleSheet(QStringLiteral("font-weight: 650; color: #eef0f3;"));
+    bar->addWidget(projectLabel);
+    auto* chevron = new QLabel(QStringLiteral("›"));
+    chevron->setStyleSheet(QStringLiteral("color: #5d6472; font-size: 13pt; padding: 0 4px;"));
+    bar->addWidget(chevron);
+    toolbarScene_ = new QLabel;
+    toolbarScene_->setStyleSheet(QStringLiteral("color: #9aa1ad;"));
+    bar->addWidget(toolbarScene_);
+    bar->addSeparator();
+
     bar->addAction(saveScene_);
     auto* createButton = new QToolButton;
     createButton->setIcon(app::theme::icon(QStringLiteral("plus")));
@@ -279,23 +335,37 @@ void EditorWindow::buildToolbar() {
     populateCreateMenu(*createMenu, ctx_, false);
     createButton->setMenu(createMenu);
     bar->addWidget(createButton);
-    bar->addSeparator();
     bar->addAction(grid_);
     bar->addAction(pilot_);
 
+    // Centre: play controls in a pill, plus a mode chip.
     auto* leftSpacer = new QWidget;
     leftSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     bar->addWidget(leftSpacer);
-    bar->addAction(play_);
-    bar->addAction(pause_);
-    bar->addAction(stop_);
+    auto* pill = new QFrame;
+    pill->setObjectName(QStringLiteral("playPill"));
+    pill->setStyleSheet(QStringLiteral("#playPill { background: #1c1f26; border: 1px solid #2a2e37; border-radius: 9px; }"
+                                       "#playPill QToolButton { border: none; border-radius: 6px; padding: 5px 9px; }"
+                                       "#playPill QToolButton:hover { background: #2a2f39; }"
+                                       "#playPill QToolButton:disabled { background: transparent; }"));
+    auto* pillLayout = new QHBoxLayout(pill);
+    pillLayout->setContentsMargins(3, 3, 3, 3);
+    pillLayout->setSpacing(2);
+    for (QAction* a : {play_, pause_, stop_}) {
+        auto* b = new QToolButton;
+        b->setDefaultAction(a);
+        b->setIconSize(QSize(16, 16));
+        pillLayout->addWidget(b);
+    }
+    bar->addWidget(pill);
+    modeChip_ = new QLabel;
+    modeChip_->setContentsMargins(4, 0, 0, 0);
+    bar->addWidget(modeChip_);
     auto* rightSpacer = new QWidget;
     rightSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     bar->addWidget(rightSpacer);
-    auto* projectLabel = new QLabel(QString::fromStdString(project_.name()));
-    projectLabel->setProperty("muted", true);
-    projectLabel->setContentsMargins(0, 0, 8, 0);
-    bar->addWidget(projectLabel);
+
+    bar->addAction(projectSettings_);
 }
 
 void EditorWindow::buildStatusBar() {
@@ -304,9 +374,11 @@ void EditorWindow::buildStatusBar() {
     statusFps_ = new QLabel;
     statusGpu_ = new QLabel;
     for (QLabel* l : {statusCamera_, statusFps_, statusGpu_}) {
-        l->setContentsMargins(10, 0, 10, 0);
+        l->setStyleSheet(QStringLiteral("background: #1b1e24; border: 1px solid #262a32; border-radius: 4px;"
+                                        "padding: 1px 8px; color: #9aa1ad; margin: 2px 3px;"));
         statusBar()->addPermanentWidget(l);
     }
+    statusScene_->setContentsMargins(6, 0, 0, 0);
     statusBar()->addWidget(statusScene_);
     if (render::RenderContext* rc = app_.renderContext()) {
         statusGpu_->setText(QString::fromStdString(rc->caps().name));
@@ -446,6 +518,9 @@ void EditorWindow::updateTitle() {
     setWindowTitle(QStringLiteral("%1%2 — %3 — Lumora Editor")
                        .arg(sceneName, ctx_.isDirty() ? QStringLiteral("*") : QString(),
                             QString::fromStdString(project_.name())));
+    if (toolbarScene_ != nullptr) {
+        toolbarScene_->setText(sceneName + (ctx_.isDirty() ? QStringLiteral("  •") : QString()));
+    }
     statusScene_->setText(scenePath_.isEmpty() ? tr("Unsaved scene")
                                                : app::toQString(project_.relativePath(app::toPath(scenePath_))));
 }
@@ -494,6 +569,12 @@ void EditorWindow::updatePlayState() {
     pause_->setText(paused_ ? tr("Resume") : tr("Pause"));
     stop_->setEnabled(playing);
     const char* border = !playing ? "#121316" : (paused_ ? "#e8b84a" : "#5fcf8a");
+    const char* chipText = !playing ? "EDITING" : (paused_ ? "PAUSED" : "PLAYING");
+    const char* chipColor = !playing ? "#7c8494" : (paused_ ? "#e8b84a" : "#5fcf8a");
+    modeChip_->setText(QString::fromLatin1(chipText));
+    modeChip_->setStyleSheet(QStringLiteral("color: %1; font-weight: 700; font-size: 8pt; letter-spacing: 1.2px;"
+                                            "border: 1px solid %1; border-radius: 9px; padding: 2px 9px;")
+                                 .arg(QString::fromLatin1(chipColor)));
     viewportFrame_->setStyleSheet(QStringLiteral("#viewportFrame { background: %1; }").arg(QString::fromLatin1(border)));
     for (QAction* a : {newScene_, openScene_, saveSceneAs_}) a->setEnabled(!playing);
 }

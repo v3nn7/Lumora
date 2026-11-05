@@ -27,6 +27,7 @@ lumora_qt_module(appcommon
 lumora_qt_module(hub
     SOURCES
         hub/HubWindow.cpp
+        hub/HeroBanner.cpp
         hub/NewProjectDialog.cpp
         hub/ProjectListModel.cpp
         hub/ProjectCardDelegate.cpp

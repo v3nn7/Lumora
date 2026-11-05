@@ -8,7 +8,7 @@ namespace lumora::app {
 class ProjectCardDelegate final : public QStyledItemDelegate {
     Q_OBJECT
 public:
-    static constexpr QSize kCardSize{260, 214};
+    static constexpr QSize kCardSize{278, 238};
     using QStyledItemDelegate::QStyledItemDelegate;
     void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override;
     [[nodiscard]] QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;

@@ -122,41 +122,50 @@ void ColorButton::pick() {
     }
 }
 
-Section::Section(const QString& title, bool removable, QWidget* parent) : QWidget(parent) {
+Section::Section(const QString& title, const QIcon& icon, bool removable, QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 6);
+    layout->setContentsMargins(0, 0, 0, 8);
     layout->setSpacing(0);
 
     auto* headerRow = new QWidget;
     headerRow->setObjectName(QStringLiteral("sectionHeader"));
     headerRow->setAttribute(Qt::WA_StyledBackground);
-    headerRow->setStyleSheet(QStringLiteral("#sectionHeader { background: #20232a; border-radius: 5px; }"));
+    headerRow->setStyleSheet(QStringLiteral(
+        "#sectionHeader { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22262e, stop:1 #1e2128);"
+        "  border: 1px solid #2a2e37; border-radius: 7px; }"));
     auto* headerLayout = new QHBoxLayout(headerRow);
-    headerLayout->setContentsMargins(4, 2, 4, 2);
+    headerLayout->setContentsMargins(6, 3, 6, 3);
+    headerLayout->setSpacing(4);
     header_ = new QToolButton;
+    header_->setObjectName(QStringLiteral("sectionTitle"));
     header_->setText(title);
+    header_->setIcon(icon);
+    header_->setIconSize(QSize(15, 15));
     header_->setCheckable(true);
     header_->setChecked(true);
     header_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    header_->setArrowType(Qt::DownArrow);
-    header_->setStyleSheet(QStringLiteral("QToolButton { font-weight: 600; border: none; background: transparent; }"));
+    header_->setStyleSheet(QStringLiteral("QToolButton { font-weight: 650; color: #e6e9ee; border: none; background: transparent;"
+                                          "  padding: 3px 2px; } QToolButton:checked { background: transparent; }"));
     header_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     headerLayout->addWidget(header_);
     if (removable) {
         auto* remove = new QToolButton;
         remove->setIcon(app::theme::icon(QStringLiteral("trash")));
         remove->setToolTip(tr("Remove component"));
-        remove->setIconSize(QSize(14, 14));
+        remove->setIconSize(QSize(13, 13));
         headerLayout->addWidget(remove);
         connect(remove, &QToolButton::clicked, this, &Section::removeRequested);
     }
+    chevron_ = new QLabel(QStringLiteral("▾"));
+    chevron_->setStyleSheet(QStringLiteral("color: #7c8494; padding: 0 2px;"));
+    headerLayout->addWidget(chevron_);
     layout->addWidget(headerRow);
 
     body_ = new QWidget;
     layout->addWidget(body_);
     connect(header_, &QToolButton::toggled, this, [this](bool open) {
         body_->setVisible(open);
-        header_->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
+        chevron_->setText(open ? QStringLiteral("▾") : QStringLiteral("▸"));
     });
 }
 

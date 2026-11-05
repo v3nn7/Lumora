@@ -195,7 +195,7 @@ TEST_F(EditorUiTest, InspectorBuildsSectionsFromReflection) {
 
     QStringList sections;
     for (QToolButton* b : editor->findChildren<QToolButton*>()) {
-        if (b->isCheckable() && b->isVisible() && b->arrowType() != Qt::NoArrow) sections << b->text();
+        if (b->objectName() == QLatin1String("sectionTitle") && b->isVisible()) sections << b->text();
     }
     EXPECT_TRUE(sections.contains(QStringLiteral("Transform"))) << sections.join(',').toStdString();
     EXPECT_TRUE(sections.contains(QStringLiteral("Mesh Renderer")));

@@ -54,7 +54,7 @@ private:
 class Section final : public QWidget {
     Q_OBJECT
 public:
-    Section(const QString& title, bool removable, QWidget* parent = nullptr);
+    Section(const QString& title, const QIcon& icon, bool removable, QWidget* parent = nullptr);
     [[nodiscard]] QWidget* body() const noexcept { return body_; }
 
 signals:
@@ -62,6 +62,7 @@ signals:
 
 private:
     QToolButton* header_ = nullptr;
+    QLabel* chevron_ = nullptr;
     QWidget* body_ = nullptr;
 };
 

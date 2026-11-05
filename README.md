@@ -14,10 +14,10 @@ works today from what is planned, and nothing listed as planned exists yet.
 |---|---|
 | Build | CMake + Ninja presets, pinned and hash-verified FetchContent dependencies, HLSL → SPIR-V at build time |
 | Application | One `Lumora` executable; Hub → Editor → Hub transitions in one process; Player and headless modes |
-| Hub | Recent projects grid with thumbnails, search and sort, project creation from 3 templates with live-rendered previews, project settings, GPU/engine info |
+| Hub | Hero banner rendered live by the engine, recent projects grid with thumbnails, search and sort, project creation from 3 templates with live-rendered previews (saved as the project thumbnail), project settings, GPU/engine info |
 | Editor | Embedded Vulkan viewport, fly camera, click picking with selection highlight, hierarchy (drag & drop re-parenting, rename, duplicate, delete, filter), reflection-driven inspector, content browser, console, GPU profiler, play/pause/stop, scene save/load, dockable and persisted layout |
 | Renderer | Vulkan 1.4 instance/device with capability detection, VMA, dynamic rendering, synchronization2, render graph with automatic barriers, bindless descriptors (update-after-bind), timeline-semaphore uploads, persistent pipeline cache, GPU timestamp profiling, frames in flight, swapchain recreation, device-loss reporting |
-| Rendering | HDR forward PBR (GGX / Smith / Schlick), directional + point lights, sun shadow map (camera-fitted, texel-snapped, hardware PCF), procedural sky, hemispherical ambient, editor grid, ACES tonemapping, CPU frustum culling |
+| Rendering | HDR forward PBR (GGX / Smith / Schlick), directional + point lights, sun shadow map (camera-fitted, texel-snapped, hardware PCF), procedural sky with horizon haze and sun glow, exponential height fog (aerial perspective), physically based bloom, vignette, ACES tonemapping, procedural grid/checker surface patterns, hemispherical ambient, editor grid, CPU frustum culling |
 | Scene | EnTT ECS, UUID identity, hierarchy, component reflection → JSON serialization + inspector |
 | Runtime | Fixed-timestep simulation (deterministic), built-in `Rotator` behaviour |
 | Tests | 73 GoogleTest cases: core, scene, serialization, projects, CLI, render-graph barrier planning, **GPU tests that render real frames and check pixels**, Hub/Editor UI integration tests |

@@ -112,6 +112,8 @@ private:
     QAction* vsync_ = nullptr;
     QAction* resetLayout_ = nullptr;
 
+    QLabel* toolbarScene_ = nullptr;
+    QLabel* modeChip_ = nullptr;
     QLabel* statusScene_ = nullptr;
     QLabel* statusCamera_ = nullptr;
     QLabel* statusFps_ = nullptr;

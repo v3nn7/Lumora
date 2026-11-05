@@ -11,6 +11,7 @@ class QStackedWidget;
 namespace lumora::app {
 
 class AppContext;
+class HeroBanner;
 class ProjectListModel;
 class ProjectFilterModel;
 
@@ -25,6 +26,9 @@ public:
 signals:
     void openProjectRequested(const QString& descriptorPath);
 
+protected:
+    void showEvent(QShowEvent* event) override;
+
 private:
     QWidget* buildSidebar();
     QWidget* buildProjectsPage();
@@ -34,6 +38,7 @@ private:
     void showContextMenu(const QPoint& pos);
     void updateAbout();
     void updateEmptyState();
+    void renderHero();
 
     AppContext& app_;
     ProjectListModel* model_ = nullptr;
@@ -41,9 +46,12 @@ private:
     QListView* list_ = nullptr;
     QStackedWidget* pages_ = nullptr;
     QStackedWidget* projectStack_ = nullptr;
+    HeroBanner* hero_ = nullptr;
+    QLabel* heroTitle_ = nullptr;
     QLabel* aboutGpus_ = nullptr;
     QLabel* countLabel_ = nullptr;
     bool aboutFilled_ = false;
+    bool heroRendered_ = false;
 };
 
 } // namespace lumora::app

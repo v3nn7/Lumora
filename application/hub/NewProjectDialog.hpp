@@ -3,6 +3,9 @@
 #include "project/Project.hpp"
 
 #include <QDialog>
+#include <QImage>
+
+#include <map>
 
 class QLabel;
 class QLineEdit;
@@ -39,6 +42,7 @@ private:
     QLabel* error_ = nullptr;
     QPushButton* createButton_ = nullptr;
     QString created_;
+    std::map<int, QImage> previews_;  // template id -> rendered preview (also used as thumbnail)
 };
 
 } // namespace lumora::app

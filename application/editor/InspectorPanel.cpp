@@ -16,6 +16,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <span>
+
 namespace lumora::editor {
 
 namespace {
@@ -28,6 +30,15 @@ QFormLayout* makeForm(QWidget* body) {
     form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     return form;
+}
+
+QIcon componentIcon(const std::string& id) {
+    static const std::pair<const char*, const char*> kIcons[] = {
+        {"Transform", "entity"}, {"MeshRenderer", "cube"}, {"Light", "light"}, {"Camera", "camera"}, {"Rotator", "rotate"}};
+    for (const auto& [component, icon] : kIcons) {
+        if (id == component) return app::theme::icon(QString::fromLatin1(icon));
+    }
+    return app::theme::icon(QStringLiteral("settings"));
 }
 
 QLabel* fieldLabel(const QString& text) {
@@ -117,7 +128,7 @@ void InspectorPanel::buildEntity() {
     const ComponentRegistry& registry = ComponentRegistry::builtin();
     for (const ComponentDesc& desc : registry.components()) {
         if (!desc.has(scene.registry(), e)) continue;
-        auto* section = new Section(QString::fromStdString(desc.label), desc.removable);
+        auto* section = new Section(QString::fromStdString(desc.label), componentIcon(desc.id), desc.removable);
         auto* form = makeForm(section->body());
         for (const FieldDesc& field : desc.fields) {
             // Getter/setter resolve the entity by UUID each time: the panel may outlive the handle.
@@ -185,8 +196,6 @@ void InspectorPanel::buildEnvironment() {
     hint->setWordWrap(true);
     contentLayout_->addWidget(hint);
 
-    auto* section = new Section(tr("Sky and Ambient"), false);
-    auto* form = makeForm(section->body());
     struct EnvField {
         const char* label;
         FieldKind kind;
@@ -194,7 +203,29 @@ void InspectorPanel::buildEnvironment() {
         std::function<FieldValue(const EnvironmentSettings&)> get;
         std::function<void(EnvironmentSettings&, const FieldValue&)> set;
     };
-    const EnvField fields[] = {
+    auto addSection = [this](const QString& sectionTitle, const QString& iconName, std::span<const EnvField> fields) {
+        auto* section = new Section(sectionTitle, app::theme::icon(iconName), false);
+        auto* form = makeForm(section->body());
+        for (const EnvField& f : fields) {
+            FieldDesc desc;
+            desc.kind = f.kind;
+            desc.min = f.min;
+            desc.max = f.max;
+            desc.step = f.step;
+            FieldGetter get = [this, getter = f.get] {
+                return ctx_.scene() ? getter(ctx_.scene()->environment()) : FieldValue(0.0f);
+            };
+            FieldSetter set = [this, setter = f.set](const FieldValue& v) {
+                if (!ctx_.scene()) return;
+                setter(ctx_.scene()->environment(), v);
+                ctx_.notifyValuesChanged(this);
+            };
+            form->addRow(fieldLabel(tr(f.label)), createFieldEditor(desc, std::move(get), std::move(set), refreshers_));
+        }
+        contentLayout_->addWidget(section);
+    };
+
+    const EnvField sky[] = {
         {"Zenith", FieldKind::Color, 0, 1, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.skyZenithColor); },
          [](EnvironmentSettings& e, const FieldValue& v) { e.skyZenithColor = std::get<glm::vec3>(v); }},
         {"Horizon", FieldKind::Color, 0, 1, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.skyHorizonColor); },
@@ -203,26 +234,24 @@ void InspectorPanel::buildEnvironment() {
          [](EnvironmentSettings& e, const FieldValue& v) { e.groundColor = std::get<glm::vec3>(v); }},
         {"Ambient", FieldKind::Float, 0, 10, 0.05f, [](const EnvironmentSettings& e) { return FieldValue(e.ambientIntensity); },
          [](EnvironmentSettings& e, const FieldValue& v) { e.ambientIntensity = std::get<float>(v); }},
+    };
+    const EnvField atmosphere[] = {
+        {"Fog Density", FieldKind::Float, 0, 0.2f, 0.001f, [](const EnvironmentSettings& e) { return FieldValue(e.fogDensity); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.fogDensity = std::get<float>(v); }},
+        {"Fog Falloff", FieldKind::Float, 0.001f, 2, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.fogHeightFalloff); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.fogHeightFalloff = std::get<float>(v); }},
+    };
+    const EnvField post[] = {
         {"Exposure", FieldKind::Float, 0.01f, 16, 0.05f, [](const EnvironmentSettings& e) { return FieldValue(e.exposure); },
          [](EnvironmentSettings& e, const FieldValue& v) { e.exposure = std::get<float>(v); }},
+        {"Bloom", FieldKind::Float, 0, 1, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.bloomIntensity); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.bloomIntensity = std::get<float>(v); }},
+        {"Vignette", FieldKind::Float, 0, 1, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.vignette); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.vignette = std::get<float>(v); }},
     };
-    for (const EnvField& f : fields) {
-        FieldDesc desc;
-        desc.kind = f.kind;
-        desc.min = f.min;
-        desc.max = f.max;
-        desc.step = f.step;
-        FieldGetter get = [this, getter = f.get] {
-            return ctx_.scene() ? getter(ctx_.scene()->environment()) : FieldValue(0.0f);
-        };
-        FieldSetter set = [this, setter = f.set](const FieldValue& v) {
-            if (!ctx_.scene()) return;
-            setter(ctx_.scene()->environment(), v);
-            ctx_.notifyValuesChanged(this);
-        };
-        form->addRow(fieldLabel(tr(f.label)), createFieldEditor(desc, std::move(get), std::move(set), refreshers_));
-    }
-    contentLayout_->addWidget(section);
+    addSection(tr("Sky and Ambient"), QStringLiteral("sun"), sky);
+    addSection(tr("Atmosphere"), QStringLiteral("sparkle"), atmosphere);
+    addSection(tr("Post Processing"), QStringLiteral("chart"), post);
 }
 
 void InspectorPanel::refreshValues() {

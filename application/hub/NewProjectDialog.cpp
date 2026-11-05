@@ -167,10 +167,11 @@ void NewProjectDialog::renderPreviews() {
             log::warn("Hub", "template preview failed: {}", image.error().message);
             continue;
         }
-        const QImage qimg(image->rgba.data(), static_cast<int>(image->width), static_cast<int>(image->height),
-                          QImage::Format_RGBA8888);
-        item->setIcon(QIcon(QPixmap::fromImage(qimg.copy()).scaled(kPreviewSize, Qt::KeepAspectRatio,
-                                                                    Qt::SmoothTransformation)));
+        const QImage qimg = QImage(image->rgba.data(), static_cast<int>(image->width), static_cast<int>(image->height),
+                                   QImage::Format_RGBA8888)
+                                .copy();
+        previews_[item->data(Qt::UserRole).toInt()] = qimg;
+        item->setIcon(QIcon(QPixmap::fromImage(qimg).scaled(kPreviewSize, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
     }
 }
 
@@ -182,6 +183,12 @@ void NewProjectDialog::create() {
         return;
     }
     created_ = toQString(project->descriptorPath());
+    // The template preview is exactly the new project's default view: reuse it as the thumbnail.
+    if (auto it = previews_.find(static_cast<int>(selectedTemplate())); it != previews_.end()) {
+        const QString thumb = toQString(project->thumbnailPath());
+        QDir().mkpath(QFileInfo(thumb).absolutePath());
+        it->second.save(thumb, "PNG");
+    }
     accept();
 }
 

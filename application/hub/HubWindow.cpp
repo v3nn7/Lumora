@@ -5,10 +5,14 @@
 #include "common/Theme.hpp"
 #include "core/Log.hpp"
 #include "core/Version.hpp"
+#include "hub/HeroBanner.hpp"
 #include "hub/NewProjectDialog.hpp"
 #include "hub/ProjectCardDelegate.hpp"
 #include "hub/ProjectListModel.hpp"
+#include "project/ProjectTemplates.hpp"
 #include "renderer/RenderContext.hpp"
+#include "renderer/Renderer.hpp"
+#include "scene/Scene.hpp"
 
 #include <QButtonGroup>
 #include <QComboBox>
@@ -24,16 +28,55 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QStackedWidget>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 
 namespace lumora::app {
 
+namespace {
+
+QLabel* label(const QString& text, const char* style) {
+    auto* l = new QLabel(text);
+    l->setStyleSheet(QString::fromLatin1(style));
+    return l;
+}
+
+/// Decorative empty-state illustration: concentric rings around the Lumora mark.
+class EmptyIllustration final : public QWidget {
+public:
+    EmptyIllustration() { setFixedSize(150, 150); }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QPointF c = QRectF(rect()).center();
+        for (int i = 3; i >= 1; --i) {
+            QColor ring = theme::kAccent;
+            ring.setAlpha(18 * i);
+            p.setPen(QPen(ring, 1.2));
+            p.setBrush(Qt::NoBrush);
+            p.drawEllipse(c, 24.0 + i * 16.0, 24.0 + i * 16.0);
+        }
+        QRadialGradient glow(c, 60);
+        glow.setColorAt(0.0, QColor(79, 140, 255, 70));
+        glow.setColorAt(1.0, Qt::transparent);
+        p.fillRect(rect(), glow);
+        theme::icon(QStringLiteral("logo")).paint(&p, QRect(QPoint(int(c.x()) - 28, int(c.y()) - 28), QSize(56, 56)));
+    }
+};
+
+} // namespace
+
 HubWindow::HubWindow(AppContext& app, QWidget* parent) : QWidget(parent), app_(app) {
     setWindowTitle(tr("Lumora Hub"));
     setWindowIcon(theme::icon(QStringLiteral("logo")));
-    resize(1180, 740);
-    setMinimumSize(860, 560);
+    resize(1240, 780);
+    setMinimumSize(900, 600);
+    setObjectName(QStringLiteral("hubRoot"));
+    setAttribute(Qt::WA_StyledBackground);
+    setStyleSheet(QStringLiteral("#hubRoot { background: #0f1014; }"));
 
     auto* root = new QHBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
@@ -47,42 +90,89 @@ HubWindow::HubWindow(AppContext& app, QWidget* parent) : QWidget(parent), app_(a
     updateEmptyState();
 }
 
+void HubWindow::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    if (!heroRendered_) {
+        heroRendered_ = true;
+        // After the first paint, so the window appears immediately even while Vulkan starts.
+        QTimer::singleShot(60, this, &HubWindow::renderHero);
+    }
+}
+
+void HubWindow::renderHero() {
+    render::Renderer* renderer = app_.renderer();
+    if (renderer == nullptr) return;  // painted gradient stays; reason is in the log
+    auto scene = createTemplateScene(ProjectTemplate::MaterialShowcase);
+    scene->updateWorldTransforms();
+    FlyCameraController camera;
+    camera.fovDeg = 32.0f;
+    camera.setPosition({4.6f, 1.5f, 5.4f});
+    camera.lookAt({0.9f, 1.05f, 0.0f});
+    const qreal dpr = devicePixelRatioF();
+    const QSize size = hero_->size() * dpr;
+    const std::uint32_t w = static_cast<std::uint32_t>(std::max(size.width(), 400));
+    const std::uint32_t h = static_cast<std::uint32_t>(std::max(size.height(), 120));
+    render::RenderSettings settings;
+    settings.shadowDistance = 20.0f;
+    try {
+        auto image = renderer->capture(*scene, camera.view(static_cast<float>(w) / static_cast<float>(h)), {w, h}, settings);
+        if (!image) return;
+        QImage qimg = QImage(image->rgba.data(), static_cast<int>(image->width), static_cast<int>(image->height),
+                             QImage::Format_RGBA8888)
+                          .copy();
+        qimg.setDevicePixelRatio(dpr);
+        hero_->setBackground(std::move(qimg));
+    } catch (const std::exception& e) {
+        log::warn("Hub", "hero render failed: {}", e.what());
+    }
+}
+
 QWidget* HubWindow::buildSidebar() {
     auto* sidebar = new QWidget;
     sidebar->setObjectName(QStringLiteral("hubSidebar"));
-    sidebar->setFixedWidth(232);
+    sidebar->setFixedWidth(248);
     sidebar->setAttribute(Qt::WA_StyledBackground);
     sidebar->setStyleSheet(QStringLiteral(
-        "#hubSidebar { background: #16181c; border-right: 1px solid #23262d; }"
-        "#hubSidebar QPushButton { text-align: left; padding: 9px 14px; border: none; border-radius: 7px;"
-        "  background: transparent; color: #aeb4bf; font-weight: 500; }"
-        "#hubSidebar QPushButton:hover { background: #20232a; color: #d7dae0; }"
-        "#hubSidebar QPushButton:checked { background: #22304a; color: #ffffff; }"));
+        "#hubSidebar { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #171a21, stop:1 #121419);"
+        "  border-right: 1px solid #22252d; }"
+        "#hubSidebar QPushButton[nav=\"true\"] { text-align: left; padding: 10px 14px; border: none;"
+        "  border-radius: 8px; background: transparent; color: #9aa1ad; font-weight: 500; }"
+        "#hubSidebar QPushButton[nav=\"true\"]:hover { background: #1e222a; color: #e2e5ea; }"
+        "#hubSidebar QPushButton[nav=\"true\"]:checked { background: #1f2b42; color: #ffffff;"
+        "  border-left: 3px solid #4f8cff; padding-left: 11px; }"));
     auto* layout = new QVBoxLayout(sidebar);
-    layout->setContentsMargins(16, 22, 16, 18);
+    layout->setContentsMargins(18, 24, 18, 20);
     layout->setSpacing(4);
 
     auto* brand = new QHBoxLayout;
     auto* logo = new QLabel;
-    logo->setPixmap(theme::icon(QStringLiteral("logo")).pixmap(30, 30));
-    auto* word = new QLabel(QStringLiteral("LUMORA"));
-    word->setStyleSheet(QStringLiteral("font-size: 15pt; font-weight: 700; letter-spacing: 4px; color: #f0f2f5;"));
+    logo->setPixmap(theme::icon(QStringLiteral("logo")).pixmap(QSize(34, 34), devicePixelRatioF()));
+    auto* words = new QVBoxLayout;
+    words->setSpacing(0);
+    words->addWidget(label(QStringLiteral("LUMORA"), "font-size: 15pt; font-weight: 800; letter-spacing: 5px; color: #f3f5f8;"));
+    words->addWidget(label(tr("Engine Hub"), "color: #7c8494; font-size: 8.5pt; letter-spacing: 1px;"));
     brand->addWidget(logo);
-    brand->addSpacing(6);
-    brand->addWidget(word);
+    brand->addSpacing(8);
+    brand->addLayout(words);
     brand->addStretch();
     layout->addLayout(brand);
-    auto* tagline = new QLabel(tr("Engine Hub"));
-    tagline->setProperty("muted", true);
-    tagline->setContentsMargins(42, 0, 0, 0);
-    layout->addWidget(tagline);
     layout->addSpacing(26);
+
+    auto* create = new QPushButton(theme::icon(QStringLiteral("plus")), tr("New Project"));
+    create->setProperty("accent", true);
+    create->setMinimumHeight(38);
+    connect(create, &QPushButton::clicked, this, &HubWindow::newProject);
+    layout->addWidget(create);
+    layout->addSpacing(18);
+    layout->addWidget(label(tr("NAVIGATION"), "color: #5d6472; font-size: 8pt; font-weight: 700; letter-spacing: 1.5px; padding-left: 4px;"));
+    layout->addSpacing(4);
 
     auto* group = new QButtonGroup(this);
     const std::pair<const char*, const char*> navItems[] = {{"Projects", "folder"}, {"About", "info"}};
     int id = 0;
-    for (const auto& [label, iconName] : navItems) {
-        auto* button = new QPushButton(theme::icon(QString::fromLatin1(iconName)), tr(label));
+    for (const auto& [text, iconName] : navItems) {
+        auto* button = new QPushButton(theme::icon(QString::fromLatin1(iconName)), tr(text));
+        button->setProperty("nav", true);
         button->setCheckable(true);
         button->setIconSize(QSize(18, 18));
         group->addButton(button, id++);
@@ -95,47 +185,73 @@ QWidget* HubWindow::buildSidebar() {
     });
 
     layout->addStretch();
-    auto* version = new QLabel(QStringLiteral("%1 %2 · %3")
-                                   .arg(QString::fromLatin1(version::kEngineName), QString::fromLatin1(version::kString),
-                                        QString::fromLatin1(version::kBuildType)));
-    version->setProperty("muted", true);
-    version->setWordWrap(true);
-    layout->addWidget(version);
+    auto* footer = new QWidget;
+    footer->setObjectName(QStringLiteral("hubFooter"));
+    footer->setAttribute(Qt::WA_StyledBackground);
+    footer->setStyleSheet(QStringLiteral("#hubFooter { background: #181b22; border: 1px solid #252932; border-radius: 10px; }"));
+    auto* footerLayout = new QVBoxLayout(footer);
+    footerLayout->setContentsMargins(12, 10, 12, 10);
+    footerLayout->setSpacing(2);
+    footerLayout->addWidget(label(QStringLiteral("%1 %2").arg(QString::fromLatin1(version::kEngineName),
+                                                             QString::fromLatin1(version::kString)),
+                                  "color: #d7dae0; font-weight: 600;"));
+    footerLayout->addWidget(label(tr("%1 build · Vulkan 1.4 · Qt %2")
+                                      .arg(QString::fromLatin1(version::kBuildType), QString::fromLatin1(qVersion())),
+                                  "color: #7c8494; font-size: 8.5pt;"));
+    layout->addWidget(footer);
     return sidebar;
 }
 
 QWidget* HubWindow::buildProjectsPage() {
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
-    layout->setContentsMargins(32, 26, 32, 20);
-    layout->setSpacing(16);
+    layout->setContentsMargins(30, 26, 30, 18);
+    layout->setSpacing(18);
 
+    // Hero
+    hero_ = new HeroBanner;
+    auto* heroLayout = new QVBoxLayout(hero_);
+    heroLayout->setContentsMargins(30, 24, 30, 24);
+    heroLayout->setSpacing(6);
+    heroTitle_ = label(tr("Welcome to Lumora"), "font-size: 21pt; font-weight: 700; color: #ffffff; background: transparent;");
+    heroLayout->addWidget(heroTitle_);
+    heroLayout->addWidget(label(tr("Build photoreal worlds on a Vulkan 1.4 renderer.\nCreate a project or pick up where you left off."),
+                                "font-size: 10.5pt; color: #c4cad4; background: transparent;"));
+    heroLayout->addStretch();
+    auto* heroButtons = new QHBoxLayout;
+    heroButtons->setSpacing(10);
+    auto* heroCreate = new QPushButton(theme::icon(QStringLiteral("plus")), tr("New Project"));
+    heroCreate->setProperty("accent", true);
+    auto* heroOpen = new QPushButton(theme::icon(QStringLiteral("open")), tr("Open Project…"));
+    heroOpen->setStyleSheet(QStringLiteral("QPushButton { background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.18); color: #ffffff; }"
+                                           "QPushButton:hover { background: rgba(255,255,255,0.18); }"));
+    heroButtons->addWidget(heroCreate);
+    heroButtons->addWidget(heroOpen);
+    heroButtons->addStretch();
+    heroLayout->addLayout(heroButtons);
+    layout->addWidget(hero_);
+
+    // Section header
     auto* header = new QHBoxLayout;
     auto* titleBox = new QVBoxLayout;
-    auto* title = new QLabel(tr("Projects"));
-    title->setProperty("heading", true);
+    titleBox->setSpacing(0);
+    titleBox->addWidget(label(tr("Recent projects"), "font-size: 13pt; font-weight: 650; color: #eef0f3;"));
     countLabel_ = new QLabel;
     countLabel_->setProperty("muted", true);
-    titleBox->addWidget(title);
     titleBox->addWidget(countLabel_);
     header->addLayout(titleBox);
     header->addStretch();
-
     auto* search = new QLineEdit;
     search->setPlaceholderText(tr("Search projects"));
     search->addAction(theme::icon(QStringLiteral("search")), QLineEdit::LeadingPosition);
     search->setClearButtonEnabled(true);
-    search->setFixedWidth(240);
+    search->setFixedWidth(260);
+    search->setMinimumHeight(32);
     auto* sort = new QComboBox;
     sort->addItems({tr("Last opened"), tr("Name")});
-    auto* open = new QPushButton(theme::icon(QStringLiteral("open")), tr("Open…"));
-    auto* create = new QPushButton(theme::icon(QStringLiteral("plus")), tr("New Project"));
-    create->setProperty("accent", true);
+    sort->setMinimumHeight(32);
     header->addWidget(search);
     header->addWidget(sort);
-    header->addSpacing(8);
-    header->addWidget(open);
-    header->addWidget(create);
     layout->addLayout(header);
 
     model_ = new ProjectListModel(app_.recentProjects(), this);
@@ -154,30 +270,23 @@ QWidget* HubWindow::buildProjectsPage() {
     list_->setMouseTracking(true);
     list_->setSelectionMode(QAbstractItemView::SingleSelection);
     list_->setContextMenuPolicy(Qt::CustomContextMenu);
+    list_->setFrameShape(QFrame::NoFrame);
     list_->setStyleSheet(QStringLiteral("QListView { background: transparent; } QListView::item { background: transparent; }"));
+    list_->viewport()->setAttribute(Qt::WA_Hover);
 
-    // Empty state.
+    // Empty state
     auto* empty = new QWidget;
     auto* emptyLayout = new QVBoxLayout(empty);
     emptyLayout->addStretch();
-    auto* emptyIcon = new QLabel;
-    emptyIcon->setPixmap(theme::icon(QStringLiteral("logo")).pixmap(72, 72));
-    emptyIcon->setAlignment(Qt::AlignCenter);
-    auto* emptyTitle = new QLabel(tr("No projects yet"));
+    emptyLayout->addWidget(new EmptyIllustration, 0, Qt::AlignHCenter);
+    emptyLayout->addSpacing(6);
+    auto* emptyTitle = label(tr("No projects yet"), "font-size: 14pt; font-weight: 650; color: #eef0f3;");
     emptyTitle->setAlignment(Qt::AlignCenter);
-    emptyTitle->setStyleSheet(QStringLiteral("font-size: 14pt; font-weight: 600;"));
-    auto* emptyText = new QLabel(tr("Create a project from a template or open an existing one."));
+    auto* emptyText = new QLabel(tr("Start from a template – an empty world, a basic scene or a PBR material showcase."));
     emptyText->setProperty("muted", true);
     emptyText->setAlignment(Qt::AlignCenter);
-    auto* emptyButton = new QPushButton(theme::icon(QStringLiteral("plus")), tr("Create your first project"));
-    emptyButton->setProperty("accent", true);
-    emptyButton->setFixedWidth(240);
-    emptyLayout->addWidget(emptyIcon);
-    emptyLayout->addSpacing(8);
     emptyLayout->addWidget(emptyTitle);
     emptyLayout->addWidget(emptyText);
-    emptyLayout->addSpacing(12);
-    emptyLayout->addWidget(emptyButton, 0, Qt::AlignHCenter);
     emptyLayout->addStretch();
 
     projectStack_ = new QStackedWidget;
@@ -185,15 +294,12 @@ QWidget* HubWindow::buildProjectsPage() {
     projectStack_->addWidget(empty);
     layout->addWidget(projectStack_, 1);
 
-    connect(search, &QLineEdit::textChanged, this, [this](const QString& text) {
-        filter_->setSearch(text);
-    });
+    connect(search, &QLineEdit::textChanged, this, [this](const QString& text) { filter_->setSearch(text); });
     connect(sort, &QComboBox::currentIndexChanged, this, [this](int i) {
         filter_->setSort(i == 0 ? ProjectFilterModel::Sort::Recent : ProjectFilterModel::Sort::Name);
     });
-    connect(create, &QPushButton::clicked, this, &HubWindow::newProject);
-    connect(emptyButton, &QPushButton::clicked, this, &HubWindow::newProject);
-    connect(open, &QPushButton::clicked, this, &HubWindow::openFromDisk);
+    connect(heroCreate, &QPushButton::clicked, this, &HubWindow::newProject);
+    connect(heroOpen, &QPushButton::clicked, this, &HubWindow::openFromDisk);
     connect(list_, &QListView::activated, this, [this](const QModelIndex& index) {
         if (!index.data(ProjectListModel::ExistsRole).toBool()) {
             QMessageBox::warning(this, tr("Project missing"),
@@ -209,11 +315,9 @@ QWidget* HubWindow::buildProjectsPage() {
 QWidget* HubWindow::buildAboutPage() {
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
-    layout->setContentsMargins(32, 26, 32, 20);
+    layout->setContentsMargins(30, 26, 30, 20);
     layout->setSpacing(12);
-    auto* title = new QLabel(tr("About Lumora"));
-    title->setProperty("heading", true);
-    layout->addWidget(title);
+    layout->addWidget(label(tr("About Lumora"), "font-size: 18pt; font-weight: 700; color: #f0f2f5;"));
     auto* info = new QLabel(
         tr("<p><b>%1</b> %2 (%3 build)<br>Qt %4 · C++23 · Vulkan 1.4 renderer</p>"
            "<p>Engine modules: core, platform, scene/ECS (EnTT), renderer (Vulkan, render graph), "
@@ -229,8 +333,8 @@ QWidget* HubWindow::buildAboutPage() {
     layout->addWidget(gpuTitle);
     aboutGpus_ = new QLabel(tr("Querying…"));
     aboutGpus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    aboutGpus_->setStyleSheet(QStringLiteral("font-family: monospace; background: #16181c; border: 1px solid #2c3038;"
-                                             "border-radius: 6px; padding: 12px;"));
+    aboutGpus_->setStyleSheet(QStringLiteral("font-family: monospace; background: #15171c; border: 1px solid #262a33;"
+                                             "border-radius: 10px; padding: 14px; color: #c9ced6;"));
     aboutGpus_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
     layout->addWidget(aboutGpus_);
     layout->addStretch();
@@ -250,7 +354,8 @@ void HubWindow::updateAbout() {
 void HubWindow::updateEmptyState() {
     const int count = model_->rowCount();
     projectStack_->setCurrentIndex(count == 0 ? 1 : 0);
-    countLabel_->setText(count == 1 ? tr("1 project") : tr("%1 projects").arg(count));
+    countLabel_->setText(count == 0 ? tr("Nothing here yet") : count == 1 ? tr("1 project") : tr("%1 projects").arg(count));
+    heroTitle_->setText(count == 0 ? tr("Welcome to Lumora") : tr("Welcome back"));
 }
 
 void HubWindow::refresh() {

@@ -31,5 +31,8 @@
     <file alias="sun.svg">icons/sun.svg</file>
     <file alias="trash.svg">icons/trash.svg</file>
     <file alias="warning.svg">icons/warning.svg</file>
+    <file alias="clock.svg">icons/clock.svg</file>
+    <file alias="rotate.svg">icons/rotate.svg</file>
+    <file alias="sparkle.svg">icons/sparkle.svg</file>
   </qresource>
 </RCC>

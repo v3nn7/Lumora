@@ -1,6 +1,7 @@
 #include "common/VulkanViewport.hpp"
 
 #include "common/AppContext.hpp"
+#include "common/WaylandPointerLock.hpp"
 #include "core/Log.hpp"
 #include "renderer/RenderContext.hpp"
 #include "renderer/Renderer.hpp"
@@ -104,11 +105,26 @@ VulkanViewport::VulkanViewport(AppContext& app, ViewportClient& client)
     connect(this, &QWindow::visibleChanged, this, [this](bool visible) {
         if (!visible) releaseTarget();
     });
+    if (!canWarpCursor_) {
+        pointerLock_ = WaylandPointerLock::create();
+        if (pointerLock_) {
+            // Our wl_pointer sees all pointer traffic; drain it even while no frames render.
+            connect(&pointerDrain_, &QTimer::timeout, this, [this] { (void)pointerLock_->takeMotion(); });
+            pointerDrain_.start(250);
+        }
+    }
     frameTimer_.start();
     paceTimer_.start();
 }
 
 VulkanViewport::~VulkanViewport() { releaseTarget(); }
+
+void VulkanViewport::stopLooking() {
+    if (pointerLock_) pointerLock_->unlock();
+    if (!looking_) return;
+    looking_ = false;
+    unsetCursor();
+}
 
 rhi::PresentPolicy VulkanViewport::policy() const noexcept {
     return vsync_ ? rhi::PresentPolicy::Vsync : rhi::PresentPolicy::Uncapped;
@@ -216,6 +232,7 @@ void VulkanViewport::exposeEvent(QExposeEvent*) {
         // swapchain outliving its surface crashes the driver on destruction.
         releaseTarget();
     }
+}
 
 void VulkanViewport::renderFrame() {
     if (failed_ || !isExposed()) return;  // exposeEvent restarts the loop
@@ -228,6 +245,10 @@ void VulkanViewport::renderFrame() {
     frameIntervalMs_ = dt * 1000.0;
     frameTimer_.restart();
 
+    if (pointerLock_) {
+        const glm::vec2 motion = pointerLock_->takeMotion();  // locked: the only source of motion
+        if (looking_ && (motion.x != 0.0f || motion.y != 0.0f)) input_.addMouseDelta(motion);
+    }
     client_.viewportTick(static_cast<float>(dt), input_, isActive());
     input_.endFrame();
 
@@ -312,6 +333,7 @@ bool VulkanViewport::eventFilter(QObject* watched, QEvent* event) {
             break;
         case QEvent::ApplicationDeactivate:
             input_.releaseAll();
+            stopLooking();
             break;
         case QEvent::KeyPress:
         case QEvent::KeyRelease: {
@@ -370,6 +392,7 @@ void VulkanViewport::mousePressEvent(QMouseEvent* e) {
     if (e->button() == Qt::RightButton) {
         looking_ = true;
         setCursor(Qt::BlankCursor);
+        if (pointerLock_) pointerLock_->lock();  // the cursor stays put; motion comes as deltas
     }
 }
 
@@ -381,8 +404,7 @@ void VulkanViewport::mouseReleaseEvent(QMouseEvent* e) {
     } else if (e->button() == Qt::LeftButton && !leftDragged_ && width() > 0 && height() > 0) {
         client_.viewportClicked(toNdc(e->position()));
     } else if (e->button() == Qt::RightButton) {
-        looking_ = false;
-        unsetCursor();
+        stopLooking();
     }
 }
 
@@ -390,7 +412,9 @@ void VulkanViewport::mouseMoveEvent(QMouseEvent* e) {
     const QPointF pos = e->position();
     client_.viewportMouseMoved(toNdc(pos), e->modifiers());
     const QPointF delta = pos - lastMouse_;
-    input_.addMouseDelta({static_cast<float>(delta.x()), static_cast<float>(delta.y())});
+    if (!(pointerLock_ && pointerLock_->isActive())) {  // locked: deltas come from the lock
+        input_.addMouseDelta({static_cast<float>(delta.x()), static_cast<float>(delta.y())});
+    }
     input_.setMousePosition({static_cast<float>(pos.x()), static_cast<float>(pos.y())});
     lastMouse_ = pos;
     if ((e->buttons() & Qt::LeftButton) && (pos - pressPos_).manhattanLength() > 4.0) {
@@ -411,10 +435,7 @@ void VulkanViewport::wheelEvent(QWheelEvent* e) {
 
 void VulkanViewport::focusOutEvent(QFocusEvent*) {
     input_.releaseAll();
-    if (looking_) {
-        looking_ = false;
-        unsetCursor();
-    }
+    stopLooking();
 }
 
 } // namespace lumora::app

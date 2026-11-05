@@ -23,7 +23,12 @@ lumora_qt_module(appcommon
         common/ProjectUi.cpp
         common/Snapshot.cpp
         common/Preferences.cpp
+        common/WaylandPointerLock.cpp
     DEPS lumora_project lumora_renderer lumora_runtime lumora_cli Qt6::Widgets Qt6::Svg)
+if(LUMORA_WAYLAND_POINTER_LOCK)
+    target_link_libraries(lumora_appcommon PRIVATE lumora_wayland_protocols)
+    target_compile_definitions(lumora_appcommon PRIVATE LUMORA_HAS_WAYLAND_POINTER_LOCK=1)
+endif()
 
 lumora_qt_module(hub
     SOURCES

@@ -27,6 +27,7 @@ set(LUMORA_SHADER_OUTPUT_DIR ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/shaders)
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 include(LumoraCompilerOptions)
 include(LumoraDependencies)
+include(LumoraWayland)
 include(LumoraShaders)
 
 add_subdirectory(engine)

@@ -8,6 +8,7 @@
 #include <QElapsedTimer>
 #include <QImage>
 #include <QPointF>
+#include <QTimer>
 #include <QWindow>
 
 #include <memory>
@@ -23,6 +24,7 @@ class PresentTarget;
 namespace lumora::app {
 
 class AppContext;
+class WaylandPointerLock;
 
 /// Supplies content to a VulkanViewport; implemented by the editor and the player.
 class ViewportClient {
@@ -108,12 +110,15 @@ private:
     /// Keyboard drives the viewport while it is hovered, was clicked last, or is looking.
     [[nodiscard]] bool engaged() const noexcept { return hovered_ || clickFocus_ || looking_; }
     void updateEngagement(bool hovered, bool clickFocus);
+    void stopLooking();
     [[nodiscard]] QWindow* topLevelWindow();
 
     AppContext& app_;
     ViewportClient& client_;
     std::unique_ptr<render::PresentTarget> target_;
     std::unique_ptr<Scene> emptyScene_;
+    std::unique_ptr<WaylandPointerLock> pointerLock_;  // Wayland: holds the cursor while looking
+    QTimer pointerDrain_;                               // keeps its private event queue drained
     InputState input_;
     QElapsedTimer frameTimer_;
     QElapsedTimer paceTimer_;

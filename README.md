@@ -250,7 +250,7 @@ beta, or everything including alpha. *Install Latest* installs the newest one of
 The workflow `.github/workflows/release.yml` builds and tests on Linux and Windows. It packages
 the editor and the Hub, then installs the fresh editor package with the Hub's own installer. If
 that works, it uploads `editor/<version>/…`, the new blobs and `hub/<version>/…` (plus
-`hub/latest/lumora-hub-<platform>.zip` for stable releases) and updates and signs the feed.
+`hub/latest/lumora-hub-<platform>.zip`, the newest Hub on any channel) and updates and signs the feed.
 *Run workflow* builds without publishing unless you tick *publish*. It takes a channel and
 an optional suffix; alpha and beta default to `<channel>.<run number>`.
 

@@ -253,12 +253,11 @@ jobs:
           aws s3 sync out/blobs "$BUCKET/editor/blobs" $R2 --size-only --content-type application/octet-stream
           for zip in out/lumora-hub-*.zip; do
             aws s3 cp "$zip" "$BUCKET/hub/$VERSION/$(basename "$zip")" $R2 --content-type application/zip
-            # Stable link for the download page: hub/latest/lumora-hub-<platform>.zip
+            # Stable link for the download page: hub/latest/lumora-hub-<platform>.zip, the Hub of the
+            # newest release on any channel (the Hub picks editor channels itself).
             platform=$(basename "$zip" .zip | sed "s/^lumora-hub-$VERSION-//")
-            if [[ "$CHANNEL" == "stable" ]]; then
-              aws s3 cp "$zip" "$BUCKET/hub/latest/lumora-hub-$platform.zip" $R2 --content-type application/zip \
-                --cache-control "no-cache"
-            fi
+            aws s3 cp "$zip" "$BUCKET/hub/latest/lumora-hub-$platform.zip" $R2 --content-type application/zip \
+              --cache-control "no-cache"
           done
 
       - name: Update and sign the release feed

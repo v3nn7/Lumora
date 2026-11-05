@@ -35,8 +35,8 @@ option(LUMORA_BUILD_TESTS "Build Lumora unit tests" ON)
 option(LUMORA_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(LUMORA_ENABLE_SANITIZERS "Enable ASan/UBSan (Debug, GCC/Clang)" OFF)
 
-# Everything is position independent: the engine's static libraries are linked into the shared
-# library the packaged executables load (liblumora.so / lumora.dll).
+# Everything is position independent: modules are shared libraries, and third-party static
+# libraries (Jolt, miniz, ...) are linked into them.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # All binaries land in one directory so the executable finds bin/shaders at runtime.
@@ -47,6 +47,7 @@ set(LUMORA_SHADER_OUTPUT_DIR ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/shaders)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 include(LumoraCompilerOptions)
+include(LumoraModules)
 include(LumoraDependencies)
 include(LumoraWayland)
 include(LumoraShaders)

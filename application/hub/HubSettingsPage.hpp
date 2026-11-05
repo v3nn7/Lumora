@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "common/Preferences.hpp"
 
 #include <QWidget>
@@ -15,7 +17,7 @@ class AppContext;
 
 /// Hub > Settings: graphics device, validation layers, v-sync, default project location and
 /// maintenance actions. Values persist immediately; graphics changes apply on the next start.
-class HubSettingsPage final : public QWidget {
+class LUMORA_HUB_API HubSettingsPage final : public QWidget {
     Q_OBJECT
 public:
     explicit HubSettingsPage(AppContext& app, QWidget* parent = nullptr);

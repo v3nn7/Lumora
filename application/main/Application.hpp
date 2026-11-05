@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include <QObject>
 #include <QPointer>
 #include <QString>
@@ -20,7 +22,7 @@ class HubWindow;
 class PlayerWindow;
 
 /// Owns the top-level windows and performs Hub <-> Editor transitions inside one process.
-class Application final : public QObject {
+class LUMORA_SHELL_API Application final : public QObject {
     Q_OBJECT
 public:
     explicit Application(AppContext& context);

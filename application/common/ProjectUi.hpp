@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "project/Project.hpp"
 
 #include <QDialog>
@@ -20,7 +22,7 @@ namespace lumora::app {
 [[nodiscard]] std::filesystem::path toPath(const QString& s);
 
 /// Edits project metadata (name, description, default scene) and saves the descriptor.
-class ProjectSettingsDialog final : public QDialog {
+class LUMORA_APPCOMMON_API ProjectSettingsDialog final : public QDialog {
     Q_OBJECT
 public:
     ProjectSettingsDialog(Project& project, QWidget* parent = nullptr);

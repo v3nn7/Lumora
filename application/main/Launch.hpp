@@ -1,14 +1,8 @@
 #pragma once
 
-#if defined(_WIN32)
-#if defined(LUMORA_BUILDING_LIBRARY)
-#define LUMORA_LAUNCH_API __declspec(dllexport)
-#else
-#define LUMORA_LAUNCH_API __declspec(dllimport)
-#endif
-#else
-#define LUMORA_LAUNCH_API __attribute__((visibility("default")))
-#endif
+#include "common/ModuleExport.hpp"
+
+#define LUMORA_LAUNCH_API LUMORA_SHELL_API
 
 namespace lumora::app {
 
@@ -18,7 +12,7 @@ enum class Flavor {
     Hub,       // Hub only: opens projects in installed editors
 };
 
-/// The whole application behind main(); the only symbol the shared library exports.
+/// The whole application behind main() (in the shell module).
 LUMORA_LAUNCH_API int runLumora(int argc, char** argv, Flavor flavor);
 
 } // namespace lumora::app

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "common/QtLogSink.hpp"
 
 #include <QWidget>
@@ -12,7 +14,7 @@ class QLabel;
 namespace lumora::editor {
 
 /// Live engine log with level filter and text search.
-class ConsolePanel final : public QWidget {
+class LUMORA_EDITOR_API ConsolePanel final : public QWidget {
     Q_OBJECT
 public:
     explicit ConsolePanel(app::LogBridge& bridge, QWidget* parent = nullptr);

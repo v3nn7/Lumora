@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include <QModelIndex>
 #include <QWidget>
 
@@ -10,7 +12,7 @@ namespace lumora::app {
 
 /// Right-hand panel in the Hub describing the selected project: large thumbnail, description,
 /// location, engine version, dates, scene count and size on disk, plus actions.
-class ProjectDetailsPanel final : public QWidget {
+class LUMORA_HUB_API ProjectDetailsPanel final : public QWidget {
     Q_OBJECT
 public:
     explicit ProjectDetailsPanel(QWidget* parent = nullptr);

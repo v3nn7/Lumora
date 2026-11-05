@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "editor/EditorContext.hpp"
 #include "assets/AssetLibrary.hpp"
 #include "project/Project.hpp"
@@ -40,7 +42,7 @@ class EditorViewportClient;
 class ProfilerPanel;
 
 /// Lumora Editor main window: Vulkan viewport, dockable panels, play mode, scene I/O.
-class EditorWindow final : public QMainWindow {
+class LUMORA_EDITOR_API EditorWindow final : public QMainWindow {
     Q_OBJECT
 public:
     EditorWindow(app::AppContext& app, Project project, QWidget* parent = nullptr);

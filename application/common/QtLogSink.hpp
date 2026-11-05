@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "core/Log.hpp"
 
 #include <QDateTime>
@@ -21,7 +23,7 @@ struct UiLogEntry {
 
 /// Thread-safe bridge from the engine logger to Qt. Keeps a bounded history so panels
 /// created later (e.g. the editor console) can show messages logged during startup.
-class LogBridge final : public QObject {
+class LUMORA_APPCOMMON_API LogBridge final : public QObject {
     Q_OBJECT
 public:
     static constexpr std::size_t kHistory = 5000;

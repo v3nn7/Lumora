@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "collab/SceneSync.hpp"
 
 #include <QElapsedTimer>
@@ -19,7 +21,7 @@ class CollabClient;
 /// Drives a joined session for one local scene: sends local edits and presence on a short
 /// timer, applies others' edits, repairs drift when the host's digest disagrees, and fetches
 /// asset files the scene refers to but the project folder lacks.
-class CollabSession final : public QObject {
+class LUMORA_COLLAB_API CollabSession final : public QObject {
     Q_OBJECT
 public:
     struct Pose {

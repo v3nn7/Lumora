@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "input/InputState.hpp"
 #include "renderer/SceneRenderer.hpp"
 #include "renderer/vulkan/Swapchain.hpp"
@@ -64,7 +66,7 @@ public:
 /// Native Vulkan surface (QWindow) driven by the shared Renderer. Embed into widget UIs with
 /// QWidget::createWindowContainer. Renders continuously while exposed; owns its swapchain and
 /// releases it before Qt destroys the underlying platform surface.
-class VulkanViewport final : public QWindow {
+class LUMORA_APPCOMMON_API VulkanViewport final : public QWindow {
     Q_OBJECT
 public:
     VulkanViewport(AppContext& app, ViewportClient& client);

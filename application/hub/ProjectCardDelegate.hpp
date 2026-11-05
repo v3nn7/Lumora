@@ -1,11 +1,13 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include <QStyledItemDelegate>
 
 namespace lumora::app {
 
 /// Paints a project as a card: rounded thumbnail, name, path and last-opened time.
-class ProjectCardDelegate final : public QStyledItemDelegate {
+class LUMORA_HUB_API ProjectCardDelegate final : public QStyledItemDelegate {
     Q_OBJECT
 public:
     static constexpr QSize kCardSize{278, 238};

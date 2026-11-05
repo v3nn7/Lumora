@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "collab/Protocol.hpp"
 
 #include <QColor>
@@ -40,7 +42,7 @@ struct Participant {
 /// One participant's connection to a session: protocol, presence over UDP (falling back to TCP
 /// when datagrams do not get through), and asset files in both directions. Scene changes are
 /// passed through as patches; SceneSync decides how they meet the local scene.
-class CollabClient final : public QObject {
+class LUMORA_COLLAB_API CollabClient final : public QObject {
     Q_OBJECT
 public:
     enum class State { Disconnected, Connecting, Joined };

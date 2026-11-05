@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "collab/Protocol.hpp"
 
 #include <QDialog>
@@ -39,7 +41,7 @@ struct CollabPreferences {
 
 /// Host a session: name, port, optional password, the LAN addresses to share, and how to make
 /// the session reachable over the internet with a playit.gg tunnel.
-class HostSessionDialog final : public QDialog {
+class LUMORA_COLLAB_API HostSessionDialog final : public QDialog {
     Q_OBJECT
 public:
     explicit HostSessionDialog(const QString& projectName, QWidget* parent = nullptr);
@@ -63,7 +65,7 @@ private:
 };
 
 /// Join a session by LAN address or tunnel address.
-class JoinSessionDialog final : public QDialog {
+class LUMORA_COLLAB_API JoinSessionDialog final : public QDialog {
     Q_OBJECT
 public:
     explicit JoinSessionDialog(QWidget* parent = nullptr);
@@ -83,7 +85,7 @@ private:
 
 /// Editor dock content: who is in the session, how they are connected, the addresses to share
 /// (when hosting), and a chat.
-class CollabPanel final : public QWidget {
+class LUMORA_COLLAB_API CollabPanel final : public QWidget {
     Q_OBJECT
 public:
     explicit CollabPanel(QWidget* parent = nullptr);

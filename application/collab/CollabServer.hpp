@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "collab/Protocol.hpp"
 #include "core/Error.hpp"
 
@@ -30,7 +32,7 @@ namespace lumora::collab {
 /// Assets: the host's project folder is the shared store. A client missing a file asks for it;
 /// when a client's change refers to a file the host lacks, the host fetches it from that client
 /// and tells everyone once it has arrived.
-class CollabServer final : public QObject {
+class LUMORA_COLLAB_API CollabServer final : public QObject {
     Q_OBJECT
 public:
     struct Options {

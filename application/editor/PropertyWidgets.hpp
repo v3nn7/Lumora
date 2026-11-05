@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "scene/ComponentRegistry.hpp"
 
 #include <QDoubleSpinBox>
@@ -18,7 +20,7 @@ class QVBoxLayout;
 namespace lumora::editor {
 
 /// Label that scrubs an attached spin box when dragged horizontally (Shift = fine).
-class ScrubLabel final : public QLabel {
+class LUMORA_EDITOR_API ScrubLabel final : public QLabel {
     Q_OBJECT
 public:
     ScrubLabel(const QString& text, QDoubleSpinBox* target, QWidget* parent = nullptr);
@@ -34,7 +36,7 @@ private:
     bool dragging_ = false;
 };
 
-class ColorButton final : public QPushButton {
+class LUMORA_EDITOR_API ColorButton final : public QPushButton {
     Q_OBJECT
 public:
     explicit ColorButton(QWidget* parent = nullptr);
@@ -53,7 +55,7 @@ private:
 };
 
 /// Collapsible inspector section with an optional remove action.
-class Section final : public QWidget {
+class LUMORA_EDITOR_API Section final : public QWidget {
     Q_OBJECT
 public:
     Section(const QString& title, const QIcon& icon, bool removable, QWidget* parent = nullptr);

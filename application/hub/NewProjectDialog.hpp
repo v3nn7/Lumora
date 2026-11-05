@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "project/Project.hpp"
 
 #include <QDialog>
@@ -18,7 +20,7 @@ class AppContext;
 
 /// Template picker + name/location form. Template previews are real offscreen renders of
 /// each template scene when the GPU is available.
-class NewProjectDialog final : public QDialog {
+class LUMORA_HUB_API NewProjectDialog final : public QDialog {
     Q_OBJECT
 public:
     NewProjectDialog(AppContext& app, QWidget* parent = nullptr);

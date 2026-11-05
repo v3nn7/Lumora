@@ -1,7 +1,7 @@
 # Bundles Qt into an installed Lumora package on Linux (run by `cmake --install`).
 #
 #   <prefix>/bin/@LUMORA_APP@, bin/qt.conf
-#   <prefix>/lib/liblumora.so, libQt6*.so*, libicu*.so* (only Qt and its ICU)
+#   <prefix>/lib/liblumora_<module>.so, libQt6*.so*, libicu*.so* (only Qt and its ICU)
 #   <prefix>/plugins/<category>/*.so (platform integrations, image formats, TLS, ...)
 #
 # System libraries (glibc, libstdc++, X11/xcb, Wayland, the Vulkan loader, OpenSSL) are never
@@ -39,9 +39,10 @@ foreach(entry IN LISTS wanted)
     endforeach()
 endforeach()
 
+file(GLOB modules "${prefix}/lib/liblumora*.so")
 file(GET_RUNTIME_DEPENDENCIES
     EXECUTABLES "${prefix}/bin/@LUMORA_APP@"
-    LIBRARIES "${prefix}/lib/liblumora.so"
+    LIBRARIES ${modules}
     MODULES ${plugins}
     DIRECTORIES "${prefix}/lib" "${qt_libs}"
     RESOLVED_DEPENDENCIES_VAR resolved
@@ -49,7 +50,7 @@ file(GET_RUNTIME_DEPENDENCIES
     POST_INCLUDE_REGEXES "/libQt6[^/]*$" "/libicu[^/]*$"
     POST_EXCLUDE_REGEXES ".*")
 foreach(library IN LISTS resolved)
-    if(library MATCHES "/liblumora\\.so$")
+    if(library MATCHES "/liblumora[^/]*\\.so$")  # installed with the targets
         continue()
     endif()
     file(INSTALL "${library}" DESTINATION "${prefix}/lib" FOLLOW_SYMLINK_CHAIN)

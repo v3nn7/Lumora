@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include <QWidget>
 
 #include <deque>
@@ -17,7 +19,7 @@ class RenderContext;
 namespace lumora::editor {
 
 /// Rolling frame-time graph (CPU frame interval).
-class FrameTimeGraph final : public QWidget {
+class LUMORA_EDITOR_API FrameTimeGraph final : public QWidget {
     Q_OBJECT
 public:
     explicit FrameTimeGraph(QWidget* parent = nullptr);
@@ -31,7 +33,7 @@ private:
 };
 
 /// CPU/GPU timings (GPU per render-graph pass from timestamp queries), draw statistics and VRAM.
-class ProfilerPanel final : public QWidget {
+class LUMORA_EDITOR_API ProfilerPanel final : public QWidget {
     Q_OBJECT
 public:
     using StatsProvider = std::function<const render::FrameStats*()>;

@@ -3,13 +3,15 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 # Command-line parsing has no Qt dependency so it can be unit tested.
-add_library(lumora_cli STATIC main/CommandLine.cpp)
+add_library(lumora_cli ${LUMORA_MODULE_TYPE} main/CommandLine.cpp)
+lumora_module_setup(lumora_cli)
 target_include_directories(lumora_cli PUBLIC ${CMAKE_SOURCE_DIR}/application)
 target_link_libraries(lumora_cli PUBLIC lumora_core PRIVATE lumora_compile_options)
 
 function(lumora_qt_module name)
     cmake_parse_arguments(M "" "" "SOURCES;DEPS" ${ARGN})
-    add_library(lumora_${name} STATIC ${M_SOURCES})
+    add_library(lumora_${name} ${LUMORA_MODULE_TYPE} ${M_SOURCES})
+    lumora_module_setup(lumora_${name})
     target_include_directories(lumora_${name} PUBLIC ${CMAKE_SOURCE_DIR}/application)
     target_link_libraries(lumora_${name} PUBLIC ${M_DEPS} PRIVATE lumora_compile_options)
 endfunction()
@@ -24,6 +26,7 @@ lumora_qt_module(appcommon
         common/Snapshot.cpp
         common/Preferences.cpp
         common/WaylandPointerLock.cpp
+        common/resources.qrc
     DEPS lumora_project lumora_renderer lumora_runtime lumora_cli Qt6::Widgets Qt6::Svg)
 if(LUMORA_WAYLAND_POINTER_LOCK)
     target_link_libraries(lumora_appcommon PRIVATE lumora_wayland_protocols)
@@ -81,24 +84,8 @@ lumora_qt_module(shell
     SOURCES
         main/Application.cpp
         main/Headless.cpp
+        main/Launch.cpp
     DEPS lumora_hub lumora_editor lumora_player)
-
-# All of Lumora in one shared library; the executables below are thin launchers around it, so
-# packages ship it as liblumora.so / lumora.dll next to Qt's libraries. Only runLumora() is
-# exported; symbols of the static engine libraries stay internal.
-# Target lumora_library (not 'lumora': it would clash with 'Lumora' on case-insensitive file systems).
-add_library(lumora_library SHARED main/Launch.cpp common/resources.qrc)  # icons registered when it loads
-target_link_libraries(lumora_library PRIVATE lumora_shell lumora_compile_options)
-target_compile_definitions(lumora_library PRIVATE LUMORA_BUILDING_LIBRARY)
-set_target_properties(lumora_library PROPERTIES
-    OUTPUT_NAME lumora
-    CXX_VISIBILITY_PRESET hidden
-    VISIBILITY_INLINES_HIDDEN ON
-    INSTALL_RPATH "$ORIGIN")
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_link_options(lumora_library PRIVATE "LINKER:--exclude-libs,ALL" "LINKER:--as-needed" "LINKER:--no-undefined")
-endif()
-add_dependencies(lumora_library lumora_shaders)
 
 # Lumora: development build (Hub + editor in one process). lumora-editor: one installable editor
 # version. lumora-hub: the Hub, which installs editors and opens projects in them.
@@ -112,17 +99,24 @@ foreach(app IN ITEMS Lumora lumora-editor lumora-hub)
     endif()
     qt_add_executable(${app} ${entry})  # Qt records the plugins its deployment must copy
     target_include_directories(${app} PRIVATE ${CMAKE_SOURCE_DIR}/application)
-    target_link_libraries(${app} PRIVATE lumora_library lumora_compile_options)
+    target_link_libraries(${app} PRIVATE lumora_shell lumora_compile_options)
+    add_dependencies(${app} lumora_shaders)
+    if(NOT LUMORA_SHARED_MODULES)
+        target_sources(${app} PRIVATE common/resources.qrc)  # a static library would drop them
+    endif()
     set_target_properties(${app} PROPERTIES WIN32_EXECUTABLE $<CONFIG:Release> INSTALL_RPATH "$ORIGIN/../lib")
 endforeach()
 
 # ---- Packages: cmake --install <build> --component editor|hub --prefix <dir> -------------------
-#   bin/lumora-editor (or lumora-hub), bin/shaders/*.spv, lib/liblumora.so + Qt libraries and
-#   plugins on Linux; everything in bin/ on Windows (DLLs next to the executable).
+#   bin/lumora-editor (or lumora-hub), bin/shaders/*.spv, lib/liblumora_<module>.so + Qt libraries
+#   and plugins on Linux; everything in bin/ on Windows (DLLs next to the executable).
+get_property(lumora_modules GLOBAL PROPERTY LUMORA_MODULE_TARGETS)
 foreach(component editor hub)
-    install(TARGETS lumora_library
-        RUNTIME DESTINATION bin COMPONENT ${component}
-        LIBRARY DESTINATION lib COMPONENT ${component})
+    if(LUMORA_SHARED_MODULES)
+        install(TARGETS ${lumora_modules}
+            RUNTIME DESTINATION bin COMPONENT ${component}
+            LIBRARY DESTINATION lib COMPONENT ${component})
+    endif()
     install(DIRECTORY ${LUMORA_SHADER_OUTPUT_DIR}/ DESTINATION bin/shaders COMPONENT ${component}
         FILES_MATCHING PATTERN "*.spv")
 endforeach()

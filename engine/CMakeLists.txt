@@ -3,7 +3,8 @@
 
 function(lumora_engine_module name)
     cmake_parse_arguments(M "" "" "SOURCES;DEPS" ${ARGN})
-    add_library(lumora_${name} STATIC ${M_SOURCES})
+    add_library(lumora_${name} ${LUMORA_MODULE_TYPE} ${M_SOURCES})
+    lumora_module_setup(lumora_${name})
     add_library(Lumora::${name} ALIAS lumora_${name})
     target_include_directories(lumora_${name} PUBLIC ${CMAKE_SOURCE_DIR}/engine ${CMAKE_BINARY_DIR}/generated)
     target_link_libraries(lumora_${name} PUBLIC ${M_DEPS} PRIVATE lumora_compile_options)

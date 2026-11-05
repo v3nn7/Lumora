@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "launcher/EditorInstaller.hpp"
 #include "launcher/EditorRegistry.hpp"
 
@@ -18,7 +20,7 @@ namespace lumora::app {
 
 /// Hub > Editors: editor versions installed side by side, the releases available from the
 /// release feed (Cloudflare R2 or any HTTPS / file location), and local builds for development.
-class EditorsPage final : public QWidget {
+class LUMORA_HUB_API EditorsPage final : public QWidget {
     Q_OBJECT
 public:
     explicit EditorsPage(QWidget* parent = nullptr);

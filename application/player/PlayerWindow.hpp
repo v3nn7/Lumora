@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "common/VulkanViewport.hpp"
 #include "assets/AssetLibrary.hpp"
 #include "project/Project.hpp"
@@ -20,7 +22,7 @@ class AppContext;
 /// Standalone runtime (Lumora --project X --play): loads the default scene and runs the
 /// simulation, viewed through the scene's primary camera. Esc quits, F11 toggles fullscreen,
 /// F8 toggles a free-fly debug camera.
-class PlayerWindow final : public QObject, public ViewportClient {
+class LUMORA_PLAYER_API PlayerWindow final : public QObject, public ViewportClient {
     Q_OBJECT
 public:
     PlayerWindow(AppContext& app, Project project, std::unique_ptr<Scene> scene);

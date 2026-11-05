@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "editor/PropertyWidgets.hpp"
 
 #include <QWidget>
@@ -18,7 +20,7 @@ class EditorContext;
 
 /// Reflection-driven property editor. Shows the selected entity's components, or the scene
 /// environment when nothing is selected. Values refresh live (e.g. while the simulation runs).
-class InspectorPanel final : public QWidget {
+class LUMORA_EDITOR_API InspectorPanel final : public QWidget {
     Q_OBJECT
 public:
     explicit InspectorPanel(EditorContext& ctx, AssetPicker pickAsset = {}, QWidget* parent = nullptr);

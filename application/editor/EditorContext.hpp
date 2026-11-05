@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "core/Uuid.hpp"
 #include "scene/ComponentRegistry.hpp"
 #include "scene/Components.hpp"
@@ -24,7 +26,7 @@ namespace lumora::editor {
 ///
 /// While editing, every mutation is recorded on the undo stack. In play mode edits go straight
 /// to the throwaway play copy and are neither recorded nor marked dirty.
-class EditorContext final : public QObject {
+class LUMORA_EDITOR_API EditorContext final : public QObject {
     Q_OBJECT
 public:
     using EntityInit = std::function<void(Scene&, entt::entity)>;

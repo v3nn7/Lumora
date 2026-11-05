@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "core/Error.hpp"
 #include "launcher/ReleaseManifest.hpp"
 
@@ -32,7 +34,7 @@ struct InstalledEditor {
 /// a release key, must carry a valid Ed25519 signature. Packages are streamed to disk, checked
 /// against the size and SHA-256 in the (signed) feed, extracted into a staging folder and only
 /// then moved into place, so a failed or cancelled install never leaves a half-installed version.
-class EditorInstaller final : public QObject {
+class LUMORA_LAUNCHER_API EditorInstaller final : public QObject {
     Q_OBJECT
 public:
     explicit EditorInstaller(QString installRoot, QObject* parent = nullptr);

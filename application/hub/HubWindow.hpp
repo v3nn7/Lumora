@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include <QWidget>
 
 class QButtonGroup;
@@ -18,7 +20,7 @@ class ProjectListModel;
 class ProjectFilterModel;
 
 /// Lumora Hub: recent projects, creation from templates, project settings, engine info.
-class HubWindow final : public QWidget {
+class LUMORA_HUB_API HubWindow final : public QWidget {
     Q_OBJECT
 public:
     explicit HubWindow(AppContext& app, QWidget* parent = nullptr);

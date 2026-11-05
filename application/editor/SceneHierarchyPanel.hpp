@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include "core/Uuid.hpp"
 
 #include <QTreeWidget>
@@ -15,7 +17,7 @@ class EditorContext;
 
 /// Tree widget that turns drag & drop into scene re-parenting requests instead of moving
 /// items itself; the panel rebuilds from the scene afterwards (scene is the source of truth).
-class HierarchyTree final : public QTreeWidget {
+class LUMORA_EDITOR_API HierarchyTree final : public QTreeWidget {
     Q_OBJECT
 public:
     using QTreeWidget::QTreeWidget;
@@ -27,7 +29,7 @@ protected:
     void dropEvent(QDropEvent* event) override;
 };
 
-class SceneHierarchyPanel final : public QWidget {
+class LUMORA_EDITOR_API SceneHierarchyPanel final : public QWidget {
     Q_OBJECT
 public:
     explicit SceneHierarchyPanel(EditorContext& ctx, QWidget* parent = nullptr);

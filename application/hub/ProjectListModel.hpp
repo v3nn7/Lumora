@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include <QAbstractListModel>
 #include <QPixmap>
 #include <QSortFilterProxyModel>
@@ -13,7 +15,7 @@ class ProjectRegistry;
 namespace lumora::app {
 
 /// Recent projects as a Qt model. Thumbnails are loaded lazily and cached.
-class ProjectListModel final : public QAbstractListModel {
+class LUMORA_HUB_API ProjectListModel final : public QAbstractListModel {
     Q_OBJECT
 public:
     enum Role {
@@ -50,7 +52,7 @@ private:
 };
 
 /// Case-insensitive search over name and path, sortable by recency or name.
-class ProjectFilterModel final : public QSortFilterProxyModel {
+class LUMORA_HUB_API ProjectFilterModel final : public QSortFilterProxyModel {
     Q_OBJECT
 public:
     using QSortFilterProxyModel::QSortFilterProxyModel;

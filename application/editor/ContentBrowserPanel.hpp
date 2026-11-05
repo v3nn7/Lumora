@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/ModuleExport.hpp"
+
 #include <QWidget>
 
 class QFileSystemModel;
@@ -10,7 +12,7 @@ class QToolButton;
 namespace lumora::editor {
 
 /// File browser rooted at the project's Content directory.
-class ContentBrowserPanel final : public QWidget {
+class LUMORA_EDITOR_API ContentBrowserPanel final : public QWidget {
     Q_OBJECT
 public:
     ContentBrowserPanel(const QString& contentRoot, QWidget* parent = nullptr);

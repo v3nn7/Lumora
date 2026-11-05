@@ -107,12 +107,24 @@ jobs:
           sudo apt-get install -y ninja-build g++-14 libwayland-dev libxkbcommon-dev libgl1-mesa-dev \
             libxcb-cursor0 libxkbcommon-x11-0 mesa-vulkan-drivers
 
+      # The SDK is downloaded once per version and restored from the Actions cache afterwards.
+      - name: Vulkan SDK cache
+        id: vulkan-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.os == 'Windows' && 'C:\VulkanSDK' || format('{0}/vulkan', runner.temp) }}
+          key: vulkan-sdk-${{ runner.os }}-${{ env.VULKAN_SDK_VERSION }}
+
       - name: Vulkan SDK (Linux)
         if: runner.os == 'Linux'
+        env:
+          CACHED: ${{ steps.vulkan-cache.outputs.cache-hit }}
         run: |
-          curl -sSLf -o "$RUNNER_TEMP/vulkan.tar.xz" \
-            "https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/linux/vulkansdk-linux-x86_64-$VULKAN_SDK_VERSION.tar.xz"
-          mkdir -p "$RUNNER_TEMP/vulkan" && tar -xJf "$RUNNER_TEMP/vulkan.tar.xz" -C "$RUNNER_TEMP/vulkan"
+          if [[ "$CACHED" != "true" ]]; then
+            curl -sSLf -o "$RUNNER_TEMP/vulkan.tar.xz" \
+              "https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/linux/vulkansdk-linux-x86_64-$VULKAN_SDK_VERSION.tar.xz"
+            mkdir -p "$RUNNER_TEMP/vulkan" && tar -xJf "$RUNNER_TEMP/vulkan.tar.xz" -C "$RUNNER_TEMP/vulkan"
+          fi
           sdk="$RUNNER_TEMP/vulkan/$VULKAN_SDK_VERSION/x86_64"
           echo "VULKAN_SDK=$sdk" >> "$GITHUB_ENV"
           echo "$sdk/bin" >> "$GITHUB_PATH"
@@ -120,10 +132,14 @@ jobs:
       - name: Vulkan SDK (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          CACHED: ${{ steps.vulkan-cache.outputs.cache-hit }}
         run: |
-          $installer = "$env:RUNNER_TEMP\vulkan-sdk.exe"
-          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$env:VULKAN_SDK_VERSION/windows/VulkanSDK-$env:VULKAN_SDK_VERSION-Installer.exe" -OutFile $installer
-          Start-Process -Wait -FilePath $installer -ArgumentList '--root','C:\VulkanSDK','--accept-licenses','--default-answer','--confirm-command','install'
+          if ($env:CACHED -ne 'true') {
+            $installer = "$env:RUNNER_TEMP\vulkan-sdk.exe"
+            Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$env:VULKAN_SDK_VERSION/windows/VulkanSDK-$env:VULKAN_SDK_VERSION-Installer.exe" -OutFile $installer
+            Start-Process -Wait -FilePath $installer -ArgumentList '--root','C:\VulkanSDK','--accept-licenses','--default-answer','--confirm-command','install'
+          }
           "VULKAN_SDK=C:\VulkanSDK" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "C:\VulkanSDK\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
@@ -137,14 +153,26 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      # Compiler cache: unchanged translation units (most of the engine and all dependencies)
+      # come from the previous run's cache. ccache on Linux, sccache with MSVC.
+      - name: Compiler cache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.platform }}
+          variant: ${{ runner.os == 'Windows' && 'sccache' || 'ccache' }}
+          max-size: 1G
+
       - name: Configure
         shell: bash
         env:
           PUBLIC_KEY: ${{ vars.LUMORA_RELEASE_PUBLIC_KEY }}
           FEED: ${{ vars.LUMORA_RELEASE_FEED }}
         run: |
+          launcher=ccache
           compilers=()
           if [[ "$RUNNER_OS" == "Linux" ]]; then compilers=(-DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14); fi
+          if [[ "$RUNNER_OS" == "Windows" ]]; then launcher=sccache; fi
+          compilers+=(-DCMAKE_C_COMPILER_LAUNCHER=$launcher -DCMAKE_CXX_COMPILER_LAUNCHER=$launcher)
           cmake --preset release "${compilers[@]}" -DLUMORA_RELEASE_PUBLIC_KEY="$PUBLIC_KEY" \
             -DLUMORA_VERSION_SUFFIX="${{ steps.version.outputs.suffix }}" \
             ${FEED:+-DLUMORA_RELEASE_FEED="$FEED"}

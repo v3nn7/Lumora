@@ -356,3 +356,35 @@ TEST_F(RendererTest, CascadeDebugViewShowsFinerCascadesNearTheCamera) {
     EXPECT_GT(far.g, far.b + 40) << "cascade 3 is tinted yellow";
     EXPECT_GT(far.r, far.b + 40);
 }
+
+TEST_F(RendererTest, ParallelRecordingMatchesSerial) {
+    // A grid of casters over a ground plane, recorded once on one thread and once with the
+    // shadow and opaque passes split into secondary command buffers on the job system: the
+    // images must be identical, pixel for pixel.
+    auto scene = shadowScene();
+    for (int x = -6; x <= 6; ++x) {
+        for (int z = -6; z <= 6; ++z) addCube(*scene, glm::vec3(x * 1.6f, 1.0f + 0.1f * ((x + z) & 3), z * 1.6f));
+    }
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({9.0f, 7.0f, 11.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const CameraView view = cam.view(4.0f / 3.0f);
+
+    RenderSettings serial;
+    serial.parallelRecordingMinDraws = UINT32_MAX;
+    auto one = renderer_->capture(*scene, view, {160, 120}, serial);
+    ASSERT_TRUE(one.has_value()) << one.error().message;
+    EXPECT_FALSE(renderer_->stats().scene.parallelRecording);
+
+    RenderSettings parallel;
+    parallel.parallelRecordingMinDraws = 0;
+    auto many = renderer_->capture(*scene, view, {160, 120}, parallel);
+    ASSERT_TRUE(many.has_value()) << many.error().message;
+    EXPECT_TRUE(renderer_->stats().scene.parallelRecording);
+    ASSERT_TRUE(renderer_->stats().scene.shadowsRendered);
+    ASSERT_EQ(one->rgba.size(), many->rgba.size());
+    std::size_t differing = 0;
+    for (std::size_t i = 0; i < one->rgba.size(); ++i) differing += one->rgba[i] != many->rgba[i] ? 1 : 0;
+    EXPECT_EQ(differing, 0u) << "parallel recording must not change the image";
+}

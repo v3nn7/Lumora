@@ -1,5 +1,6 @@
 #include "renderer/SceneRenderer.hpp"
 
+#include "core/JobSystem.hpp"
 #include "renderer/FrameResources.hpp"
 #include "renderer/GpuTypes.hpp"
 #include "renderer/RenderContext.hpp"
@@ -296,29 +297,63 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     std::vector<Draw> casters;  // may cast into a shadow cascade (also off-screen objects)
     std::vector<GpuObject> objects;
     const Frustum frustum = Frustum::fromViewProjection(fc.viewProjection);
+
+    // 1. Gather (serial: the ECS view and asset lookups, which may start loads, are not thread-safe).
+    struct Candidate {
+        entt::entity entity;
+        const MeshRendererComponent* mesh;
+        const glm::mat4* world;
+        const GpuMesh* gpuMesh;
+    };
+    std::vector<Candidate> candidates;
     for (auto [e, mesh, world] : reg.view<MeshRendererComponent, WorldTransformComponent>().each()) {
         if (!mesh.visible) continue;
         const GpuMesh* gpuMeshPtr = meshFor(mesh, settings.assets, settings.blockOnAssets);
         if (gpuMeshPtr == nullptr) continue;  // still loading, or unresolved (already reported)
-        const GpuMesh& gpuMesh = *gpuMeshPtr;
-        const glm::vec3 localCenter = (gpuMesh.bounds.min + gpuMesh.bounds.max) * 0.5f;
-        const glm::vec3 localExtent = (gpuMesh.bounds.max - gpuMesh.bounds.min) * 0.5f;
-        const glm::vec3 center(world.matrix * glm::vec4(localCenter, 1.0f));
-        const glm::mat3 m(world.matrix);
-        const glm::vec3 extentWorld =
-            glm::abs(m[0]) * localExtent.x + glm::abs(m[1]) * localExtent.y + glm::abs(m[2]) * localExtent.z;
-        const bool visible = !settings.frustumCulling || frustum.intersectsAabb(center, extentWorld);
-        if (!visible) {
+        candidates.push_back({e, &mesh, &world.matrix, gpuMeshPtr});
+    }
+
+    // 2. Bounds, culling and per-object constants on the job system's threads (pure math).
+    struct Prepared {
+        glm::vec3 center;
+        glm::vec3 extent;
+        bool visible;
+        GpuObject object;
+    };
+    std::vector<Prepared> prepared(candidates.size());
+    JobSystem::global().parallelFor(candidates.size(), 512, [&](std::size_t begin, std::size_t end) {
+        for (std::size_t i = begin; i < end; ++i) {
+            const Candidate& c = candidates[i];
+            const glm::mat4& world = *c.world;
+            const glm::vec3 localCenter = (c.gpuMesh->bounds.min + c.gpuMesh->bounds.max) * 0.5f;
+            const glm::vec3 localExtent = (c.gpuMesh->bounds.max - c.gpuMesh->bounds.min) * 0.5f;
+            Prepared& p = prepared[i];
+            p.center = glm::vec3(world * glm::vec4(localCenter, 1.0f));
+            const glm::mat3 m(world);
+            p.extent = glm::abs(m[0]) * localExtent.x + glm::abs(m[1]) * localExtent.y + glm::abs(m[2]) * localExtent.z;
+            p.visible = !settings.frustumCulling || frustum.intersectsAabb(p.center, p.extent);
+            if (!p.visible && !shadows) continue;
+            const MeshRendererComponent& mesh = *c.mesh;
+            GpuObject& obj = p.object;
+            obj.world = world;
+            obj.normalMatrix = glm::mat4(glm::transpose(glm::inverse(glm::mat3(world))));
+            obj.baseColorMetallic = glm::vec4(mesh.baseColor, mesh.metallic);
+            obj.emissiveRoughness = glm::vec4(mesh.emissive * mesh.emissiveStrength, mesh.roughness);
+            obj.flags = glm::vec4(c.entity == settings.selected ? 1.0f : 0.0f, static_cast<float>(mesh.pattern), 0.0f, 0.0f);
+        }
+    });
+
+    // 3. Textures (serial: the cache may start uploads) and the draw lists, in scene order.
+    objects.reserve(candidates.size());
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        Prepared& p = prepared[i];
+        if (!p.visible) {
             ++stats.culledObjects;
             if (!shadows) continue;
         }
-        GpuObject obj;
-        obj.world = world.matrix;
-        obj.normalMatrix = glm::mat4(glm::transpose(glm::inverse(glm::mat3(world.matrix))));
-        obj.baseColorMetallic = glm::vec4(mesh.baseColor, mesh.metallic);
-        obj.emissiveRoughness = glm::vec4(mesh.emissive * mesh.emissiveStrength, mesh.roughness);
-        obj.flags = glm::vec4(e == settings.selected ? 1.0f : 0.0f, static_cast<float>(mesh.pattern), 0.0f, 0.0f);
-        if (visible && settings.assets != nullptr) {  // casters only need depth, not materials
+        GpuObject& obj = p.object;
+        if (p.visible && settings.assets != nullptr) {  // casters only need depth, not materials
+            const MeshRendererComponent& mesh = *candidates[i].mesh;
             TextureCache& textures = ctx_.textures();
             const bool block = settings.blockOnAssets;
             obj.textures = glm::uvec4(textures.index(*settings.assets, mesh.baseColorTexture, TextureColorSpace::Srgb, block),
@@ -326,8 +361,8 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                                       textures.index(*settings.assets, mesh.emissiveTexture, TextureColorSpace::Srgb, block),
                                       textures.index(*settings.assets, mesh.normalTexture, TextureColorSpace::Linear, block));
         }
-        const Draw draw{gpuMeshPtr, static_cast<std::uint32_t>(objects.size()), center, extentWorld};
-        if (visible) draws.push_back(draw);
+        const Draw draw{candidates[i].gpuMesh, static_cast<std::uint32_t>(objects.size()), p.center, p.extent};
+        if (p.visible) draws.push_back(draw);
         if (shadows) casters.push_back(draw);
         objects.push_back(obj);
     }
@@ -355,47 +390,60 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     RGImage shadowMap{};
     if (shadows) {
         // Per-cascade caster culling against the cascade's side planes. Casters between the sun
-        // and the cascade are kept: the light-facing plane never culls.
+        // and the cascade are kept: the light-facing plane never culls. One cascade per thread.
         std::array<std::vector<Draw>, kShadowCascades> cascadeCasters;
-        for (std::uint32_t c = 0; c < kShadowCascades; ++c) {
-            Frustum box = Frustum::fromViewProjection(cascadeMatrices[c]);
-            box.planes[4] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-            for (const Draw& d : casters) {
-                if (box.intersectsAabb(d.center, d.extent)) cascadeCasters[c].push_back(d);
+        JobSystem::global().parallelFor(kShadowCascades, 1, [&](std::size_t begin, std::size_t end) {
+            for (std::size_t c = begin; c < end; ++c) {
+                Frustum box = Frustum::fromViewProjection(cascadeMatrices[c]);
+                box.planes[4] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+                for (const Draw& d : casters) {
+                    if (box.intersectsAabb(d.center, d.extent)) cascadeCasters[c].push_back(d);
+                }
             }
-            stats.drawCalls += static_cast<std::uint32_t>(cascadeCasters[c].size());
-        }
+        });
+        std::size_t casterDraws = 0;
+        for (const auto& list : cascadeCasters) casterDraws += list.size();
+        stats.drawCalls += static_cast<std::uint32_t>(casterDraws);
+        const bool parallelShadow = casterDraws >= settings.parallelRecordingMinDraws;
+        stats.parallelRecording = stats.parallelRecording || parallelShadow;
         shadowMap = graph.createImage("SunShadowAtlas", {ctx_.depthFormat(), {atlasSize, atlasSize}});
         graph.addRasterPass(
-            "SunShadow", [&](PassBuilder& b) { b.writeDepth(shadowMap, LoadOp::Clear, 1.0f); },
+            "SunShadow",
+            [&](PassBuilder& b) {
+                b.writeDepth(shadowMap, LoadOp::Clear, 1.0f);
+                b.recordInParallel(parallelShadow);
+            },
             [this, bindSets, layout, tile, cascadeCasters = std::move(cascadeCasters)](PassContext& ctx) {
-                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_.get());
-                bindSets(ctx.cmd);
-                for (std::uint32_t c = 0; c < kShadowCascades; ++c) {
-                    const auto x = static_cast<std::int32_t>((c % 2) * tile);
-                    const auto y = static_cast<std::int32_t>((c / 2) * tile);
-                    const VkViewport viewport{static_cast<float>(x), static_cast<float>(y), static_cast<float>(tile),
-                                              static_cast<float>(tile), 0.0f, 1.0f};
-                    const VkRect2D scissor{{x, y}, {tile, tile}};
-                    vkCmdSetViewport(ctx.cmd, 0, 1, &viewport);
-                    vkCmdSetScissor(ctx.cmd, 0, 1, &scissor);
-                    const GpuMesh* mesh = nullptr;
-                    for (const Draw& d : cascadeCasters[c]) {
-                        if (d.mesh != mesh) {
-                            mesh = d.mesh;
-                            const VkBuffer vb = mesh->vertices.handle();
-                            const VkDeviceSize offset = 0;
-                            vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
-                            vkCmdBindIndexBuffer(ctx.cmd, mesh->indices.handle(), 0, VK_INDEX_TYPE_UINT32);
+                // One cascade per secondary command buffer when recorded in parallel.
+                ctx.recordParallel(kShadowCascades, 1, [&](VkCommandBuffer cmd, std::size_t begin, std::size_t end) {
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_.get());
+                    bindSets(cmd);
+                    for (std::size_t c = begin; c < end; ++c) {
+                        const auto x = static_cast<std::int32_t>((c % 2) * tile);
+                        const auto y = static_cast<std::int32_t>((c / 2) * tile);
+                        const VkViewport viewport{static_cast<float>(x), static_cast<float>(y), static_cast<float>(tile),
+                                                  static_cast<float>(tile), 0.0f, 1.0f};
+                        const VkRect2D scissor{{x, y}, {tile, tile}};
+                        vkCmdSetViewport(cmd, 0, 1, &viewport);
+                        vkCmdSetScissor(cmd, 0, 1, &scissor);
+                        const GpuMesh* mesh = nullptr;
+                        for (const Draw& d : cascadeCasters[c]) {
+                            if (d.mesh != mesh) {
+                                mesh = d.mesh;
+                                const VkBuffer vb = mesh->vertices.handle();
+                                const VkDeviceSize offset = 0;
+                                vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &offset);
+                                vkCmdBindIndexBuffer(cmd, mesh->indices.handle(), 0, VK_INDEX_TYPE_UINT32);
+                            }
+                            PushConstants pc;
+                            pc.index0 = d.object;
+                            pc.index1 = static_cast<std::uint32_t>(c);
+                            vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                               sizeof(pc), &pc);
+                            vkCmdDrawIndexed(cmd, mesh->indexCount, 1, 0, 0, 0);
                         }
-                        PushConstants pc;
-                        pc.index0 = d.object;
-                        pc.index1 = c;
-                        vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                           0, sizeof(pc), &pc);
-                        vkCmdDrawIndexed(ctx.cmd, mesh->indexCount, 1, 0, 0, 0);
                     }
-                }
+                });
             });
     }
 
@@ -407,35 +455,44 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
         });
 
+    const bool parallelOpaque = draws.size() >= settings.parallelRecordingMinDraws;
+    stats.parallelRecording = stats.parallelRecording || parallelOpaque;
     graph.addRasterPass(
         "Opaque",
         [&](PassBuilder& b) {
             b.writeColor(hdr, LoadOp::Load);
             b.writeDepth(depth, LoadOp::Clear, 0.0f);  // reversed-Z: 0 is the far plane
             if (shadows) b.sample(shadowMap);
+            b.recordInParallel(parallelOpaque);
         },
         [this, bindSets, layout, shadows, shadowMap, debugCascades = settings.debugCascades,
          draws = std::move(draws)](PassContext& ctx) {
             if (draws.empty()) return;
-            vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, opaque_.get());
-            bindSets(ctx.cmd);
-            const GpuMesh* mesh = nullptr;
-            for (const Draw& d : draws) {
-                if (d.mesh != mesh) {
-                    mesh = d.mesh;
-                    const VkBuffer vb = mesh->vertices.handle();
-                    const VkDeviceSize offset = 0;
-                    vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
-                    vkCmdBindIndexBuffer(ctx.cmd, mesh->indices.handle(), 0, VK_INDEX_TYPE_UINT32);
+            const std::uint32_t shadowIndex = shadows ? ctx.bindlessIndex(shadowMap) : 0u;
+            const std::uint32_t flags = (shadows ? 1u : 0u) | (shadows && debugCascades ? 2u : 0u);
+            // Draws are sorted by mesh, so each chunk rebinds buffers only where meshes change.
+            ctx.recordParallel(draws.size(), 64, [&](VkCommandBuffer cmd, std::size_t begin, std::size_t end) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, opaque_.get());
+                bindSets(cmd);
+                const GpuMesh* mesh = nullptr;
+                for (std::size_t i = begin; i < end; ++i) {
+                    const Draw& d = draws[i];
+                    if (d.mesh != mesh) {
+                        mesh = d.mesh;
+                        const VkBuffer vb = mesh->vertices.handle();
+                        const VkDeviceSize offset = 0;
+                        vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &offset);
+                        vkCmdBindIndexBuffer(cmd, mesh->indices.handle(), 0, VK_INDEX_TYPE_UINT32);
+                    }
+                    PushConstants pc;
+                    pc.index0 = d.object;
+                    pc.index1 = shadowIndex;
+                    pc.flags = flags;
+                    vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                       sizeof(pc), &pc);
+                    vkCmdDrawIndexed(cmd, mesh->indexCount, 1, 0, 0, 0);
                 }
-                PushConstants pc;
-                pc.index0 = d.object;
-                pc.index1 = shadows ? ctx.bindlessIndex(shadowMap) : 0u;
-                pc.flags = (shadows ? 1u : 0u) | (shadows && debugCascades ? 2u : 0u);
-                vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(pc), &pc);
-                vkCmdDrawIndexed(ctx.cmd, mesh->indexCount, 1, 0, 0, 0);
-            }
+            });
         });
 
     if (settings.showGrid) {

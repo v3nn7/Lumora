@@ -1,5 +1,6 @@
 #include "renderer/Renderer.hpp"
 
+#include "core/JobSystem.hpp"
 #include "core/Log.hpp"
 #include "core/Timer.hpp"
 #include "renderer/GpuTypes.hpp"
@@ -11,6 +12,11 @@
 #include <format>
 
 namespace lumora::render {
+
+namespace {
+/// More threads than this rarely pay off for one pass, and each costs a pool per frame.
+constexpr std::uint32_t kMaxRecordingThreads = 8;
+} // namespace
 
 PresentTarget::PresentTarget(RenderContext& context, VkSurfaceKHR surface, VkExtent2D extent, rhi::PresentPolicy policy)
     : swapchain_(std::make_unique<rhi::Swapchain>(context.device(), surface, extent, policy)), desired_(extent) {}
@@ -58,6 +64,9 @@ Renderer::Renderer(RenderContext& context)
         alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         alloc.commandBufferCount = 1;
         LUMORA_VK_CHECK(vkAllocateCommandBuffers(device.handle(), &alloc, &f.cmd));
+        // One secondary-buffer pool per recording thread (the caller plus the job workers).
+        f.secondaryPools = std::make_unique<ParallelCommandPools>(
+            device, std::min(JobSystem::global().workerCount() + 1, kMaxRecordingThreads));
         const std::string name = std::format("Frame{}", i);
         device.setName(VK_OBJECT_TYPE_COMMAND_BUFFER, f.cmd, name.c_str());
 
@@ -129,6 +138,7 @@ SceneDrawStats Renderer::record(FrameResources& frame, const Scene& scene, const
                                 const std::function<void(RenderGraph&, RGImage)>& extraPasses) {
     VkDevice device = ctx_.device().handle();
     LUMORA_VK_CHECK(vkResetCommandPool(device, frame.commandPool.get(), 0));
+    frame.secondaryPools->reset();
     VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     LUMORA_VK_CHECK(vkBeginCommandBuffer(frame.cmd, &begin));
@@ -145,7 +155,7 @@ SceneDrawStats Renderer::record(FrameResources& frame, const Scene& scene, const
     const SceneDrawStats drawStats =
         sceneRenderer_.build(graph, frame, scene, view, settings, out, output.format, output.extent, time);
     if (extraPasses) extraPasses(graph, out);
-    graph.execute(frame.cmd, ctx_.device(), *frame.transients, frame.profiler.get());
+    graph.execute(frame.cmd, ctx_.device(), *frame.transients, frame.profiler.get(), frame.secondaryPools.get());
 
     frame.profiler->endFrame(frame.cmd);
     LUMORA_VK_CHECK(vkEndCommandBuffer(frame.cmd));

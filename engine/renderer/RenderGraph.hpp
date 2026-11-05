@@ -17,6 +17,7 @@ class Device;
 namespace lumora::render {
 
 class GpuProfiler;
+class ParallelCommandPools;
 class TransientImagePool;
 
 /// How a pass touches an image. Each usage maps to one (layout, stages, access) state.
@@ -80,6 +81,9 @@ public:
     void sample(RGImage image);
     void copyFrom(RGImage image);
     void copyTo(RGImage image);
+    /// The pass records its commands with PassContext::recordParallel (secondary command
+    /// buffers, possibly on several threads) instead of directly into the primary buffer.
+    void recordInParallel(bool parallel = true);
 
 private:
     friend class RenderGraph;
@@ -91,16 +95,34 @@ private:
 /// Passed to pass callbacks during execution.
 class PassContext {
 public:
+    using ChunkFn = std::function<void(VkCommandBuffer cmd, std::size_t begin, std::size_t end)>;
+
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     [[nodiscard]] VkImage image(RGImage h) const;
     [[nodiscard]] VkImageView view(RGImage h) const;
     [[nodiscard]] VkExtent2D extent(RGImage h) const;
     [[nodiscard]] std::uint32_t bindlessIndex(RGImage h) const;
 
+    /// Records items [0, count) of a raster pass. In a pass declared with recordInParallel(),
+    /// chunks of at least `grain` items are recorded into secondary command buffers on the job
+    /// system's threads and executed in order; otherwise fn(cmd, 0, count) records inline.
+    /// fn must bind its pipeline and descriptor sets: secondaries inherit no state. Viewport and
+    /// scissor start out covering the attachments. fn must only read shared data.
+    void recordParallel(std::size_t count, std::size_t grain, const ChunkFn& fn);
+    /// Number of secondary command buffers the last recordParallel used (0 = inline).
+    [[nodiscard]] std::uint32_t lastChunkCount() const noexcept { return lastChunks_; }
+
 private:
     friend class RenderGraph;
     explicit PassContext(const RenderGraph& graph) : graph_(graph) {}
     const RenderGraph& graph_;
+    // Set while a parallel raster pass runs: what its secondaries inherit.
+    ParallelCommandPools* pools_ = nullptr;
+    bool secondaryContents_ = false;
+    std::vector<VkFormat> colorFormats_;
+    VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
+    VkExtent2D renderExtent_{};
+    std::uint32_t lastChunks_ = 0;
 };
 
 /// Frame render graph: passes are declared each frame in execution order; the graph
@@ -132,8 +154,12 @@ public:
     /// Union of usage flags each transient image needs.
     [[nodiscard]] VkImageUsageFlags requiredUsage(RGImage image) const;
 
-    /// Allocates transients, records all passes into `cmd`.
-    void execute(VkCommandBuffer cmd, const rhi::Device& device, TransientImagePool& pool, GpuProfiler* profiler);
+    /// Allocates transients, records all passes into `cmd`. With `parallel`, passes declared
+    /// with recordInParallel() record on several threads; without, they record inline.
+    void execute(VkCommandBuffer cmd, const rhi::Device& device, TransientImagePool& pool, GpuProfiler* profiler,
+                 ParallelCommandPools* parallel = nullptr);
+    /// Secondary command buffers recorded by parallel passes in the last execute().
+    [[nodiscard]] std::uint32_t parallelChunksRecorded() const noexcept { return parallelChunks_; }
 
     [[nodiscard]] std::size_t passCount() const noexcept { return passes_.size(); }
     [[nodiscard]] const std::string& passName(std::size_t i) const { return passes_[i].name; }
@@ -151,6 +177,7 @@ private:
     struct Pass {
         std::string name;
         bool raster = false;
+        bool parallel = false;
         std::vector<Access> accesses;
         ExecuteFn execute;
     };
@@ -165,6 +192,7 @@ private:
 
     std::vector<Pass> passes_;
     std::vector<Resource> resources_;
+    std::uint32_t parallelChunks_ = 0;
 };
 
 } // namespace lumora::render

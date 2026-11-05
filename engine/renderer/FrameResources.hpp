@@ -1,6 +1,7 @@
 #pragma once
 
 #include "renderer/GpuProfiler.hpp"
+#include "renderer/ParallelCommandPools.hpp"
 #include "renderer/TransientImagePool.hpp"
 #include "renderer/vulkan/Resources.hpp"
 
@@ -12,6 +13,7 @@ namespace lumora::render {
 struct FrameResources {
     rhi::UniqueCommandPool commandPool;
     VkCommandBuffer cmd = VK_NULL_HANDLE;
+    std::unique_ptr<ParallelCommandPools> secondaryPools;  // passes recorded on several threads
     rhi::UniqueFence fence;
     rhi::UniqueSemaphore acquired;
     rhi::Buffer constants;           // FrameConstants (host-visible UBO)

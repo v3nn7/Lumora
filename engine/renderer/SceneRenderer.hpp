@@ -38,6 +38,9 @@ struct RenderSettings {
     AssetLibrary* assets = nullptr;            // resolves MeshRenderer::meshAsset; null = primitives only
     /// Wait for assets instead of skipping/untexturing them while they load (captures, headless).
     bool blockOnAssets = false;
+    /// Passes with at least this many draws record on several threads (secondary command
+    /// buffers); fewer are cheaper to record on one. 0 = always, UINT32_MAX = never.
+    std::uint32_t parallelRecordingMinDraws = 256;
 };
 
 struct SceneDrawStats {
@@ -46,6 +49,7 @@ struct SceneDrawStats {
     std::uint32_t visibleObjects = 0;
     std::uint32_t culledObjects = 0;
     std::uint32_t lights = 0;
+    bool parallelRecording = false;  // a pass was set up to record on several threads
     bool shadowsRendered = false;
 };
 

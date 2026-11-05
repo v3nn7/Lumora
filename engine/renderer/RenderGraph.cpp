@@ -1,7 +1,9 @@
 #include "renderer/RenderGraph.hpp"
 
+#include "core/JobSystem.hpp"
 #include "core/Log.hpp"
 #include "renderer/GpuProfiler.hpp"
+#include "renderer/ParallelCommandPools.hpp"
 #include "renderer/TransientImagePool.hpp"
 #include "renderer/vulkan/Device.hpp"
 #include "renderer/vulkan/Resources.hpp"
@@ -102,6 +104,52 @@ VkImageView PassContext::view(RGImage h) const { return graph_.resources_.at(h.i
 VkExtent2D PassContext::extent(RGImage h) const { return graph_.resources_.at(h.id).physical.extent; }
 std::uint32_t PassContext::bindlessIndex(RGImage h) const { return graph_.resources_.at(h.id).physical.bindlessIndex; }
 
+void PassBuilder::recordInParallel(bool parallel) { graph_.passes_.at(pass_).parallel = parallel; }
+
+void PassContext::recordParallel(std::size_t count, std::size_t grain, const ChunkFn& fn) {
+    lastChunks_ = 0;
+    if (count == 0) return;
+    if (!secondaryContents_) {
+        fn(cmd, 0, count);
+        return;
+    }
+    // Chunk c records into a secondary from pool c; never more chunks than pools.
+    grain = std::max<std::size_t>(grain, 1);
+    const std::size_t chunks = std::min<std::size_t>((count + grain - 1) / grain, pools_->chunks());
+    const std::size_t perChunk = (count + chunks - 1) / chunks;
+    std::vector<VkCommandBuffer> secondaries(chunks, VK_NULL_HANDLE);
+
+    VkCommandBufferInheritanceRenderingInfo rendering{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO};
+    rendering.colorAttachmentCount = static_cast<std::uint32_t>(colorFormats_.size());
+    rendering.pColorAttachmentFormats = colorFormats_.data();
+    rendering.depthAttachmentFormat = depthFormat_;
+    rendering.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    const VkViewport viewport{0.0f, 0.0f, static_cast<float>(renderExtent_.width),
+                              static_cast<float>(renderExtent_.height), 0.0f, 1.0f};
+    const VkRect2D scissor{{0, 0}, renderExtent_};
+
+    JobSystem::global().parallelFor(chunks, 1, [&](std::size_t first, std::size_t last) {
+        for (std::size_t c = first; c < last; ++c) {
+            const std::size_t begin = c * perChunk;
+            const std::size_t end = std::min(count, begin + perChunk);
+            VkCommandBuffer secondary = pools_->allocate(static_cast<std::uint32_t>(c));
+            VkCommandBufferInheritanceInfo inheritance{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
+            inheritance.pNext = &rendering;
+            VkCommandBufferBeginInfo info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT | VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
+            info.pInheritanceInfo = &inheritance;
+            LUMORA_VK_CHECK(vkBeginCommandBuffer(secondary, &info));
+            vkCmdSetViewport(secondary, 0, 1, &viewport);
+            vkCmdSetScissor(secondary, 0, 1, &scissor);
+            if (begin < end) fn(secondary, begin, end);
+            LUMORA_VK_CHECK(vkEndCommandBuffer(secondary));
+            secondaries[c] = secondary;
+        }
+    });
+    vkCmdExecuteCommands(cmd, static_cast<std::uint32_t>(chunks), secondaries.data());
+    lastChunks_ = static_cast<std::uint32_t>(chunks);
+}
+
 // ---------------------------------------------------------------------------------------------
 
 RGImage RenderGraph::importImage(std::string name, const ImportedImage& image) {
@@ -120,13 +168,13 @@ RGImage RenderGraph::createImage(std::string name, const TransientImageDesc& des
 }
 
 void RenderGraph::addRasterPass(std::string name, const SetupFn& setup, ExecuteFn execute) {
-    passes_.push_back({std::move(name), true, {}, std::move(execute)});
+    passes_.push_back({std::move(name), true, false, {}, std::move(execute)});
     PassBuilder builder(*this, static_cast<std::uint32_t>(passes_.size() - 1));
     setup(builder);
 }
 
 void RenderGraph::addPass(std::string name, const SetupFn& setup, ExecuteFn execute) {
-    passes_.push_back({std::move(name), false, {}, std::move(execute)});
+    passes_.push_back({std::move(name), false, false, {}, std::move(execute)});
     PassBuilder builder(*this, static_cast<std::uint32_t>(passes_.size() - 1));
     setup(builder);
 }
@@ -193,7 +241,8 @@ std::vector<RenderGraph::PlannedBarrier> RenderGraph::planBarriers() const {
 }
 
 void RenderGraph::execute(VkCommandBuffer cmd, const rhi::Device& device, TransientImagePool& pool,
-                          GpuProfiler* profiler) {
+                          GpuProfiler* profiler, ParallelCommandPools* parallel) {
+    parallelChunks_ = 0;
     // 1. Realise transient images.
     for (std::uint32_t id = 0; id < resources_.size(); ++id) {
         Resource& r = resources_[id];
@@ -262,19 +311,40 @@ void RenderGraph::execute(VkCommandBuffer cmd, const rhi::Device& device, Transi
                     hasDepth = true;
                 }
             }
+            const bool secondary = pass.parallel && parallel != nullptr && parallel->chunks() > 0;
             VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+            rendering.flags = secondary ? VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT : 0;
             rendering.renderArea = {{0, 0}, extent};
             rendering.layerCount = 1;
             rendering.colorAttachmentCount = static_cast<std::uint32_t>(colors.size());
             rendering.pColorAttachments = colors.data();
             rendering.pDepthAttachment = hasDepth ? &depth : nullptr;
             vkCmdBeginRendering(cmd, &rendering);
-            const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height),
-                                      0.0f, 1.0f};
-            const VkRect2D scissor{{0, 0}, extent};
-            vkCmdSetViewport(cmd, 0, 1, &viewport);
-            vkCmdSetScissor(cmd, 0, 1, &scissor);
+            if (secondary) {
+                ctx.pools_ = parallel;
+                ctx.secondaryContents_ = true;
+                ctx.colorFormats_.clear();
+                ctx.depthFormat_ = VK_FORMAT_UNDEFINED;
+                for (const Access& a : pass.accesses) {
+                    const VkFormat format = resources_[a.image.id].physical.format;
+                    if (a.usage == ImageUsage::ColorAttachment) ctx.colorFormats_.push_back(format);
+                    if (a.usage == ImageUsage::DepthAttachment || a.usage == ImageUsage::DepthReadOnly) ctx.depthFormat_ = format;
+                }
+                ctx.renderExtent_ = extent;
+            } else {
+                // Inside a SECONDARY_COMMAND_BUFFERS scope the primary may record nothing but
+                // vkCmdExecuteCommands, so dynamic state goes into each secondary instead.
+                const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width),
+                                          static_cast<float>(extent.height), 0.0f, 1.0f};
+                const VkRect2D scissor{{0, 0}, extent};
+                vkCmdSetViewport(cmd, 0, 1, &viewport);
+                vkCmdSetScissor(cmd, 0, 1, &scissor);
+            }
             pass.execute(ctx);
+            parallelChunks_ += ctx.lastChunks_;
+            ctx.lastChunks_ = 0;
+            ctx.secondaryContents_ = false;
+            ctx.pools_ = nullptr;
             vkCmdEndRendering(cmd);
         } else {
             pass.execute(ctx);

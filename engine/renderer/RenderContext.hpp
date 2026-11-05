@@ -47,6 +47,7 @@ public:
     [[nodiscard]] VkDescriptorSetLayout frameSetLayout() const noexcept { return frameSetLayout_.get(); }
     [[nodiscard]] VkPipelineLayout pipelineLayout() const noexcept { return pipelineLayout_.get(); }
     [[nodiscard]] std::uint32_t linearClampSampler() const noexcept { return linearClampIndex_; }
+    [[nodiscard]] std::uint32_t shadowCompareSampler() const noexcept { return shadowCompareIndex_; }
     [[nodiscard]] VkFormat hdrFormat() const noexcept { return hdrFormat_; }
     [[nodiscard]] VkFormat depthFormat() const noexcept { return depthFormat_; }
 
@@ -65,6 +66,8 @@ private:
     rhi::UniquePipelineLayout pipelineLayout_;
     rhi::UniqueSampler linearClamp_;
     std::uint32_t linearClampIndex_ = 0;
+    rhi::UniqueSampler shadowCompare_;
+    std::uint32_t shadowCompareIndex_ = 0;
     VkFormat hdrFormat_ = VK_FORMAT_R16G16B16A16_SFLOAT;
     VkFormat depthFormat_ = VK_FORMAT_D32_SFLOAT;
 };

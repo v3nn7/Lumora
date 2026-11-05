@@ -22,6 +22,9 @@ struct RenderSettings {
     float gridCellSize = 1.0f;
     float gridFadeDistance = 150.0f;
     bool frustumCulling = true;
+    bool shadows = true;
+    float shadowDistance = 35.0f;          // metres covered by the sun shadow map
+    std::uint32_t shadowResolution = 2048;
     entt::entity selected = entt::null;
 };
 
@@ -31,7 +34,17 @@ struct SceneDrawStats {
     std::uint32_t visibleObjects = 0;
     std::uint32_t culledObjects = 0;
     std::uint32_t lights = 0;
+    bool shadowsRendered = false;
 };
+
+/// Orthographic sun transform covering the camera frustum up to `distance`, snapped to
+/// shadow-map texels so the shadows do not shimmer as the camera moves.
+struct ShadowFit {
+    glm::mat4 viewProjection{1.0f};
+    float radius = 0.0f;
+};
+[[nodiscard]] ShadowFit fitSunShadow(const CameraView& camera, const glm::vec3& lightDirection, float distance,
+                                     std::uint32_t resolution);
 
 /// Six-plane (five for infinite reversed-Z) frustum extracted from a view-projection matrix.
 struct Frustum {
@@ -57,6 +70,7 @@ private:
     rhi::UniquePipeline sky_;
     rhi::UniquePipeline opaque_;
     rhi::UniquePipeline grid_;
+    rhi::UniquePipeline shadow_;
     std::unordered_map<VkFormat, rhi::UniquePipeline> tonemap_;
 };
 

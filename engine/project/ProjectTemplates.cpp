@@ -14,7 +14,7 @@ entt::entity addSun(Scene& scene) {
     auto& light = scene.registry().emplace<LightComponent>(sun);
     light.type = LightType::Directional;
     light.color = {1.0f, 0.96f, 0.90f};
-    light.intensity = 4.0f;
+    light.intensity = 3.5f;
     return sun;
 }
 
@@ -40,7 +40,7 @@ entt::entity addMesh(Scene& scene, std::string_view name, MeshPrimitive prim, gl
 }
 
 entt::entity addGround(Scene& scene, float size) {
-    const entt::entity ground = addMesh(scene, "Ground", MeshPrimitive::Plane, {0, 0, 0}, {0.55f, 0.55f, 0.56f}, 0.0f, 0.85f);
+    const entt::entity ground = addMesh(scene, "Ground", MeshPrimitive::Plane, {0, 0, 0}, {0.30f, 0.30f, 0.31f}, 0.0f, 0.9f);
     scene.registry().get<TransformComponent>(ground).scale = {size, 1.0f, size};
     return ground;
 }

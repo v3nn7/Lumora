@@ -12,8 +12,8 @@
 
 namespace lumora::render {
 
-PresentTarget::PresentTarget(RenderContext& context, VkSurfaceKHR surface, VkExtent2D extent, bool vsync)
-    : swapchain_(std::make_unique<rhi::Swapchain>(context.device(), surface, extent, vsync)), desired_(extent) {}
+PresentTarget::PresentTarget(RenderContext& context, VkSurfaceKHR surface, VkExtent2D extent, rhi::PresentPolicy policy)
+    : swapchain_(std::make_unique<rhi::Swapchain>(context.device(), surface, extent, policy)), desired_(extent) {}
 
 PresentTarget::~PresentTarget() = default;
 
@@ -24,9 +24,9 @@ void PresentTarget::resize(VkExtent2D extent) noexcept {
     }
 }
 
-void PresentTarget::setVsync(bool vsync) noexcept {
-    if (vsync != swapchain_->vsync()) {
-        swapchain_->setVsync(vsync);
+void PresentTarget::setPolicy(rhi::PresentPolicy policy) noexcept {
+    if (policy != swapchain_->policy()) {
+        swapchain_->setPolicy(policy);
         dirty_ = true;
     }
 }
@@ -205,6 +205,9 @@ FrameResult Renderer::render(PresentTarget& target, const Scene& scene, const Ca
     }
     if (acquired == rhi::SwapchainStatus::SurfaceLost) {
         return FrameResult::SurfaceLost;
+    }
+    if (acquired == rhi::SwapchainStatus::Timeout) {
+        return FrameResult::Skipped;  // no image available yet; the acquire semaphore was not signalled
     }
     if (acquired == rhi::SwapchainStatus::Suboptimal) {
         target.dirty_ = true;  // still render this image, rebuild next frame

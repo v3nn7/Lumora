@@ -49,14 +49,18 @@ enum class BlendMode { Opaque, Alpha };
 
 struct GraphicsPipelineDesc {
     VkShaderModule vertexShader = VK_NULL_HANDLE;
-    VkShaderModule fragmentShader = VK_NULL_HANDLE;
+    VkShaderModule fragmentShader = VK_NULL_HANDLE;  // optional (depth-only passes)
     const char* vertexEntry = "VSMain";
     const char* fragmentEntry = "PSMain";
     bool meshVertexInput = false;  // binds lumora::Vertex (position, normal, uv)
+    bool positionOnly = false;     // with meshVertexInput: only location 0 (depth-only passes)
     VkCullModeFlags cullMode = VK_CULL_MODE_NONE;
     bool depthTest = false;
     bool depthWrite = false;
     VkCompareOp depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;  // reversed-Z
+    bool depthBias = false;
+    float depthBiasConstant = 0.0f;
+    float depthBiasSlope = 0.0f;
     BlendMode blend = BlendMode::Opaque;
     std::vector<VkFormat> colorFormats;
     VkFormat depthFormat = VK_FORMAT_UNDEFINED;

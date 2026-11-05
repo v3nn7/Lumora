@@ -103,7 +103,7 @@ UniquePipeline createGraphicsPipeline(const Device& device, const PipelineCache&
     if (d.meshVertexInput) {
         vertexInput.vertexBindingDescriptionCount = 1;
         vertexInput.pVertexBindingDescriptions = &binding;
-        vertexInput.vertexAttributeDescriptionCount = 3;
+        vertexInput.vertexAttributeDescriptionCount = d.positionOnly ? 1u : 3u;
         vertexInput.pVertexAttributeDescriptions = attributes;
     }
 
@@ -119,6 +119,9 @@ UniquePipeline createGraphicsPipeline(const Device& device, const PipelineCache&
     raster.cullMode = d.cullMode;
     raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     raster.lineWidth = 1.0f;
+    raster.depthBiasEnable = d.depthBias ? VK_TRUE : VK_FALSE;
+    raster.depthBiasConstantFactor = d.depthBiasConstant;
+    raster.depthBiasSlopeFactor = d.depthBiasSlope;
 
     VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
@@ -158,7 +161,7 @@ UniquePipeline createGraphicsPipeline(const Device& device, const PipelineCache&
 
     VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
     info.pNext = &rendering;
-    info.stageCount = 2;
+    info.stageCount = d.fragmentShader != VK_NULL_HANDLE ? 2u : 1u;
     info.pStages = stages;
     info.pVertexInputState = &vertexInput;
     info.pInputAssemblyState = &inputAssembly;

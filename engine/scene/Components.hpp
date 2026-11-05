@@ -76,11 +76,11 @@ struct RotatorComponent {
 
 /// Scene-wide settings stored alongside entities.
 struct EnvironmentSettings {
-    glm::vec3 skyZenithColor{0.18f, 0.32f, 0.62f};
-    glm::vec3 skyHorizonColor{0.70f, 0.78f, 0.88f};
-    glm::vec3 groundColor{0.20f, 0.18f, 0.16f};
-    float ambientIntensity = 0.6f;
-    float exposure = 1.0f;
+    glm::vec3 skyZenithColor{0.11f, 0.26f, 0.62f};
+    glm::vec3 skyHorizonColor{0.52f, 0.64f, 0.80f};
+    glm::vec3 groundColor{0.16f, 0.14f, 0.12f};
+    float ambientIntensity = 0.5f;
+    float exposure = 0.9f;
 };
 
 } // namespace lumora

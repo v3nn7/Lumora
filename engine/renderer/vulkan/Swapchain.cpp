@@ -25,10 +25,18 @@ VkSurfaceFormatKHR chooseFormat(const std::vector<VkSurfaceFormatKHR>& formats) 
     return formats.front();
 }
 
-VkPresentModeKHR choosePresentMode(const std::vector<VkPresentModeKHR>& modes, bool vsync) {
-    if (vsync) return VK_PRESENT_MODE_FIFO_KHR;  // always supported
-    for (VkPresentModeKHR m : {VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR}) {
-        if (std::ranges::find(modes, m) != modes.end()) return m;
+VkPresentModeKHR choosePresentMode(const std::vector<VkPresentModeKHR>& modes, PresentPolicy policy) {
+    auto pick = [&](std::initializer_list<VkPresentModeKHR> order) {
+        for (VkPresentModeKHR m : order) {
+            if (std::ranges::find(modes, m) != modes.end()) return m;
+        }
+        return VK_PRESENT_MODE_FIFO_KHR;  // the only mode every implementation must support
+    };
+    switch (policy) {
+        case PresentPolicy::Vsync: return pick({VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_KHR});
+        case PresentPolicy::Uncapped:
+            return pick({VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_KHR});
+        case PresentPolicy::StrictFifo: return VK_PRESENT_MODE_FIFO_KHR;
     }
     return VK_PRESENT_MODE_FIFO_KHR;
 }
@@ -45,8 +53,8 @@ const char* presentModeName(VkPresentModeKHR m) {
 
 } // namespace
 
-Swapchain::Swapchain(Device& device, VkSurfaceKHR surface, VkExtent2D desiredExtent, bool vsync)
-    : device_(device), surface_(surface), vsync_(vsync) {
+Swapchain::Swapchain(Device& device, VkSurfaceKHR surface, VkExtent2D desiredExtent, PresentPolicy policy)
+    : device_(device), surface_(surface), policy_(policy) {
     if (!device_.caps().swapchain) {
         throw UnsupportedHardwareError("device does not support VK_KHR_swapchain");
     }
@@ -101,7 +109,7 @@ bool Swapchain::recreate(VkExtent2D desired) {
     }
 
     const VkSurfaceFormatKHR surfaceFormat = chooseFormat(formats);
-    presentMode_ = choosePresentMode(modes, vsync_);
+    presentMode_ = choosePresentMode(modes, policy_);
 
     std::uint32_t imageCount = std::max(caps.minImageCount + 1, 3u);
     if (caps.maxImageCount > 0) imageCount = std::min(imageCount, caps.maxImageCount);
@@ -166,18 +174,22 @@ bool Swapchain::recreate(VkExtent2D desired) {
         views_.push_back(view);
         presentSemaphores_.push_back(createBinarySemaphore(device_, "SwapchainPresent"));
     }
-    log::info("Vulkan", "swapchain {}x{}, {} images, format {}, {}", extent_.width, extent_.height, count,
-              static_cast<int>(format_), presentModeName(presentMode_));
+    std::string available;
+    for (VkPresentModeKHR m : modes) available += std::string(available.empty() ? "" : "/") + presentModeName(m);
+    log::info("Vulkan", "swapchain {}x{}, {} images, format {}, {} (available: {})", extent_.width, extent_.height,
+              count, static_cast<int>(format_), presentModeName(presentMode_), available);
     return true;
 }
 
-SwapchainStatus Swapchain::acquire(VkSemaphore signal, std::uint32_t& imageIndex) {
-    const VkResult r = vkAcquireNextImageKHR(device_.handle(), swapchain_, UINT64_MAX, signal, VK_NULL_HANDLE, &imageIndex);
+SwapchainStatus Swapchain::acquire(VkSemaphore signal, std::uint32_t& imageIndex, std::uint64_t timeoutNs) {
+    const VkResult r = vkAcquireNextImageKHR(device_.handle(), swapchain_, timeoutNs, signal, VK_NULL_HANDLE, &imageIndex);
     switch (r) {
         case VK_SUCCESS: return SwapchainStatus::Ok;
         case VK_SUBOPTIMAL_KHR: return SwapchainStatus::Suboptimal;
         case VK_ERROR_OUT_OF_DATE_KHR: return SwapchainStatus::OutOfDate;
         case VK_ERROR_SURFACE_LOST_KHR: return SwapchainStatus::SurfaceLost;
+        case VK_TIMEOUT:
+        case VK_NOT_READY: return SwapchainStatus::Timeout;
         default: LUMORA_VK_CHECK(r); return SwapchainStatus::OutOfDate;
     }
 }

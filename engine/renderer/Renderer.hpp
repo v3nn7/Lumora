@@ -35,13 +35,13 @@ struct CapturedImage {
 /// A presentable surface (window) the renderer can draw into.
 class PresentTarget {
 public:
-    PresentTarget(RenderContext& context, VkSurfaceKHR surface, VkExtent2D extent, bool vsync);
+    PresentTarget(RenderContext& context, VkSurfaceKHR surface, VkExtent2D extent, rhi::PresentPolicy policy);
     ~PresentTarget();
     PresentTarget(const PresentTarget&) = delete;
     PresentTarget& operator=(const PresentTarget&) = delete;
 
     void resize(VkExtent2D extent) noexcept;
-    void setVsync(bool vsync) noexcept;
+    void setPolicy(rhi::PresentPolicy policy) noexcept;
     [[nodiscard]] const rhi::Swapchain& swapchain() const noexcept { return *swapchain_; }
 
 private:

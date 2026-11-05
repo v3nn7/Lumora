@@ -32,7 +32,9 @@ struct FrameConstants {
     glm::vec4 sunDirection{0.0f};
     glm::vec4 sunColor{0.0f};
     glm::vec4 gridParams{0.0f};
-    glm::uvec4 counts{0u};
+    glm::uvec4 counts{0u};                  // x light count, y index of the shadowed sun (or ~0u)
+    glm::mat4 lightViewProjection{1.0f};    // sun shadow map transform
+    glm::vec4 shadowParams{0.0f};           // x enabled, y comparison sampler, z texel size (uv), w normal offset (m)
     GpuLight lights[kMaxLights]{};
 };
 
@@ -55,8 +57,10 @@ struct PushConstants {
 static_assert(sizeof(GpuLight) == 48);
 static_assert(offsetof(FrameConstants, cameraPositionTime) == 256);
 static_assert(offsetof(FrameConstants, counts) == 384);
-static_assert(offsetof(FrameConstants, lights) == 400);
-static_assert(sizeof(FrameConstants) == 400 + 48 * kMaxLights);
+static_assert(offsetof(FrameConstants, lightViewProjection) == 400);
+static_assert(offsetof(FrameConstants, shadowParams) == 464);
+static_assert(offsetof(FrameConstants, lights) == 480);
+static_assert(sizeof(FrameConstants) == 480 + 48 * kMaxLights);
 static_assert(sizeof(GpuObject) == 176);
 static_assert(offsetof(GpuObject, flags) == 160);
 static_assert(sizeof(PushConstants) == 16);

@@ -50,7 +50,9 @@ GridOutput PSMain(FullscreenOut input) {
         discard;
     }
 
-    float4 clip = mul(gFrame.viewProjection, float4(p, 1.0));
+    // Pull the depth slightly towards the camera so the grid wins against coplanar ground.
+    float3 biased = p - dir * (0.002 * t + 0.001);
+    float4 clip = mul(gFrame.viewProjection, float4(biased, 1.0));
     GridOutput o;
     o.color = float4(color * 0.6, alpha);
     o.depth = clip.z / clip.w;

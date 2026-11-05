@@ -6,6 +6,7 @@ lumora_add_shader(LUMORA_SHADER_FILES SOURCE sky.hlsl      STAGE vert ENTRY VSMa
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE sky.hlsl      STAGE frag ENTRY PSMain OUTPUT sky.frag.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE grid.hlsl     STAGE vert ENTRY VSMain OUTPUT grid.vert.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE grid.hlsl     STAGE frag ENTRY PSMain OUTPUT grid.frag.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE shadow.hlsl   STAGE vert ENTRY VSMain OUTPUT shadow.vert.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE tonemap.hlsl  STAGE vert ENTRY VSMain OUTPUT tonemap.vert.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE tonemap.hlsl  STAGE frag ENTRY PSMain OUTPUT tonemap.frag.spv)
 

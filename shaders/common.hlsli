@@ -27,7 +27,9 @@ struct FrameData {
     float4 sunDirection;        // xyz towards the sun, w = 1 if a sun exists
     float4 sunColor;            // rgb radiance
     float4 gridParams;          // x enabled, y cell size, z fade distance
-    uint4 counts;               // x light count
+    uint4 counts;               // x light count, y shadowed sun index (0xFFFFFFFF = none)
+    column_major float4x4 lightViewProjection;
+    float4 shadowParams;        // x enabled, y comparison sampler, z texel size (uv), w normal offset
     GpuLight lights[MAX_LIGHTS];
 };
 
@@ -43,6 +45,8 @@ struct GpuObject {
 [[vk::binding(1, 0)]] StructuredBuffer<GpuObject> gObjects;
 [[vk::binding(0, 1)]] Texture2D gTextures[];
 [[vk::binding(1, 1)]] SamplerState gSamplers[];
+// Same descriptors viewed as comparison samplers (descriptor aliasing of VK_DESCRIPTOR_TYPE_SAMPLER).
+[[vk::binding(1, 1)]] SamplerComparisonState gShadowSamplers[];
 
 struct PushConstants {
     uint index0;
@@ -64,7 +68,7 @@ float3 viewRay(float2 uv) {
 /// Procedural sky radiance (no sun disk). Also used as a crude environment for ambient light.
 float3 skyGradient(float3 dir) {
     float y = dir.y;
-    float3 sky = lerp(gFrame.skyHorizon.rgb, gFrame.skyZenith.rgb, pow(saturate(y), 0.5));
+    float3 sky = lerp(gFrame.skyHorizon.rgb, gFrame.skyZenith.rgb, pow(saturate(y), 0.4));
     float3 ground = lerp(gFrame.skyHorizon.rgb * 0.6, gFrame.groundColor.rgb, saturate(-y * 6.0));
     return y >= 0.0 ? sky : ground;
 }

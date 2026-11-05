@@ -75,6 +75,20 @@ RenderContext::RenderContext(const RenderContextConfig& config) {
     linearClamp_ = rhi::UniqueSampler(device_->handle(), sampler);
     linearClampIndex_ = bindless_->registerSampler(sampler);
 
+    // Hardware PCF: bilinear depth comparison, outside the map counts as lit.
+    VkSamplerCreateInfo cmpInfo = samplerInfo;
+    cmpInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    cmpInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    cmpInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    cmpInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    cmpInfo.compareEnable = VK_TRUE;
+    cmpInfo.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    cmpInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    VkSampler cmpSampler = VK_NULL_HANDLE;
+    LUMORA_VK_CHECK(vkCreateSampler(device_->handle(), &cmpInfo, nullptr, &cmpSampler));
+    shadowCompare_ = rhi::UniqueSampler(device_->handle(), cmpSampler);
+    shadowCompareIndex_ = bindless_->registerSampler(cmpSampler);
+
     meshes_ = std::make_unique<MeshCache>(*uploads_);
 }
 

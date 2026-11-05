@@ -6,6 +6,7 @@
 #include "scene/Scene.hpp"
 
 #include <glm/geometric.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/matrix.hpp>
 
 #include <algorithm>
@@ -35,6 +36,48 @@ bool Frustum::intersectsAabb(const glm::vec3& center, const glm::vec3& extents) 
         if (glm::dot(n, center) + p.w < -radius) return false;
     }
     return true;
+}
+
+ShadowFit fitSunShadow(const CameraView& camera, const glm::vec3& lightDirection, float distance,
+                       std::uint32_t resolution) {
+    const glm::mat4 invView = glm::inverse(camera.view);
+    const glm::vec3 position(invView[3]);
+    const glm::vec3 right = glm::normalize(glm::vec3(invView[0]));
+    const glm::vec3 up = glm::normalize(glm::vec3(invView[1]));
+    const glm::vec3 forward = -glm::normalize(glm::vec3(invView[2]));
+    const float tanHalf = std::tan(camera.fovYRadians * 0.5f);
+
+    // Bounding sphere of the frustum slice [near, distance]: rotation invariant -> stable size.
+    glm::vec3 corners[8];
+    int n = 0;
+    for (float d : {camera.nearPlane, distance}) {
+        const float h = d * tanHalf;
+        const float w = h * camera.aspect;
+        for (float sx : {-1.0f, 1.0f}) {
+            for (float sy : {-1.0f, 1.0f}) corners[n++] = position + forward * d + right * (w * sx) + up * (h * sy);
+        }
+    }
+    glm::vec3 center(0.0f);
+    for (const glm::vec3& c : corners) center += c;
+    center /= 8.0f;
+    float radius = 0.0f;
+    for (const glm::vec3& c : corners) radius = std::max(radius, glm::length(c - center));
+    radius = std::ceil(radius * 16.0f) / 16.0f;
+
+    const glm::vec3 dir = glm::normalize(lightDirection);
+    const glm::vec3 lightUp = std::abs(dir.y) > 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
+    constexpr float kCasterMargin = 60.0f;  // include occluders outside the view slice
+    const glm::mat4 view = glm::lookAt(center - dir * (radius + kCasterMargin), center, lightUp);
+    glm::mat4 projection = glm::ortho(-radius, radius, -radius, radius, 0.0f, 2.0f * radius + kCasterMargin);
+
+    // Snap the projected world origin to whole texels.
+    const glm::mat4 vp = projection * view;
+    const float halfRes = static_cast<float>(resolution) * 0.5f;
+    const glm::vec4 origin = vp * glm::vec4(0, 0, 0, 1) * halfRes;
+    const glm::vec2 offset = (glm::round(glm::vec2(origin)) - glm::vec2(origin)) / halfRes;
+    projection[3][0] += offset.x;
+    projection[3][1] += offset.y;
+    return {projection * view, radius};
 }
 
 SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
@@ -75,6 +118,22 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     grid.layout = ctx_.pipelineLayout();
     grid.debugName = "EditorGrid";
     grid_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), grid);
+
+    rhi::GraphicsPipelineDesc shadow;
+    shadow.vertexShader = shaders.get("shadow.vert");
+    shadow.meshVertexInput = true;
+    shadow.positionOnly = true;
+    shadow.cullMode = VK_CULL_MODE_NONE;  // single-sided planes still cast shadows
+    shadow.depthTest = true;
+    shadow.depthWrite = true;
+    shadow.depthCompare = VK_COMPARE_OP_LESS_OR_EQUAL;  // conventional (not reversed) depth
+    shadow.depthBias = true;
+    shadow.depthBiasConstant = 1.5f;
+    shadow.depthBiasSlope = 2.0f;
+    shadow.depthFormat = ctx_.depthFormat();
+    shadow.layout = ctx_.pipelineLayout();
+    shadow.debugName = "SunShadow";
+    shadow_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), shadow);
 }
 
 VkPipeline SceneRenderer::tonemapPipeline(VkFormat outputFormat) {
@@ -131,6 +190,8 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
 
     std::uint32_t lightCount = 0;
     bool haveSun = false;
+    std::uint32_t sunIndex = UINT32_MAX;
+    glm::vec3 sunTravel(0.0f, -1.0f, 0.0f);
     for (auto [e, light, world] : reg.view<LightComponent, WorldTransformComponent>().each()) {
         if (lightCount >= kMaxLights) break;
         GpuLight& gl = fc.lights[lightCount++];
@@ -141,12 +202,23 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         gl.directionType = glm::vec4(direction, static_cast<float>(light.type));
         if (light.type == LightType::Directional && !haveSun) {
             haveSun = true;
+            sunIndex = lightCount - 1;
+            sunTravel = direction;
             fc.sunDirection = glm::vec4(-direction, 1.0f);
             fc.sunColor = glm::vec4(light.color * light.intensity, 1.0f);
         }
     }
-    fc.counts = glm::uvec4(lightCount, 0, 0, 0);
+    const bool shadows = settings.shadows && haveSun && settings.shadowResolution > 0;
+    fc.counts = glm::uvec4(lightCount, shadows ? sunIndex : UINT32_MAX, 0, 0);
     stats.lights = lightCount;
+    if (shadows) {
+        const ShadowFit fit = fitSunShadow(camera, sunTravel, settings.shadowDistance, settings.shadowResolution);
+        const float texelWorld = 2.0f * fit.radius / static_cast<float>(settings.shadowResolution);
+        fc.lightViewProjection = fit.viewProjection;
+        fc.shadowParams = glm::vec4(1.0f, static_cast<float>(ctx_.shadowCompareSampler()),
+                                    1.0f / static_cast<float>(settings.shadowResolution), texelWorld * 1.5f);
+        stats.shadowsRendered = true;
+    }
     frame.constants.write(std::as_bytes(std::span(&fc, 1)));
 
     // ---- Objects + culling -----------------------------------------------------------------
@@ -201,6 +273,37 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 2, sets, 0, nullptr);
     };
 
+    RGImage shadowMap{};
+    if (shadows) {
+        shadowMap = graph.createImage("SunShadowMap",
+                                      {ctx_.depthFormat(), {settings.shadowResolution, settings.shadowResolution}});
+        graph.addRasterPass(
+            "SunShadow", [&](PassBuilder& b) { b.writeDepth(shadowMap, LoadOp::Clear, 1.0f); },
+            [this, bindSets, layout, casters = draws](PassContext& ctx) {
+                if (casters.empty()) return;
+                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_.get());
+                bindSets(ctx.cmd);
+                int boundMesh = -1;
+                const GpuMesh* mesh = nullptr;
+                for (const Draw& d : casters) {
+                    if (static_cast<int>(d.mesh) != boundMesh) {
+                        boundMesh = static_cast<int>(d.mesh);
+                        mesh = &ctx_.meshes().primitive(d.mesh);
+                        const VkBuffer vb = mesh->vertices.handle();
+                        const VkDeviceSize offset = 0;
+                        vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
+                        vkCmdBindIndexBuffer(ctx.cmd, mesh->indices.handle(), 0, VK_INDEX_TYPE_UINT32);
+                    }
+                    PushConstants pc;
+                    pc.index0 = d.object;
+                    vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                       sizeof(pc), &pc);
+                    vkCmdDrawIndexed(ctx.cmd, mesh->indexCount, 1, 0, 0, 0);
+                }
+            });
+        stats.drawCalls += static_cast<std::uint32_t>(draws.size());
+    }
+
     graph.addRasterPass(
         "Sky", [&](PassBuilder& b) { b.writeColor(hdr, LoadOp::DontCare); },
         [this, bindSets](PassContext& ctx) {
@@ -214,8 +317,9 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         [&](PassBuilder& b) {
             b.writeColor(hdr, LoadOp::Load);
             b.writeDepth(depth, LoadOp::Clear, 0.0f);  // reversed-Z: 0 is the far plane
+            if (shadows) b.sample(shadowMap);
         },
-        [this, bindSets, layout, draws = std::move(draws)](PassContext& ctx) {
+        [this, bindSets, layout, shadows, shadowMap, draws = std::move(draws)](PassContext& ctx) {
             if (draws.empty()) return;
             vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, opaque_.get());
             bindSets(ctx.cmd);
@@ -232,6 +336,8 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 }
                 PushConstants pc;
                 pc.index0 = d.object;
+                pc.index1 = shadows ? ctx.bindlessIndex(shadowMap) : 0u;
+                pc.flags = shadows ? 1u : 0u;
                 vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                    sizeof(pc), &pc);
                 vkCmdDrawIndexed(ctx.cmd, mesh->indexCount, 1, 0, 0, 0);

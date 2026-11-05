@@ -24,6 +24,34 @@ VSOutput VSMain(VSInput input) {
     return o;
 }
 
+/// Sun visibility from the shadow map: 3x3 hardware-filtered PCF taps (bilinear compare each),
+/// normal-offset to fight acne, faded out towards the edge of the shadow region.
+float sunShadow(float3 worldPosition, float3 normal) {
+    if ((gPush.flags & 1u) == 0u || gFrame.shadowParams.x < 0.5) {
+        return 1.0;
+    }
+    float3 offsetPosition = worldPosition + normal * gFrame.shadowParams.w;
+    float4 lightClip = mul(gFrame.lightViewProjection, float4(offsetPosition, 1.0));
+    float3 ndc = lightClip.xyz / lightClip.w;
+    float2 uv = ndc.xy * 0.5 + 0.5;
+    if (any(uv < 0.0.xx) || any(uv > 1.0.xx) || ndc.z > 1.0) {
+        return 1.0;
+    }
+    float texel = gFrame.shadowParams.z;
+    uint samplerIndex = (uint)gFrame.shadowParams.y;
+    float sum = 0.0;
+    [unroll] for (int y = -1; y <= 1; ++y) {
+        [unroll] for (int x = -1; x <= 1; ++x) {
+            sum += gTextures[gPush.index1].SampleCmpLevelZero(gShadowSamplers[samplerIndex], uv + float2(x, y) * texel,
+                                                               ndc.z - 0.0005);
+        }
+    }
+    float visibility = sum / 9.0;
+    float2 edge = abs(uv * 2.0 - 1.0);
+    float fade = saturate((max(edge.x, edge.y) - 0.85) / 0.15);
+    return lerp(visibility, 1.0, fade);
+}
+
 float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     GpuObject object = gObjects[gPush.index0];
     Surface s;
@@ -40,6 +68,9 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
         GpuLight light = gFrame.lights[i];
         float3 radiance = light.colorIntensity.rgb * light.colorIntensity.w;
         if ((int)light.directionType.w == LIGHT_DIRECTIONAL) {
+            if (i == gFrame.counts.y) {
+                radiance *= sunShadow(s.position, s.normal);
+            }
             color += evaluateLight(s, -light.directionType.xyz, radiance);
         } else {
             float3 toLight = light.positionRange.xyz - s.position;

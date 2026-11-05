@@ -193,6 +193,7 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
             s.normal = normalize(t * m.x + b * m.y + n * m.z);
         }
     }
+    s.geometricNormal = geometricNormal;
     s.view = normalize(gFrame.cameraPositionTime.xyz - input.worldPosition);
     float3 albedo = object.baseColorMetallic.rgb;
     if (object.textures.x != NO_TEXTURE) {
@@ -206,7 +207,8 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
         s.roughness *= mr.g;
         s.metallic *= mr.b;
     }
-    s.roughness = clamp(s.roughness, 0.02, 1.0);
+    // Derivatives in uniform control flow: the normal-map branch above depends only on the draw.
+    s.roughness = antialiasedRoughness(clamp(s.roughness, 0.02, 1.0), ddx(s.normal), ddy(s.normal));
 
     float3 color = evaluateAmbient(s);
     uint lightCount = min(gFrame.counts.x, (uint)MAX_LIGHTS);

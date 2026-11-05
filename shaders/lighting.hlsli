@@ -1,8 +1,20 @@
-// Physically based shading: Cook-Torrance GGX specular + Lambert diffuse.
+// Physically based shading: GGX specular with height-correlated Smith visibility and
+// multiple-scattering energy compensation, renormalised Burley diffuse, and an environment
+// term integrated from the procedural sky.
 #ifndef LUMORA_LIGHTING_HLSLI
 #define LUMORA_LIGHTING_HLSLI
 
 #include "common.hlsli"
+
+struct Surface {
+    float3 position;
+    float3 normal;           // shading normal (normal map applied)
+    float3 geometricNormal;  // interpolated vertex normal, facing the viewer
+    float3 view;             // towards the camera
+    float3 albedo;
+    float metallic;
+    float roughness;         // perceptual roughness (alpha = roughness^2)
+};
 
 float distributionGGX(float NdotH, float alpha) {
     float a2 = alpha * alpha;
@@ -10,14 +22,12 @@ float distributionGGX(float NdotH, float alpha) {
     return a2 / max(PI * d * d, 1e-7);
 }
 
-float geometrySchlickGGX(float NdotX, float k) {
-    return NdotX / (NdotX * (1.0 - k) + k);
-}
-
-float geometrySmith(float NdotV, float NdotL, float roughness) {
-    float r = roughness + 1.0;
-    float k = (r * r) / 8.0;  // direct lighting remap
-    return geometrySchlickGGX(NdotV, k) * geometrySchlickGGX(NdotL, k);
+/// Height-correlated Smith masking-shadowing (Heitz 2014), already divided by 4 NdotL NdotV.
+float visibilitySmithGGXCorrelated(float NdotV, float NdotL, float alpha) {
+    float a2 = alpha * alpha;
+    float lambdaV = NdotL * sqrt(NdotV * NdotV * (1.0 - a2) + a2);
+    float lambdaL = NdotV * sqrt(NdotL * NdotL * (1.0 - a2) + a2);
+    return 0.5 / max(lambdaV + lambdaL, 1e-5);
 }
 
 float3 fresnelSchlick(float cosTheta, float3 F0) {
@@ -28,32 +38,67 @@ float3 fresnelSchlickRoughness(float cosTheta, float3 F0, float roughness) {
     return F0 + (max((1.0 - roughness).xxx, F0) - F0) * pow(saturate(1.0 - cosTheta), 5.0);
 }
 
-struct Surface {
-    float3 position;
-    float3 normal;
-    float3 view;      // towards the camera
-    float3 albedo;
-    float metallic;
-    float roughness;
-};
+/// Split-sum environment BRDF (Karis' analytic fit of the DFG integral): F0 * x + y.
+float2 environmentBrdf(float NdotV, float roughness) {
+    const float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
+    const float4 c1 = float4(1.0, 0.0425, 1.04, -0.04);
+    float4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
+    return float2(-1.04, 1.04) * a004 + r.zw;
+}
+
+/// Single-scattering GGX loses energy on rough surfaces (light that would bounce between
+/// microfacets). Scaling specular by 1 + F0 (1 / Ess - 1) restores it (Fdez-Aguera 2019), so
+/// rough metals keep their brightness instead of turning dark and dull.
+float3 energyCompensation(float2 envBrdf, float3 F0) {
+    float singleScatter = max(envBrdf.x + envBrdf.y, 1e-3);
+    return 1.0 + F0 * (1.0 / singleScatter - 1.0);
+}
+
+/// Burley diffuse renormalised for energy conservation (Frostbite): rough surfaces get the
+/// slight brightening at grazing angles, smooth ones darken a little there.
+float diffuseBurley(float NdotV, float NdotL, float LdotH, float roughness) {
+    float energyBias = lerp(0.0, 0.5, roughness);
+    float energyFactor = lerp(1.0, 1.0 / 1.51, roughness);
+    float f90 = energyBias + 2.0 * LdotH * LdotH * roughness;
+    float lightScatter = 1.0 + (f90 - 1.0) * pow(1.0 - NdotL, 5.0);
+    float viewScatter = 1.0 + (f90 - 1.0) * pow(1.0 - NdotV, 5.0);
+    return lightScatter * viewScatter * energyFactor / PI;
+}
+
+/// Specular anti-aliasing (Kaplanyan / Tokuyoshi 2019): widens the GGX lobe by how much the
+/// normal changes across the pixel, so highlights on curved or normal-mapped surfaces stop
+/// sparkling and crawling. Needs the screen-space derivatives of the final normal.
+float antialiasedRoughness(float roughness, float3 normalDx, float3 normalDy) {
+    float variance = 0.25 * (dot(normalDx, normalDx) + dot(normalDy, normalDy));
+    float kernel = min(2.0 * variance, 0.18);
+    float alpha = roughness * roughness;
+    return sqrt(sqrt(saturate(alpha * alpha + kernel)));
+}
+
+/// A normal map can tilt the shading normal so that the mirror direction points into the
+/// surface; that reflection is occluded by the surface itself (Jimenez 2016).
+float horizonOcclusion(float3 R, float3 geometricNormal) {
+    float horizon = saturate(1.0 + dot(R, geometricNormal));
+    return horizon * horizon;
+}
 
 float3 evaluateLight(Surface s, float3 L, float3 radiance) {
-    float3 H = normalize(s.view + L);
     float NdotL = saturate(dot(s.normal, L));
-    float NdotV = max(dot(s.normal, s.view), 1e-4);
-    float NdotH = saturate(dot(s.normal, H));
-    float VdotH = saturate(dot(s.view, H));
     if (NdotL <= 0.0) {
         return 0.0.xxx;
     }
+    float3 H = normalize(s.view + L);
+    float NdotV = max(dot(s.normal, s.view), 1e-4);
+    float NdotH = saturate(dot(s.normal, H));
+    float LdotH = saturate(dot(L, H));
     float alpha = s.roughness * s.roughness;
     float3 F0 = lerp(0.04.xxx, s.albedo, s.metallic);
-    float3 F = fresnelSchlick(VdotH, F0);
-    float D = distributionGGX(NdotH, alpha);
-    float G = geometrySmith(NdotV, NdotL, s.roughness);
-    float3 specular = (D * G) * F / (4.0 * NdotV * NdotL + 1e-4);
-    float3 kd = (1.0 - F) * (1.0 - s.metallic);
-    return (kd * s.albedo / PI + specular) * radiance * NdotL;
+    float3 F = fresnelSchlick(LdotH, F0);
+    float3 specular = distributionGGX(NdotH, alpha) * visibilitySmithGGXCorrelated(NdotV, NdotL, alpha) * F;
+    specular *= energyCompensation(environmentBrdf(NdotV, s.roughness), F0);
+    float3 diffuse = (1.0 - F) * (1.0 - s.metallic) * s.albedo * diffuseBurley(NdotV, NdotL, LdotH, s.roughness);
+    return (diffuse + specular) * radiance * NdotL;
 }
 
 /// Smooth inverse-square falloff that reaches zero at `range`.
@@ -63,28 +108,47 @@ float pointAttenuation(float distance, float range) {
     return window * window / (distance * distance + 1.0);
 }
 
-/// Hemispherical sky/ground ambient with a roughness-blurred sky reflection. This is a
-/// stand-in until image-based lighting (prefiltered environment maps) is implemented.
+/// The sky averaged over a cone around `dir`: the centre plus four directions tilted by
+/// `spread` (sine of the tilt). Directions below the horizon see the ground, so this also
+/// carries ground bounce light.
+float3 skyAverage(float3 dir, float spread) {
+    float3 up = abs(dir.y) < 0.95 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
+    float3 t = normalize(cross(up, dir));
+    float3 b = cross(dir, t);
+    float c = sqrt(saturate(1.0 - spread * spread));
+    float3 sum = skyGradient(dir) * 2.0;
+    sum += skyGradient(dir * c + t * spread);
+    sum += skyGradient(dir * c - t * spread);
+    sum += skyGradient(dir * c + b * spread);
+    sum += skyGradient(dir * c - b * spread);
+    return sum / 6.0;
+}
+
+/// Ambient light from the procedural sky (stand-in until prefiltered environment maps):
+/// irradiance from a wide average around the normal, specular from the sky along the
+/// reflection's dominant direction, blending into that average as the lobe widens.
 float3 evaluateAmbient(Surface s) {
     float NdotV = max(dot(s.normal, s.view), 1e-4);
     float3 F0 = lerp(0.04.xxx, s.albedo, s.metallic);
     float3 F = fresnelSchlickRoughness(NdotV, F0, s.roughness);
-    float3 kd = (1.0 - F) * (1.0 - s.metallic);
-    float hemi = s.normal.y * 0.5 + 0.5;
-    float3 irradiance = lerp(gFrame.groundColor.rgb, gFrame.skyZenith.rgb, hemi) * 0.5 +
-                        gFrame.skyHorizon.rgb * 0.5 * (1.0 - abs(s.normal.y));
+    float2 envBrdf = environmentBrdf(NdotV, s.roughness);
+
+    // Irradiance / pi of the sky around the normal. The 0.5 stands in for ambient occlusion:
+    // nothing else darkens ambient light yet, and full sky light would flatten every shadow.
+    float3 skyAroundNormal = skyAverage(s.normal, 0.8);
+    float3 diffuse = (1.0 - F) * (1.0 - s.metallic) * s.albedo * skyAroundNormal * 0.5;
+
+    float alpha = s.roughness * s.roughness;
     float3 R = reflect(-s.view, s.normal);
-    float3 sharp = skyGradient(R);
-    float3 blurred = lerp(gFrame.groundColor.rgb, gFrame.skyZenith.rgb, R.y * 0.5 + 0.5);
-    float3 envSpecular = lerp(sharp, blurred, s.roughness);
-    // Approximate split-sum environment BRDF (Karis' analytic fit).
-    float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
-    float4 c1 = float4(1.0, 0.0425, 1.04, -0.04);
-    float4 r = s.roughness * c0 + c1;
-    float a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
-    float2 envBrdf = float2(-1.04, 1.04) * a004 + r.zw;
-    float3 specular = envSpecular * (F0 * envBrdf.x + envBrdf.y);
-    return (kd * s.albedo * irradiance + specular) * gFrame.skyZenith.w;
+    // Rough lobes lean towards the normal (Frostbite's dominant direction).
+    float lean = (1.0 - alpha) * (sqrt(1.0 - alpha) + alpha);
+    float3 dominant = normalize(lerp(s.normal, R, lean));
+    // Sharp lobes see the sky in one direction; wide ones approach the average around the
+    // normal, which is already computed (one extra sky evaluation instead of a second average).
+    float3 envSpecular = lerp(skyGradient(dominant), skyAroundNormal, saturate(alpha * 1.6));
+    float3 specular = envSpecular * (F0 * envBrdf.x + envBrdf.y) * energyCompensation(envBrdf, F0);
+    specular *= horizonOcclusion(R, s.geometricNormal);
+    return (diffuse + specular) * gFrame.skyZenith.w;
 }
 
 #endif

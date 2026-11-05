@@ -100,6 +100,7 @@ TEST(ScenePatch, OrphanedRecordsAttachToTheRoot) {
     ScenePatch patch;
     const Uuid child = Uuid::generate();
     patch.upserts.push_back(json{{"uuid", child.toString()},
+                                 {"full", true},
                                  {"name", "Orphan"},
                                  {"parent", Uuid::generate().toString()},
                                  {"components", {{"Transform", json::object()}}}});
@@ -120,7 +121,7 @@ TEST(ScenePatch, RejectsMalformedInput) {
     Scene scene;
     ScenePatch patch;
     patch.upserts.push_back(json{{"uuid", "garbage"}});
-    patch.upserts.push_back(json{{"uuid", Uuid::generate().toString()}, {"name", "Ok"}});
+    patch.upserts.push_back(json{{"uuid", Uuid::generate().toString()}, {"full", true}, {"name", "Ok"}});
     EXPECT_FALSE(patch.applyTo(scene).has_value());
     EXPECT_EQ(scene.entityCount(), 1u);
 }
@@ -128,11 +129,64 @@ TEST(ScenePatch, RejectsMalformedInput) {
 TEST(ScenePatch, MovingUnderOwnDescendantIsRefused) {
     auto scene = sample();
     auto target = copyOf(*scene);
-    // Craft a record that puts A under its child A1.
-    json record = SceneSerializer::entityToJson(*target, named(*target, "A"));
-    record["parent"] = target->uuidOf(named(*target, "A1")).toString();
+    // Craft a move that puts A under its child A1.
     ScenePatch patch;
-    patch.upserts.push_back(record);
+    patch.upserts.push_back(json{{"uuid", target->uuidOf(named(*target, "A")).toString()},
+                                 {"move", {{"parent", target->uuidOf(named(*target, "A1")).toString()}, {"index", 0}}}});
     EXPECT_FALSE(patch.applyTo(*scene).has_value());
     EXPECT_EQ(scene->parentOf(named(*scene, "A")), entt::entity{entt::null});
+}
+
+TEST(ScenePatch, CarriesOnlyWhatChanged) {
+    auto from = sample();
+    auto to = copyOf(*from);
+    to->destroyEntity(named(*to, "A"));  // its siblings shift, but are not rewritten
+    to->registry().get<TransformComponent>(named(*to, "B")).position.x = 42.0f;
+    const ScenePatch patch = ScenePatch::between(SceneIndex::fromScene(*from), SceneIndex::fromScene(*to));
+    ASSERT_EQ(patch.upserts.size(), 1u);
+    const json& record = patch.upserts[0];
+    EXPECT_FALSE(record.contains("full"));
+    EXPECT_FALSE(record.contains("move"));
+    EXPECT_FALSE(record.contains("name"));
+    ASSERT_TRUE(record.contains("components"));
+    EXPECT_EQ(record["components"].size(), 1u);              // Transform only
+    EXPECT_EQ(record["components"]["Transform"].size(), 1u);  // position only
+    EXPECT_EQ(patch.removals.size(), 3u);                     // A and its two children
+}
+
+TEST(ScenePatch, ReorderMovesOnlyTheEntitiesThatMoved) {
+    auto from = sample();
+    auto to = copyOf(*from);
+    to->setParent(named(*to, "C"), entt::null, 0);  // A B C -> C A B
+    const ScenePatch patch = ScenePatch::between(SceneIndex::fromScene(*from), SceneIndex::fromScene(*to));
+    ASSERT_EQ(patch.upserts.size(), 1u);
+    EXPECT_TRUE(patch.upserts[0].contains("move"));
+    ASSERT_TRUE(patch.applyTo(*from).has_value());
+    EXPECT_EQ(SceneSerializer::toJson(*from), SceneSerializer::toJson(*to));
+}
+
+TEST(ScenePatch, DifferentFieldsOfOneEntityMerge) {
+    auto base = sample();
+    auto mine = copyOf(*base);
+    auto theirs = copyOf(*base);
+    mine->registry().get<TransformComponent>(named(*mine, "B")).position = {1.0f, 0.0f, 0.0f};
+    theirs->registry().get<MeshRendererComponent>(named(*theirs, "B")).baseColor = {1.0f, 0.0f, 0.0f};
+    const SceneIndex index = SceneIndex::fromScene(*base);
+    const ScenePatch a = ScenePatch::between(index, SceneIndex::fromScene(*mine));
+    const ScenePatch b = ScenePatch::between(index, SceneIndex::fromScene(*theirs));
+    ASSERT_TRUE(a.applyTo(*base).has_value());
+    ASSERT_TRUE(b.applyTo(*base).has_value());
+    const entt::entity e = named(*base, "B");
+    EXPECT_EQ(base->registry().get<TransformComponent>(e).position, glm::vec3(1.0f, 0.0f, 0.0f));
+    EXPECT_EQ(base->registry().get<MeshRendererComponent>(e).baseColor, glm::vec3(1.0f, 0.0f, 0.0f));
+}
+
+TEST(ScenePatch, EditsOfDeletedEntitiesAreIgnored) {
+    auto base = sample();
+    auto edited = copyOf(*base);
+    edited->registry().get<TransformComponent>(named(*edited, "C")).position = {5.0f, 5.0f, 5.0f};
+    const ScenePatch edit = ScenePatch::between(SceneIndex::fromScene(*base), SceneIndex::fromScene(*edited));
+    base->destroyEntity(named(*base, "C"));  // deleted elsewhere first
+    ASSERT_TRUE(edit.applyTo(*base).has_value());
+    EXPECT_EQ(named(*base, "C"), entt::entity{entt::null}) << "an edit must not resurrect a deleted entity";
 }

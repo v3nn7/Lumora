@@ -15,27 +15,39 @@ namespace lumora {
 class Scene;
 
 /// Per-entity view of a scene document (SceneSerializer::toJson): every entity record keyed by
-/// UUID with its sibling position added as "index", plus the scene-wide settings.
+/// UUID, where it sits in the hierarchy, and the scene-wide settings.
 struct SceneIndex {
-    std::unordered_map<std::string, nlohmann::json> entities;  // uuid -> record
-    std::vector<std::string> order;                            // depth-first: parents first
-    nlohmann::json environment;
+    std::unordered_map<std::string, nlohmann::json> entities;    // uuid -> record as serialized
+    std::unordered_map<std::string, std::string> parents;        // uuid -> parent uuid ("" = root)
+    std::unordered_map<std::string, std::vector<std::string>> children;  // parent ("" = root) -> ordered
+    std::vector<std::string> order;                               // depth-first: parents first
+    nlohmann::json environment = nlohmann::json::object();
     std::string name;
 
     [[nodiscard]] static SceneIndex fromDocument(const nlohmann::json& document);
     [[nodiscard]] static SceneIndex fromScene(const Scene& scene);
+    [[nodiscard]] std::size_t positionOf(const std::string& uuid) const;
 };
 
-/// The changes that turn one scene state into another: whole-entity upserts (records as
-/// SceneSerializer writes them, plus "index"), removals, and scene-wide settings.
+/// The changes that turn one scene state into another, as small as possible:
 ///
-/// Undo/redo applies patches instead of reloading whole snapshots, so only the entities an edit
-/// touched are restored and concurrent edits by collaborators survive. It is also the
-/// collaboration wire format; records from the network are validated like scene files.
+/// - removals;
+/// - full records ("full": true) for new entities: the complete entity with its parent and
+///   sibling "index";
+/// - partial records for changed entities, carrying only what changed: "name", "move"
+///   ({"parent", "index"}), changed component fields under "components", ids of components
+///   that were added (their fields are all listed) under "added", and of removed ones under
+///   "removed";
+/// - changed environment settings and the scene name.
+///
+/// Undo/redo applies these instead of whole snapshots, so only what an edit changed is reverted,
+/// and collaboration sends them over the wire: concurrent edits of different fields - even on
+/// the same entity - merge, and deleting a sibling never rewrites its neighbours. Edits of
+/// entities or components that no longer exist are ignored (a deletion wins over edits).
 struct ScenePatch {
     std::vector<nlohmann::json> upserts;  // parents before children, siblings in order
     std::vector<Uuid> removals;
-    std::optional<nlohmann::json> environment;
+    std::optional<nlohmann::json> environment;  // only the settings that changed
     std::optional<std::string> name;
 
     [[nodiscard]] bool empty() const noexcept;

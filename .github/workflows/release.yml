@@ -228,11 +228,53 @@ jobs:
             ldd dist/editor/bin/lumora-editor | grep -E "lumora|Qt6" || true
           fi
 
+      # Hub installers. Editors stay ZIP packages: the Hub installs and delta-updates them.
+      - name: AppImage (Linux)
+        if: runner.os == 'Linux'
+        env:
+          APPIMAGETOOL_SHA256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  # 1.9.1
+          RUNTIME_SHA256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d       # 20251108
+        run: |
+          tools="$RUNNER_TEMP/appimage" && mkdir -p "$tools"
+          curl -sSLf -o "$tools/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          curl -sSLf -o "$tools/runtime" \
+            https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          echo "$APPIMAGETOOL_SHA256  $tools/appimagetool" | sha256sum -c -
+          echo "$RUNTIME_SHA256  $tools/runtime" | sha256sum -c -
+          chmod +x "$tools/appimagetool"
+          v="${{ steps.version.outputs.version }}"
+          python scripts/release/appimage.py --install-dir dist/hub --version "$v" --out out \
+            --appimagetool "$tools/appimagetool" --runtime "$tools/runtime"
+          # The AppImage starts (CI has no FUSE, so it runs extracted).
+          APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=offscreen "out/lumora-hub-$v-linux-x64.AppImage" --version
+
+      - name: Installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          $numeric = ($v -split '-')[0] + ".0"
+          $nsis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
+          if (-not (Test-Path $nsis)) { choco install nsis -y --no-progress }
+          $setup = "$PWD\out\lumora-hub-$v-windows-x64-setup.exe"
+          & $nsis /V3 "/DVERSION=$v" "/DNUMERIC_VERSION=$numeric" "/DSOURCE_DIR=$PWD\dist\hub" "/DOUT_FILE=$setup" `
+            packaging\windows\hub-installer.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Silent install and uninstall into a scratch folder.
+          $dir = "$env:RUNNER_TEMP\hub-install"
+          Start-Process -Wait -FilePath $setup -ArgumentList "/S", "/D=$dir"
+          if (-not (Test-Path "$dir\bin\lumora-hub.exe")) { throw "the installer did not install bin\lumora-hub.exe" }
+          Start-Process -Wait -FilePath "$dir\Uninstall.exe" -ArgumentList "/S", "_?=$dir"
+          if (Test-Path "$dir\bin") { throw "the uninstaller left bin\ behind" }
+
       - uses: actions/upload-artifact@v4
         with:
           name: packages-${{ matrix.platform }}
           path: |
             out/*.zip
+            out/*.AppImage
+            out/*-setup.exe
             out/*.zip.json
             out/*.files.json
             out/blobs/
@@ -305,6 +347,18 @@ jobs:
             platform=$(basename "$zip" .zip | sed "s/^lumora-hub-$VERSION-//")
             aws s3 cp "$zip" "$BUCKET/hub/latest/lumora-hub-$platform.zip" $R2 --content-type application/zip \
               --cache-control "no-cache"
+          done
+          # Installers, with the same stable links for the download page.
+          shopt -s nullglob
+          for f in out/lumora-hub-*.AppImage out/lumora-hub-*-setup.exe; do
+            aws s3 cp "$f" "$BUCKET/hub/$VERSION/$(basename "$f")" $R2 --content-type application/octet-stream
+          done
+          for pair in "linux-x64.AppImage:lumora-hub-x86_64.AppImage" "windows-x64-setup.exe:lumora-hub-setup.exe"; do
+            f="out/lumora-hub-$VERSION-${pair%%:*}"
+            if [[ -e "$f" ]]; then
+              aws s3 cp "$f" "$BUCKET/hub/latest/${pair#*:}" $R2 --content-type application/octet-stream \
+                --cache-control "no-cache"
+            fi
           done
 
       - name: Update and sign the release feed

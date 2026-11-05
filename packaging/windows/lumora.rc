@@ -1,0 +1,2 @@
+// Icon of the Lumora executables on Windows (Explorer, taskbar, shortcuts).
+IDI_ICON1 ICON "../lumora-hub.ico"

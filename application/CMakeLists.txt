@@ -119,6 +119,9 @@ foreach(app IN ITEMS Lumora lumora-editor lumora-hub)
     if(NOT LUMORA_SHARED_MODULES)
         target_sources(${app} PRIVATE common/resources.qrc)  # a static library would drop them
     endif()
+    if(WIN32)
+        target_sources(${app} PRIVATE ${CMAKE_SOURCE_DIR}/packaging/windows/lumora.rc)
+    endif()
     set_target_properties(${app} PROPERTIES WIN32_EXECUTABLE $<CONFIG:Release> INSTALL_RPATH "$ORIGIN/../lib")
 endforeach()
 

@@ -147,7 +147,25 @@ install(TARGETS lumora-hub RUNTIME DESTINATION bin COMPONENT hub)
 foreach(app lumora-editor lumora-hub)
     string(REPLACE "lumora-" "" component ${app})
     target_link_libraries(${app} PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg)
-    if(WIN32)
+    if(WIN32 AND LUMORA_SHARED_MODULES)
+        # windeployqt decides what to deploy from the Qt imports of the first binary it is given.
+        # The thin launchers import only lumora_shell.dll (MSVC drops unused DLL imports), so it
+        # inspects the module DLLs instead: the shell first, then every other module.
+        set(deploy_libraries "")
+        foreach(module IN LISTS lumora_modules)
+            if(NOT module STREQUAL "lumora_shell")
+                string(APPEND deploy_libraries " \"$<TARGET_FILE:${module}>\"")
+            endif()
+        endforeach()
+        qt_generate_deploy_script(TARGET ${app} OUTPUT_SCRIPT deploy_script CONTENT "
+qt_deploy_runtime_dependencies(
+    EXECUTABLE \"$<TARGET_FILE:lumora_shell>\"
+    ADDITIONAL_LIBRARIES${deploy_libraries}
+    GENERATE_QT_CONF
+    NO_TRANSLATIONS)
+")
+        install(SCRIPT ${deploy_script} COMPONENT ${component})
+    elseif(WIN32)
         qt_generate_deploy_app_script(TARGET ${app} OUTPUT_SCRIPT deploy_script NO_TRANSLATIONS)
         install(SCRIPT ${deploy_script} COMPONENT ${component})
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")

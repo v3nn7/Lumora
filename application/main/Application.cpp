@@ -7,6 +7,7 @@
 #include "collab/CollabClient.hpp"
 #include "collab/CollabUi.hpp"
 #include "editor/EditorWindow.hpp"
+#include "launcher/EditorRegistry.hpp"
 #include "project/Project.hpp"
 #include "hub/HubWindow.hpp"
 #include "player/PlayerWindow.hpp"
@@ -15,6 +16,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QMessageBox>
+#include <QProcess>
 #include <QProgressDialog>
 #include <QStandardPaths>
 #include <QTimer>
@@ -68,7 +70,13 @@ void Application::showHub() {
         hub_->setAttribute(Qt::WA_DeleteOnClose);
         connect(hub_, &HubWindow::openProjectRequested, this, [this](const QString& path) {
             // Defer so the Hub's own signal handler finishes before it is closed.
-            QTimer::singleShot(0, this, [this, path] { openEditor(path); });
+            QTimer::singleShot(0, this, [this, path] {
+                if (externalEditors_) {
+                    launchExternalEditor(path);
+                } else {
+                    openEditor(path);
+                }
+            });
         });
         connect(hub_, &HubWindow::joinSessionRequested, this, [this] { QTimer::singleShot(0, this, [this] { joinSession(); }); });
     }
@@ -127,7 +135,69 @@ void Application::joinSession() {
     QWidget* parent = editor_ ? static_cast<QWidget*>(editor_.data()) : static_cast<QWidget*>(hub_.data());
     collab::JoinSessionDialog dialog(parent);
     if (dialog.exec() != QDialog::Accepted) return;
+    if (externalEditors_) {
+        // The Hub has no editor of its own: the newest installed one joins.
+        const auto editors = launcher::EditorRegistry().all();
+        if (editors.empty()) {
+            if (hub_) hub_->showEditorsPage(tr("Install an editor first - it is what joins the session."));
+            return;
+        }
+        QProcess process;
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert(QStringLiteral("LUMORA_SESSION_PASSWORD"), dialog.password());  // not on the command line
+        process.setProcessEnvironment(env);
+        process.setProgram(editors.front().executable);
+        process.setArguments({QStringLiteral("--join"), collab::formatAddress(dialog.address()), QStringLiteral("--user"),
+                              dialog.displayName()});
+        process.setWorkingDirectory(editors.front().directory);
+        if (!process.startDetached()) {
+            QMessageBox::warning(hub_, tr("Cannot Join Session"), tr("Lumora %1 could not be started.").arg(editors.front().version));
+        }
+        return;
+    }
     joinSessionAt(collab::formatAddress(dialog.address()), dialog.displayName(), dialog.password());
+}
+
+bool Application::launchExternalEditor(const QString& projectPath) {
+    auto project = Project::load(toPath(projectPath));
+    if (!project) {
+        QMessageBox::critical(hub_, tr("Cannot open project"), QString::fromStdString(project.error().message));
+        return false;
+    }
+    const QString wanted = QString::fromStdString(project->engineVersion());
+    const launcher::EditorRegistry registry;
+    std::optional<launcher::InstalledEditor> editor = registry.exactMatch(wanted);
+    if (!editor) {
+        const auto all = registry.all();
+        if (all.empty()) {
+            if (hub_) {
+                hub_->showEditorsPage(tr("'%1' needs Lumora %2. Install an editor to open it.")
+                                          .arg(QString::fromStdString(project->name()), wanted));
+            }
+            return false;
+        }
+        const auto choice = QMessageBox::question(
+            hub_, tr("Different Editor Version"),
+            tr("'%1' was saved with Lumora %2, which is not installed.\n\nOpen it with Lumora %3? Saving may upgrade "
+               "the project.")
+                .arg(QString::fromStdString(project->name()), wanted.isEmpty() ? tr("(unknown)") : wanted,
+                     all.front().version),
+            QMessageBox::Open | QMessageBox::Cancel);
+        if (choice != QMessageBox::Open) return false;
+        editor = all.front();
+    }
+    const QString descriptor = toQString(project->descriptorPath());
+    if (!QProcess::startDetached(editor->executable, launcher::EditorRegistry::openProjectArguments(descriptor),
+                                 editor->directory)) {
+        QMessageBox::critical(hub_, tr("Cannot open project"), tr("Lumora %1 could not be started (%2).")
+                                                                   .arg(editor->version, editor->executable));
+        return false;
+    }
+    log::info("App", "opened '{}' in Lumora {}", project->name(), editor->version.toStdString());
+    ctx_.recentProjects().touch(project->descriptorPath(), project->name());
+    ctx_.saveRecentProjects();
+    if (hub_) hub_->refresh();
+    return true;
 }
 
 void Application::joinSessionAt(const QString& addressText, const QString& name, const QString& password) {

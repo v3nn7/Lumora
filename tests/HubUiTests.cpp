@@ -1,6 +1,7 @@
 #include "TestUtils.hpp"
 
 #include "common/AppContext.hpp"
+#include "core/Version.hpp"
 #include "common/Preferences.hpp"
 #include "common/ProjectUi.hpp"
 #include "hub/HubSettingsPage.hpp"
@@ -92,3 +93,66 @@ TEST(HubWindowTest, DropAddsExistingProjectAndSelectsIt) {
     EXPECT_EQ(context.recentProjects().entries().size(), 1u);
     QSettings().clear();
 }
+
+#if !defined(Q_OS_WIN)
+#include "common/Snapshot.hpp"
+#include "launcher/EditorRegistry.hpp"
+#include "main/Application.hpp"
+
+#include <QElapsedTimer>
+#include <QFile>
+#include <QStandardPaths>
+#include <QThread>
+
+TEST(HubEditors, ProjectsOpenInTheMatchingInstalledEditor) {
+    // lumora-hub mode: opening a project starts the editor version it was made with, as a
+    // separate process. A tiny script stands in for an installed lumora-editor.
+    QSettings().clear();
+    test::TempDir dir;
+    const QString log = QString::fromStdString((dir.path() / "launched.txt").string());
+    const QString editor = QString::fromStdString((dir.path() / "lumora-editor").string());
+    {
+        QFile script(editor);
+        ASSERT_TRUE(script.open(QIODevice::WriteOnly));
+        script.write(QStringLiteral("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'Lumora Engine %1 (Release)'; exit 0; fi\n"
+                                    "printf '%s\\n' \"$@\" > '%2'\n")
+                         .arg(QString::fromLatin1(version::kString), log)
+                         .toUtf8());
+        script.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    }
+    launcher::EditorRegistry registry(QString::fromStdString((dir.path() / "installs").string()));
+    auto added = registry.addLocalBuild(editor);
+    ASSERT_TRUE(added.has_value()) << added.error().message;
+    EXPECT_EQ(added->version, QString::fromLatin1(version::kString));
+    ASSERT_EQ(registry.localBuilds().size(), 1u);
+
+    auto project = Project::create(dir.path() / "Game", "Game", ProjectTemplate::Empty);
+    ASSERT_TRUE(project.has_value()) << project.error().message;
+    AppContext context(AppOptions{});
+    Application application(context);
+    application.setExternalEditors(true);
+    ASSERT_TRUE(application.launchExternalEditor(toQString(project->descriptorPath())));
+
+    QElapsedTimer timer;
+    timer.start();
+    while (!QFile::exists(log) && timer.elapsed() < 5000) QThread::msleep(20);
+    QFile launched(log);
+    ASSERT_TRUE(launched.open(QIODevice::ReadOnly)) << "the editor process was not started";
+    const QStringList args = QString::fromUtf8(launched.readAll()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    EXPECT_EQ(args, (QStringList{QStringLiteral("--editor"), toQString(project->descriptorPath())}));
+    EXPECT_EQ(application.editor(), nullptr) << "the Hub does not open an editor in-process";
+
+    // The Hub's Editors page lists the build (snapshot for visual checks when requested).
+    HubWindow hub(context);
+    hub.resize(1240, 780);
+    hub.showEditorsPage(QStringLiteral("'Game' needs Lumora 9.9.9. Install an editor to open it."));
+    QApplication::processEvents();
+    if (const QString out = qEnvironmentVariable("LUMORA_TEST_SNAPSHOT_DIR"); !out.isEmpty()) {
+        snapshotWidget(&hub).save(out + QStringLiteral("/hub_editors.png"));
+    }
+
+    registry.removeLocalBuild(added->executable);
+    EXPECT_TRUE(registry.localBuilds().empty());
+    QSettings().clear();
+}
+#endif

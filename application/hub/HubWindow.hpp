@@ -11,6 +11,7 @@ class QStackedWidget;
 namespace lumora::app {
 
 class AppContext;
+class EditorsPage;
 class HeroBanner;
 class ProjectDetailsPanel;
 class ProjectListModel;
@@ -26,6 +27,8 @@ public:
     /// Adds an existing project (folder or .lumora file) to the recent list and selects it.
     /// Used for files dropped onto the Hub.
     bool addExistingProject(const QString& path);
+    /// Switches to the Editors page, optionally with a note (e.g. a project needs a version).
+    void showEditorsPage(const QString& message = {});
 
 signals:
     void openProjectRequested(const QString& descriptorPath);
@@ -63,6 +66,8 @@ private:
     QLabel* countLabel_ = nullptr;
     bool aboutFilled_ = false;
     bool heroRendered_ = false;
+    EditorsPage* editorsPage_ = nullptr;
+    QButtonGroup* nav_ = nullptr;
 };
 
 } // namespace lumora::app

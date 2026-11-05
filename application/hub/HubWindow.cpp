@@ -5,6 +5,7 @@
 #include "common/Theme.hpp"
 #include "core/Log.hpp"
 #include "core/Version.hpp"
+#include "hub/EditorsPage.hpp"
 #include "hub/HeroBanner.hpp"
 #include "hub/HubSettingsPage.hpp"
 #include "hub/NewProjectDialog.hpp"
@@ -90,6 +91,8 @@ HubWindow::HubWindow(AppContext& app, QWidget* parent) : QWidget(parent), app_(a
 
     pages_ = new QStackedWidget;
     pages_->addWidget(buildProjectsPage());
+    editorsPage_ = new EditorsPage;
+    pages_->addWidget(editorsPage_);
     auto* settings = new HubSettingsPage(app_);
     connect(settings, &HubSettingsPage::recentProjectsChanged, this, &HubWindow::refresh);
     pages_->addWidget(settings);
@@ -185,7 +188,8 @@ QWidget* HubWindow::buildSidebar() {
     layout->addSpacing(4);
 
     auto* group = new QButtonGroup(this);
-    const std::pair<const char*, const char*> navItems[] = {{"Projects", "folder"}, {"Settings", "settings"}, {"About", "info"}};
+    const std::pair<const char*, const char*> navItems[] = {
+        {"Projects", "folder"}, {"Editors", "cube"}, {"Settings", "settings"}, {"About", "info"}};
     int id = 0;
     for (const auto& [text, iconName] : navItems) {
         auto* button = new QPushButton(theme::icon(QString::fromLatin1(iconName)), tr(text));
@@ -196,9 +200,10 @@ QWidget* HubWindow::buildSidebar() {
         layout->addWidget(button);
     }
     group->button(0)->setChecked(true);
+    nav_ = group;
     connect(group, &QButtonGroup::idClicked, this, [this](int page) {
         pages_->setCurrentIndex(page);
-        if (page == 2) updateAbout();
+        if (page == 3) updateAbout();
     });
 
     layout->addStretch();
@@ -373,6 +378,14 @@ QWidget* HubWindow::buildAboutPage() {
     layout->addWidget(aboutGpus_);
     layout->addStretch();
     return page;
+}
+
+void HubWindow::showEditorsPage(const QString& message) {
+    show();
+    raise();
+    if (nav_ != nullptr) nav_->button(1)->setChecked(true);
+    pages_->setCurrentIndex(1);
+    if (!message.isEmpty()) editorsPage_->showMessage(message, true);
 }
 
 void HubWindow::updateAbout() {

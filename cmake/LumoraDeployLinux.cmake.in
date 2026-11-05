@@ -1,0 +1,65 @@
+# Bundles Qt into an installed Lumora package on Linux (run by `cmake --install`).
+#
+#   <prefix>/bin/@LUMORA_APP@, bin/qt.conf
+#   <prefix>/lib/liblumora.so, libQt6*.so*, libicu*.so* (only Qt and its ICU)
+#   <prefix>/plugins/<category>/*.so (platform integrations, image formats, TLS, ...)
+#
+# System libraries (glibc, libstdc++, X11/xcb, Wayland, the Vulkan loader, OpenSSL) are never
+# copied: they must match the user's system and drivers.
+
+set(prefix "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}")
+set(qt_plugins "@LUMORA_QT_PLUGIN_DIR@")
+set(qt_libs "@LUMORA_QT_LIB_DIR@")
+
+# Plugins the editor and Hub use, per category (anything else - e.g. a distribution's extra
+# image formats or the virtual keyboard, which drags in Qt Quick - stays out).
+set(wanted
+    "platforms=libq(xcb|wayland-egl|wayland-generic|offscreen)"
+    "wayland-shell-integration=libxdg-shell"
+    "wayland-decoration-client=lib(bradient|adwaita)"
+    "wayland-graphics-integration-client=libqt-plugin-wayland-egl"
+    "xcbglintegrations=libqxcb-(glx|egl)-integration"
+    "platforminputcontexts=lib(compose|ibus)platforminputcontextplugin"
+    "imageformats=libq(svg|jpeg|gif|ico)"
+    "iconengines=libqsvgicon"
+    "tls=libq(opensslbackend|certonlybackend)")
+set(plugins "")
+foreach(entry IN LISTS wanted)
+    string(REPLACE "=" ";" parts "${entry}")
+    list(GET parts 0 category)
+    list(GET parts 1 pattern)
+    file(GLOB found "${qt_plugins}/${category}/*.so")
+    foreach(plugin IN LISTS found)
+        get_filename_component(name "${plugin}" NAME)
+        if(NOT name MATCHES "^(${pattern})\\.so$")
+            continue()
+        endif()
+        file(INSTALL "${plugin}" DESTINATION "${prefix}/plugins/${category}")
+        list(APPEND plugins "${prefix}/plugins/${category}/${name}")
+    endforeach()
+endforeach()
+
+file(GET_RUNTIME_DEPENDENCIES
+    EXECUTABLES "${prefix}/bin/@LUMORA_APP@"
+    LIBRARIES "${prefix}/lib/liblumora.so"
+    MODULES ${plugins}
+    DIRECTORIES "${prefix}/lib" "${qt_libs}"
+    RESOLVED_DEPENDENCIES_VAR resolved
+    UNRESOLVED_DEPENDENCIES_VAR unresolved
+    POST_INCLUDE_REGEXES "/libQt6[^/]*$" "/libicu[^/]*$"
+    POST_EXCLUDE_REGEXES ".*")
+foreach(library IN LISTS resolved)
+    if(library MATCHES "/liblumora\\.so$")
+        continue()
+    endif()
+    file(INSTALL "${library}" DESTINATION "${prefix}/lib" FOLLOW_SYMLINK_CHAIN)
+endforeach()
+foreach(missing IN LISTS unresolved)
+    if(missing MATCHES "^libQt6|^libicu")
+        message(FATAL_ERROR "Qt library ${missing} needed by the package was not found")
+    endif()
+endforeach()
+
+file(WRITE "${prefix}/bin/qt.conf" "[Paths]\nPrefix = ..\nLibraries = lib\nPlugins = plugins\n")
+list(LENGTH plugins plugin_count)
+message(STATUS "Bundled Qt for @LUMORA_APP@: ${plugin_count} plugins")

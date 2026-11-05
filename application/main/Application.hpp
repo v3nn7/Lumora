@@ -27,6 +27,12 @@ public:
     ~Application() override;
 
     void showHub();
+    /// Hub-only builds (lumora-hub): projects and sessions open in installed editor versions
+    /// (separate processes) instead of in this process.
+    void setExternalEditors(bool external) noexcept { externalEditors_ = external; }
+    /// Starts the installed editor matching the project's engine version (asking before using
+    /// another version); false if none could be started.
+    bool launchExternalEditor(const QString& projectPath);
     /// Validates and opens a project in the editor; on failure the Hub is shown with the error.
     bool openEditor(const QString& projectPath);
     bool runPlayer(const QString& projectPath);
@@ -49,6 +55,7 @@ private:
     QPointer<editor::EditorWindow> editor_;
     std::unique_ptr<PlayerWindow> player_;
     std::vector<QPointer<QWidget>> retired_;  // closed windows awaiting deferred deletion
+    bool externalEditors_ = false;
 };
 
 } // namespace lumora::app

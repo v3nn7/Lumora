@@ -47,13 +47,14 @@ add_subdirectory(launcher)
 lumora_qt_module(hub
     SOURCES
         hub/HubWindow.cpp
+        hub/EditorsPage.cpp
         hub/HeroBanner.cpp
         hub/HubSettingsPage.cpp
         hub/ProjectDetailsPanel.cpp
         hub/NewProjectDialog.cpp
         hub/ProjectListModel.cpp
         hub/ProjectCardDelegate.cpp
-    DEPS lumora_appcommon)
+    DEPS lumora_appcommon lumora_launcher)
 
 lumora_qt_module(editor
     SOURCES
@@ -82,9 +83,65 @@ lumora_qt_module(shell
         main/Headless.cpp
     DEPS lumora_hub lumora_editor lumora_player)
 
-add_executable(Lumora main/main.cpp)
-target_link_libraries(Lumora PRIVATE lumora_shell lumora_compile_options)
-add_dependencies(Lumora lumora_shaders)
-set_target_properties(Lumora PROPERTIES WIN32_EXECUTABLE $<CONFIG:Release>)
-# Icons are compiled into the executable (not a static library) so their registration is never dropped.
-target_sources(Lumora PRIVATE common/resources.qrc)
+# All of Lumora in one shared library; the executables below are thin launchers around it, so
+# packages ship it as liblumora.so / lumora.dll next to Qt's libraries. Only runLumora() is
+# exported; symbols of the static engine libraries stay internal.
+add_library(lumora SHARED main/Launch.cpp common/resources.qrc)  # icons registered when it loads
+target_link_libraries(lumora PRIVATE lumora_shell lumora_compile_options)
+target_compile_definitions(lumora PRIVATE LUMORA_BUILDING_LIBRARY)
+set_target_properties(lumora PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    INSTALL_RPATH "$ORIGIN")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(lumora PRIVATE "LINKER:--exclude-libs,ALL" "LINKER:--as-needed" "LINKER:--no-undefined")
+endif()
+add_dependencies(lumora lumora_shaders)
+
+# Lumora: development build (Hub + editor in one process). lumora-editor: one installable editor
+# version. lumora-hub: the Hub, which installs editors and opens projects in them.
+foreach(app IN ITEMS Lumora lumora-editor lumora-hub)
+    if(app STREQUAL "Lumora")
+        set(entry main/main.cpp)
+    elseif(app STREQUAL "lumora-editor")
+        set(entry main/EditorMain.cpp)
+    else()
+        set(entry main/HubMain.cpp)
+    endif()
+    qt_add_executable(${app} ${entry})  # Qt records the plugins its deployment must copy
+    target_include_directories(${app} PRIVATE ${CMAKE_SOURCE_DIR}/application)
+    target_link_libraries(${app} PRIVATE lumora lumora_compile_options)
+    set_target_properties(${app} PROPERTIES WIN32_EXECUTABLE $<CONFIG:Release> INSTALL_RPATH "$ORIGIN/../lib")
+endforeach()
+
+# ---- Packages: cmake --install <build> --component editor|hub --prefix <dir> -------------------
+#   bin/lumora-editor (or lumora-hub), bin/shaders/*.spv, lib/liblumora.so + Qt libraries and
+#   plugins on Linux; everything in bin/ on Windows (DLLs next to the executable).
+foreach(component editor hub)
+    install(TARGETS lumora
+        RUNTIME DESTINATION bin COMPONENT ${component}
+        LIBRARY DESTINATION lib COMPONENT ${component})
+    install(DIRECTORY ${LUMORA_SHADER_OUTPUT_DIR}/ DESTINATION bin/shaders COMPONENT ${component}
+        FILES_MATCHING PATTERN "*.spv")
+endforeach()
+install(TARGETS lumora-editor RUNTIME DESTINATION bin COMPONENT editor)
+install(TARGETS lumora-hub RUNTIME DESTINATION bin COMPONENT hub)
+# Qt's libraries and plugins (platform integrations, image formats, TLS for downloads, ...) go
+# into the package. On Linux a deterministic script bundles only Qt and its ICU, never system
+# libraries (libstdc++, xcb, Wayland, the Vulkan loader). Windows uses windeployqt through Qt's
+# deployment API; the executables link the Qt modules so it knows which plugins they need.
+foreach(app lumora-editor lumora-hub)
+    string(REPLACE "lumora-" "" component ${app})
+    target_link_libraries(${app} PRIVATE Qt6::Widgets Qt6::Network Qt6::Svg)
+    if(WIN32)
+        qt_generate_deploy_app_script(TARGET ${app} OUTPUT_SCRIPT deploy_script NO_TRANSLATIONS)
+        install(SCRIPT ${deploy_script} COMPONENT ${component})
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(LUMORA_APP ${app})
+        set(LUMORA_QT_PLUGIN_DIR "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_PLUGINS}")
+        set(LUMORA_QT_LIB_DIR "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_LIBS}")
+        configure_file(${CMAKE_SOURCE_DIR}/cmake/LumoraDeployLinux.cmake.in
+                       ${CMAKE_BINARY_DIR}/deploy/${app}.cmake @ONLY)
+        install(SCRIPT ${CMAKE_BINARY_DIR}/deploy/${app}.cmake COMPONENT ${component})
+    endif()
+endforeach()

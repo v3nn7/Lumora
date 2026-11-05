@@ -1,0 +1,43 @@
+#pragma once
+
+#include "common/VulkanViewport.hpp"
+#include "scene/Camera.hpp"
+
+#include <functional>
+
+namespace lumora::editor {
+
+class EditorContext;
+
+/// Editor behaviour for the 3D viewport: fly camera, click selection, play-mode camera and
+/// forwarding of editor shortcuts that arrive while the native viewport has focus.
+class EditorViewportClient final : public app::ViewportClient {
+public:
+    explicit EditorViewportClient(EditorContext& ctx);
+
+    std::function<void(float)> onSimulate;                          // advances play mode
+    std::function<bool(int, Qt::KeyboardModifiers)> onShortcut;      // window-level shortcuts
+
+    [[nodiscard]] FlyCameraController& camera() noexcept { return camera_; }
+    void frameEntity(entt::entity e);
+    void frameSelection();
+
+    bool showGrid = true;
+    bool pilotSceneCamera = true;  // in play mode, look through the scene's primary camera
+
+    void viewportTick(float dt, const InputState& input, bool hasFocus) override;
+    [[nodiscard]] const Scene* viewportScene() const override;
+    [[nodiscard]] CameraView viewportCamera(float aspect) const override;
+    [[nodiscard]] render::RenderSettings viewportSettings() const override;
+    void viewportClicked(glm::vec2 ndc) override;
+    bool viewportKeyPressed(int key, Qt::KeyboardModifiers modifiers) override;
+
+private:
+    [[nodiscard]] bool viewingThroughSceneCamera() const;
+
+    EditorContext& ctx_;
+    FlyCameraController camera_;
+    mutable float lastAspect_ = 16.0f / 9.0f;
+};
+
+} // namespace lumora::editor

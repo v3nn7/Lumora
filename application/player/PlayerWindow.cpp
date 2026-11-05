@@ -1,0 +1,76 @@
+#include "player/PlayerWindow.hpp"
+
+#include "common/AppContext.hpp"
+#include "common/Theme.hpp"
+#include "core/Log.hpp"
+#include "runtime/Simulation.hpp"
+#include "scene/Scene.hpp"
+
+#include <QEvent>
+#include <QMessageBox>
+
+namespace lumora::app {
+
+PlayerWindow::PlayerWindow(AppContext& app, Project project, std::unique_ptr<Scene> scene)
+    : app_(app), project_(std::move(project)), scene_(std::move(scene)) {
+    scene_->updateWorldTransforms();
+    simulation_ = std::make_unique<Simulation>(*scene_);
+    const CameraView initial = sceneCameraView(*scene_, 16.0f / 9.0f);
+    freeCamera_.setPosition(initial.position);
+    freeCam_ = scene_->primaryCamera() == entt::null;
+
+    window_ = std::make_unique<VulkanViewport>(app_, *this);
+    window_->setTitle(QStringLiteral("%1 — Lumora Player").arg(QString::fromStdString(project_.name())));
+    window_->setIcon(theme::icon(QStringLiteral("logo")));
+    window_->resize(1280, 720);
+    window_->installEventFilter(this);
+    connect(window_.get(), &VulkanViewport::renderFailed, this, [this](const QString& message) {
+        QMessageBox::critical(nullptr, tr("Lumora Player"), message);
+        window_->close();
+    });
+}
+
+PlayerWindow::~PlayerWindow() { window_.reset(); }
+
+void PlayerWindow::show() {
+    window_->show();
+    log::info("Player", "running '{}' ({} entities)", project_.name(), scene_->entityCount());
+}
+
+bool PlayerWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == window_.get() && event->type() == QEvent::Close) {
+        emit closed();
+    }
+    return QObject::eventFilter(watched, event);
+}
+
+void PlayerWindow::viewportTick(float dt, const InputState& input, bool) {
+    simulation_->advance(dt);
+    if (freeCam_) freeCamera_.update(input, dt);
+}
+
+const Scene* PlayerWindow::viewportScene() const { return scene_.get(); }
+
+CameraView PlayerWindow::viewportCamera(float aspect) const {
+    return freeCam_ ? freeCamera_.view(aspect) : sceneCameraView(*scene_, aspect);
+}
+
+render::RenderSettings PlayerWindow::viewportSettings() const { return {}; }
+
+bool PlayerWindow::viewportKeyPressed(int key, Qt::KeyboardModifiers) {
+    switch (key) {
+        case Qt::Key_Escape:
+            window_->close();
+            return true;
+        case Qt::Key_F11:
+            window_->setWindowStates(window_->windowStates() ^ Qt::WindowFullScreen);
+            return true;
+        case Qt::Key_F8:
+            freeCam_ = !freeCam_ || scene_->primaryCamera() == entt::null;
+            return true;
+        default:
+            return false;
+    }
+}
+
+} // namespace lumora::app

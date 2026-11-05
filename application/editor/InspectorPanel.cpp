@@ -1,0 +1,240 @@
+#include "editor/InspectorPanel.hpp"
+
+#include "common/Theme.hpp"
+#include "editor/EditorContext.hpp"
+#include "editor/EntityFactory.hpp"
+#include "scene/ComponentRegistry.hpp"
+#include "scene/Scene.hpp"
+
+#include <QFormLayout>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QLineEdit>
+#include <QMenu>
+#include <QPushButton>
+#include <QScrollArea>
+#include <QTimer>
+#include <QVBoxLayout>
+
+namespace lumora::editor {
+
+namespace {
+
+QFormLayout* makeForm(QWidget* body) {
+    auto* form = new QFormLayout(body);
+    form->setContentsMargins(8, 8, 4, 4);
+    form->setHorizontalSpacing(10);
+    form->setVerticalSpacing(6);
+    form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    return form;
+}
+
+QLabel* fieldLabel(const QString& text) {
+    auto* label = new QLabel(text);
+    label->setProperty("muted", true);
+    label->setMinimumWidth(92);
+    return label;
+}
+
+} // namespace
+
+InspectorPanel::InspectorPanel(EditorContext& ctx, QWidget* parent) : QWidget(parent), ctx_(ctx) {
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    scroll_ = new QScrollArea;
+    scroll_->setWidgetResizable(true);
+    scroll_->setFrameShape(QFrame::NoFrame);
+    scroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    layout->addWidget(scroll_);
+
+    refreshTimer_ = new QTimer(this);
+    refreshTimer_->setInterval(100);  // live values while simulating
+    connect(refreshTimer_, &QTimer::timeout, this, &InspectorPanel::refreshValues);
+    refreshTimer_->start();
+
+    connect(&ctx_, &EditorContext::selectionChanged, this, &InspectorPanel::rebuild);
+    connect(&ctx_, &EditorContext::sceneReplaced, this, &InspectorPanel::rebuild);
+    connect(&ctx_, &EditorContext::structureChanged, this, [this] {
+        // Component add/remove or deletion: rebuild; renames only need a value refresh.
+        rebuild();
+    });
+    connect(&ctx_, &EditorContext::valuesChanged, this, [this](QObject* source) {
+        if (source != this) refreshValues();
+    });
+    rebuild();
+}
+
+void InspectorPanel::clearContent() {
+    refreshers_.clear();
+    nameEdit_ = nullptr;
+    content_ = new QWidget;
+    contentLayout_ = new QVBoxLayout(content_);
+    contentLayout_->setContentsMargins(8, 8, 8, 8);
+    contentLayout_->setSpacing(6);
+    scroll_->setWidget(content_);  // deletes the previous content widget
+}
+
+void InspectorPanel::rebuild() {
+    clearContent();
+    if (ctx_.scene() == nullptr) {
+        auto* label = new QLabel(tr("No scene loaded"));
+        label->setProperty("muted", true);
+        contentLayout_->addWidget(label);
+    } else if (ctx_.selectedEntity() == entt::null) {
+        buildEnvironment();
+    } else {
+        buildEntity();
+    }
+    contentLayout_->addStretch();
+}
+
+void InspectorPanel::buildEntity() {
+    Scene& scene = *ctx_.scene();
+    const entt::entity e = ctx_.selectedEntity();
+    const Uuid id = scene.uuidOf(e);
+
+    // Header: icon, editable name, UUID.
+    auto* header = new QWidget;
+    auto* headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(2, 2, 2, 6);
+    auto* icon = new QLabel;
+    icon->setPixmap(entityIcon(scene, e).pixmap(22, 22));
+    nameEdit_ = new QLineEdit(QString::fromStdString(scene.nameOf(e)));
+    nameEdit_->setStyleSheet(QStringLiteral("font-weight: 600; font-size: 11pt;"));
+    headerLayout->addWidget(icon);
+    headerLayout->addWidget(nameEdit_, 1);
+    contentLayout_->addWidget(header);
+    auto* uuid = new QLabel(QStringLiteral("UUID  %1").arg(QString::fromStdString(id.toString())));
+    uuid->setProperty("muted", true);
+    uuid->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    uuid->setStyleSheet(QStringLiteral("font-family: monospace; font-size: 8pt; padding-left: 4px;"));
+    contentLayout_->addWidget(uuid);
+    connect(nameEdit_, &QLineEdit::editingFinished, this, [this, id] {
+        if (nameEdit_ != nullptr) ctx_.renameEntity(id, nameEdit_->text());
+    });
+
+    const ComponentRegistry& registry = ComponentRegistry::builtin();
+    for (const ComponentDesc& desc : registry.components()) {
+        if (!desc.has(scene.registry(), e)) continue;
+        auto* section = new Section(QString::fromStdString(desc.label), desc.removable);
+        auto* form = makeForm(section->body());
+        for (const FieldDesc& field : desc.fields) {
+            // Getter/setter resolve the entity by UUID each time: the panel may outlive the handle.
+            FieldGetter get = [this, id, &field] {
+                Scene* s = ctx_.scene();
+                const entt::entity ent = s ? s->findByUuid(id) : entt::entity{entt::null};
+                if (ent == entt::null) {
+                    switch (field.kind) {
+                        case FieldKind::Bool: return FieldValue(false);
+                        case FieldKind::Int:
+                        case FieldKind::Enum: return FieldValue(0);
+                        case FieldKind::Float: return FieldValue(0.0f);
+                        case FieldKind::Vec3:
+                        case FieldKind::Color: return FieldValue(glm::vec3(0.0f));
+                        case FieldKind::String: return FieldValue(std::string{});
+                    }
+                }
+                return field.get(s->registry(), ent);
+            };
+            FieldSetter set = [this, id, &field](const FieldValue& v) {
+                Scene* s = ctx_.scene();
+                const entt::entity ent = s ? s->findByUuid(id) : entt::entity{entt::null};
+                if (ent == entt::null) return;
+                field.set(s->registry(), ent, v);
+                ctx_.notifyValuesChanged(this);
+            };
+            form->addRow(fieldLabel(QString::fromStdString(field.label)),
+                         createFieldEditor(field, std::move(get), std::move(set), refreshers_));
+        }
+        connect(section, &Section::removeRequested, this, [this, id, &desc] {
+            Scene* s = ctx_.scene();
+            const entt::entity ent = s ? s->findByUuid(id) : entt::entity{entt::null};
+            if (ent == entt::null) return;
+            desc.remove(s->registry(), ent);
+            ctx_.notifyStructureChanged();
+        });
+        contentLayout_->addWidget(section);
+    }
+
+    // Add Component
+    auto* add = new QPushButton(app::theme::icon(QStringLiteral("plus")), tr("Add Component"));
+    auto* menu = new QMenu(add);
+    for (const ComponentDesc& desc : registry.components()) {
+        if (!desc.userAddable || desc.has(scene.registry(), e)) continue;
+        menu->addAction(QString::fromStdString(desc.label), this, [this, id, &desc] {
+            Scene* s = ctx_.scene();
+            const entt::entity ent = s ? s->findByUuid(id) : entt::entity{entt::null};
+            if (ent == entt::null) return;
+            desc.add(s->registry(), ent);
+            ctx_.notifyStructureChanged();
+        });
+    }
+    add->setMenu(menu);
+    add->setEnabled(!menu->isEmpty());
+    contentLayout_->addSpacing(6);
+    contentLayout_->addWidget(add);
+}
+
+void InspectorPanel::buildEnvironment() {
+    auto* title = new QLabel(tr("Scene Environment"));
+    title->setStyleSheet(QStringLiteral("font-weight: 600; font-size: 11pt; padding: 2px 2px 6px 2px;"));
+    contentLayout_->addWidget(title);
+    auto* hint = new QLabel(tr("Nothing selected. These settings apply to the whole scene."));
+    hint->setProperty("muted", true);
+    hint->setWordWrap(true);
+    contentLayout_->addWidget(hint);
+
+    auto* section = new Section(tr("Sky and Ambient"), false);
+    auto* form = makeForm(section->body());
+    struct EnvField {
+        const char* label;
+        FieldKind kind;
+        float min, max, step;
+        std::function<FieldValue(const EnvironmentSettings&)> get;
+        std::function<void(EnvironmentSettings&, const FieldValue&)> set;
+    };
+    const EnvField fields[] = {
+        {"Zenith", FieldKind::Color, 0, 1, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.skyZenithColor); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.skyZenithColor = std::get<glm::vec3>(v); }},
+        {"Horizon", FieldKind::Color, 0, 1, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.skyHorizonColor); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.skyHorizonColor = std::get<glm::vec3>(v); }},
+        {"Ground", FieldKind::Color, 0, 1, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.groundColor); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.groundColor = std::get<glm::vec3>(v); }},
+        {"Ambient", FieldKind::Float, 0, 10, 0.05f, [](const EnvironmentSettings& e) { return FieldValue(e.ambientIntensity); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.ambientIntensity = std::get<float>(v); }},
+        {"Exposure", FieldKind::Float, 0.01f, 16, 0.05f, [](const EnvironmentSettings& e) { return FieldValue(e.exposure); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.exposure = std::get<float>(v); }},
+    };
+    for (const EnvField& f : fields) {
+        FieldDesc desc;
+        desc.kind = f.kind;
+        desc.min = f.min;
+        desc.max = f.max;
+        desc.step = f.step;
+        FieldGetter get = [this, getter = f.get] {
+            return ctx_.scene() ? getter(ctx_.scene()->environment()) : FieldValue(0.0f);
+        };
+        FieldSetter set = [this, setter = f.set](const FieldValue& v) {
+            if (!ctx_.scene()) return;
+            setter(ctx_.scene()->environment(), v);
+            ctx_.notifyValuesChanged(this);
+        };
+        form->addRow(fieldLabel(tr(f.label)), createFieldEditor(desc, std::move(get), std::move(set), refreshers_));
+    }
+    contentLayout_->addWidget(section);
+}
+
+void InspectorPanel::refreshValues() {
+    if (!isVisible()) return;
+    if (nameEdit_ != nullptr && !nameEdit_->hasFocus() && ctx_.scene() != nullptr) {
+        const entt::entity e = ctx_.selectedEntity();
+        if (e != entt::null) {
+            const QString name = QString::fromStdString(ctx_.scene()->nameOf(e));
+            if (nameEdit_->text() != name) nameEdit_->setText(name);
+        }
+    }
+    for (const Refresher& r : refreshers_) r();
+}
+
+} // namespace lumora::editor

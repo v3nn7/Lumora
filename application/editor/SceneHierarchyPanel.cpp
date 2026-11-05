@@ -1,0 +1,185 @@
+#include "editor/SceneHierarchyPanel.hpp"
+
+#include "common/Theme.hpp"
+#include "editor/EditorContext.hpp"
+#include "editor/EntityFactory.hpp"
+#include "scene/Scene.hpp"
+
+#include <QDropEvent>
+#include <QHeaderView>
+#include <QLineEdit>
+#include <QMenu>
+#include <QToolButton>
+#include <QVBoxLayout>
+
+#include <functional>
+
+namespace lumora::editor {
+
+namespace {
+constexpr int kUuidRole = Qt::UserRole + 1;
+
+Uuid itemUuid(const QTreeWidgetItem* item) {
+    return item ? Uuid(item->data(0, kUuidRole).toULongLong()) : Uuid{};
+}
+} // namespace
+
+void HierarchyTree::dropEvent(QDropEvent* event) {
+    QTreeWidgetItem* dragged = currentItem();
+    if (dragged == nullptr) {
+        event->ignore();
+        return;
+    }
+    QTreeWidgetItem* target = itemAt(event->position().toPoint());
+    Uuid parent;
+    int index = -1;
+    switch (dropIndicatorPosition()) {
+        case QAbstractItemView::OnItem:
+            parent = itemUuid(target);
+            break;
+        case QAbstractItemView::AboveItem:
+        case QAbstractItemView::BelowItem: {
+            QTreeWidgetItem* p = target->parent();
+            parent = itemUuid(p);
+            index = p ? p->indexOfChild(target) : indexOfTopLevelItem(target);
+            if (dropIndicatorPosition() == QAbstractItemView::BelowItem) ++index;
+            break;
+        }
+        case QAbstractItemView::OnViewport:
+            break;
+    }
+    // We apply the move to the scene ourselves; stop Qt from rearranging items.
+    event->setDropAction(Qt::IgnoreAction);
+    event->accept();
+    emit reparentRequested(itemUuid(dragged), parent, index);
+}
+
+SceneHierarchyPanel::SceneHierarchyPanel(EditorContext& ctx, QWidget* parent) : QWidget(parent), ctx_(ctx) {
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setSpacing(6);
+
+    auto* top = new QHBoxLayout;
+    filter_ = new QLineEdit;
+    filter_->setPlaceholderText(tr("Search entities"));
+    filter_->addAction(app::theme::icon(QStringLiteral("search")), QLineEdit::LeadingPosition);
+    filter_->setClearButtonEnabled(true);
+    auto* add = new QToolButton;
+    add->setIcon(app::theme::icon(QStringLiteral("plus")));
+    add->setToolTip(tr("Create entity"));
+    add->setPopupMode(QToolButton::InstantPopup);
+    auto* addMenu = new QMenu(add);
+    populateCreateMenu(*addMenu, ctx_, false);
+    add->setMenu(addMenu);
+    top->addWidget(filter_, 1);
+    top->addWidget(add);
+    layout->addLayout(top);
+
+    tree_ = new HierarchyTree;
+    tree_->setHeaderHidden(true);
+    tree_->setColumnCount(1);
+    tree_->setIndentation(14);
+    tree_->setIconSize(QSize(15, 15));
+    tree_->setSelectionMode(QAbstractItemView::SingleSelection);
+    tree_->setDragDropMode(QAbstractItemView::InternalMove);
+    tree_->setDefaultDropAction(Qt::MoveAction);
+    tree_->setEditTriggers(QAbstractItemView::EditKeyPressed | QAbstractItemView::SelectedClicked);
+    tree_->setContextMenuPolicy(Qt::CustomContextMenu);
+    tree_->setUniformRowHeights(true);
+    layout->addWidget(tree_, 1);
+
+    connect(filter_, &QLineEdit::textChanged, this, &SceneHierarchyPanel::applyFilter);
+    connect(tree_, &QTreeWidget::itemSelectionChanged, this, [this] {
+        if (rebuilding_) return;
+        const auto items = tree_->selectedItems();
+        ctx_.select(items.isEmpty() ? Uuid{} : itemUuid(items.front()));
+    });
+    connect(tree_, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* item, int) {
+        if (!rebuilding_) ctx_.renameEntity(itemUuid(item), item->text(0));
+    });
+    connect(tree_, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem* item) {
+        if (!rebuilding_) collapsed_.insert(itemUuid(item));
+    });
+    connect(tree_, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* item) {
+        if (!rebuilding_) collapsed_.erase(itemUuid(item));
+    });
+    connect(tree_, &HierarchyTree::reparentRequested, this,
+            [this](Uuid child, Uuid parentId, int index) { ctx_.reparent(child, parentId, index); });
+    connect(tree_, &QTreeWidget::customContextMenuRequested, this, &SceneHierarchyPanel::showContextMenu);
+
+    connect(&ctx_, &EditorContext::sceneReplaced, this, &SceneHierarchyPanel::rebuild);
+    connect(&ctx_, &EditorContext::structureChanged, this, &SceneHierarchyPanel::rebuild);
+    connect(&ctx_, &EditorContext::selectionChanged, this, &SceneHierarchyPanel::syncSelection);
+    rebuild();
+}
+
+void SceneHierarchyPanel::rebuild() {
+    rebuilding_ = true;
+    tree_->clear();
+    if (Scene* scene = ctx_.scene()) {
+        std::function<void(entt::entity, QTreeWidgetItem*)> add = [&](entt::entity e, QTreeWidgetItem* parentItem) {
+            auto* item = parentItem ? new QTreeWidgetItem(parentItem) : new QTreeWidgetItem(tree_);
+            item->setText(0, QString::fromStdString(scene->nameOf(e)));
+            item->setIcon(0, entityIcon(*scene, e));
+            item->setData(0, kUuidRole, QVariant::fromValue<qulonglong>(scene->uuidOf(e).value()));
+            item->setFlags(item->flags() | Qt::ItemIsEditable | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled);
+            for (entt::entity child : scene->childrenOf(e)) add(child, item);
+            item->setExpanded(!collapsed_.contains(scene->uuidOf(e)));
+        };
+        for (entt::entity root : scene->roots()) add(root, nullptr);
+    }
+    rebuilding_ = false;
+    applyFilter();
+    syncSelection();
+}
+
+void SceneHierarchyPanel::syncSelection() {
+    rebuilding_ = true;
+    tree_->clearSelection();
+    const Uuid selected = ctx_.selectedUuid();
+    if (selected.isValid()) {
+        for (QTreeWidgetItemIterator it(tree_); *it; ++it) {
+            if (itemUuid(*it) == selected) {
+                (*it)->setSelected(true);
+                tree_->setCurrentItem(*it);
+                tree_->scrollToItem(*it);
+                break;
+            }
+        }
+    }
+    rebuilding_ = false;
+}
+
+void SceneHierarchyPanel::applyFilter() {
+    const QString needle = filter_->text().trimmed();
+    // An item is visible if it or any descendant matches.
+    std::function<bool(QTreeWidgetItem*)> visit = [&](QTreeWidgetItem* item) {
+        bool anyChild = false;
+        for (int i = 0; i < item->childCount(); ++i) anyChild |= visit(item->child(i));
+        const bool match = needle.isEmpty() || item->text(0).contains(needle, Qt::CaseInsensitive);
+        item->setHidden(!(match || anyChild));
+        if (!needle.isEmpty() && anyChild) item->setExpanded(true);
+        return match || anyChild;
+    };
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) visit(tree_->topLevelItem(i));
+}
+
+void SceneHierarchyPanel::showContextMenu(const QPoint& pos) {
+    QTreeWidgetItem* item = tree_->itemAt(pos);
+    if (item != nullptr) ctx_.select(itemUuid(item));
+    QMenu menu(this);
+    QMenu* create = menu.addMenu(app::theme::icon(QStringLiteral("plus")), item ? tr("Create Child") : tr("Create"));
+    populateCreateMenu(*create, ctx_, item != nullptr);
+    if (item != nullptr) {
+        menu.addSeparator();
+        menu.addAction(tr("Rename"), [this, item] { tree_->editItem(item); });
+        menu.addAction(tr("Duplicate"), QKeySequence(Qt::CTRL | Qt::Key_D), [this] { ctx_.duplicateSelected(); });
+        menu.addAction(tr("Unparent"), [this, item] { ctx_.reparent(itemUuid(item), Uuid{}, -1); });
+        menu.addSeparator();
+        menu.addAction(app::theme::icon(QStringLiteral("trash")), tr("Delete"), QKeySequence::Delete,
+                       [this] { ctx_.deleteSelected(); });
+    }
+    menu.exec(tree_->viewport()->mapToGlobal(pos));
+}
+
+} // namespace lumora::editor

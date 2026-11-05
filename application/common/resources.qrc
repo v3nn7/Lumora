@@ -1,0 +1,35 @@
+<RCC>
+  <qresource prefix="/icons">
+    <file alias="back.svg">icons/back.svg</file>
+    <file alias="camera.svg">icons/camera.svg</file>
+    <file alias="chart.svg">icons/chart.svg</file>
+    <file alias="close.svg">icons/close.svg</file>
+    <file alias="console.svg">icons/console.svg</file>
+    <file alias="cube.svg">icons/cube.svg</file>
+    <file alias="cylinder.svg">icons/cylinder.svg</file>
+    <file alias="entity.svg">icons/entity.svg</file>
+    <file alias="error.svg">icons/error.svg</file>
+    <file alias="file.svg">icons/file.svg</file>
+    <file alias="folder.svg">icons/folder.svg</file>
+    <file alias="grid.svg">icons/grid.svg</file>
+    <file alias="hierarchy.svg">icons/hierarchy.svg</file>
+    <file alias="info.svg">icons/info.svg</file>
+    <file alias="light.svg">icons/light.svg</file>
+    <file alias="logo.svg">icons/logo.svg</file>
+    <file alias="more.svg">icons/more.svg</file>
+    <file alias="open.svg">icons/open.svg</file>
+    <file alias="pause.svg">icons/pause.svg</file>
+    <file alias="plane.svg">icons/plane.svg</file>
+    <file alias="play.svg">icons/play.svg</file>
+    <file alias="plus.svg">icons/plus.svg</file>
+    <file alias="save.svg">icons/save.svg</file>
+    <file alias="scene.svg">icons/scene.svg</file>
+    <file alias="search.svg">icons/search.svg</file>
+    <file alias="settings.svg">icons/settings.svg</file>
+    <file alias="sphere.svg">icons/sphere.svg</file>
+    <file alias="stop.svg">icons/stop.svg</file>
+    <file alias="sun.svg">icons/sun.svg</file>
+    <file alias="trash.svg">icons/trash.svg</file>
+    <file alias="warning.svg">icons/warning.svg</file>
+  </qresource>
+</RCC>

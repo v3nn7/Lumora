@@ -38,6 +38,7 @@ struct AppOptions {
     std::uint32_t renderHeight = 720;
     bool validateProject = false;
     double simulateSeconds = 0.0;
+    std::vector<std::string> importFiles;  // --import <model> (repeatable): copy + add to default scene
 };
 
 [[nodiscard]] Result<AppOptions> parseCommandLine(const std::vector<std::string>& args);

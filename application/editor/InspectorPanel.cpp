@@ -50,7 +50,8 @@ QLabel* fieldLabel(const QString& text) {
 
 } // namespace
 
-InspectorPanel::InspectorPanel(EditorContext& ctx, QWidget* parent) : QWidget(parent), ctx_(ctx) {
+InspectorPanel::InspectorPanel(EditorContext& ctx, AssetPicker pickAsset, QWidget* parent)
+    : QWidget(parent), ctx_(ctx), pickAsset_(std::move(pickAsset)) {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     scroll_ = new QScrollArea;
@@ -143,14 +144,15 @@ void InspectorPanel::buildEntity() {
                         case FieldKind::Float: return FieldValue(0.0f);
                         case FieldKind::Vec3:
                         case FieldKind::Color: return FieldValue(glm::vec3(0.0f));
-                        case FieldKind::String: return FieldValue(std::string{});
+                        case FieldKind::String:
+                        case FieldKind::Asset: return FieldValue(std::string{});
                     }
                 }
                 return field.get(s->registry(), ent);
             };
             FieldSetter set = [this, id, &desc, &field](const FieldValue& v) { ctx_.setField(id, desc, field, v); };
             form->addRow(fieldLabel(QString::fromStdString(field.label)),
-                         createFieldEditor(field, std::move(get), std::move(set), refreshers_));
+                         createFieldEditor(field, std::move(get), std::move(set), refreshers_, pickAsset_));
         }
         connect(section, &Section::removeRequested, this, [this, id, &desc] { ctx_.removeComponent(id, desc); });
         contentLayout_->addWidget(section);

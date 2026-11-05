@@ -52,6 +52,7 @@ ComponentRegistry makeBuiltin() {
         d.fields = {
             enumerated(R::field(&MeshRendererComponent::mesh, "mesh", "Mesh", FieldKind::Enum),
                        {"Cube", "Sphere", "Plane", "Cylinder"}),
+            R::field(&MeshRendererComponent::meshAsset, "meshAsset", "Mesh Asset", FieldKind::Asset),
             R::field(&MeshRendererComponent::baseColor, "baseColor", "Base Color", FieldKind::Color),
             ranged(R::field(&MeshRendererComponent::metallic, "metallic", "Metallic", FieldKind::Float), 0.0f, 1.0f, 0.01f),
             ranged(R::field(&MeshRendererComponent::roughness, "roughness", "Roughness", FieldKind::Float), 0.02f, 1.0f, 0.01f),

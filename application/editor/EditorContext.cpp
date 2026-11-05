@@ -157,6 +157,15 @@ void EditorContext::addComponent(Uuid id, const ComponentDesc& component) {
     emit structureChanged();
 }
 
+void EditorContext::edit(const QString& text, const std::function<void(Scene&)>& change) {
+    if (scene_ == nullptr) return;
+    structuralEdit(text, [&] {
+        change(*scene_);
+        scene_->updateWorldTransforms();
+    });
+    emit structureChanged();
+}
+
 void EditorContext::removeComponent(Uuid id, const ComponentDesc& component) {
     const entt::entity e = scene_ ? scene_->findByUuid(id) : entt::entity{entt::null};
     if (e == entt::null || !component.has(scene_->registry(), e) || !component.removable) return;

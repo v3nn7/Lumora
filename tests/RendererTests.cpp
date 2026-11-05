@@ -131,3 +131,38 @@ TEST_F(RendererTest, CaptureRejectsInvalidSize) {
     Scene scene;
     EXPECT_FALSE(renderer_->capture(scene, FlyCameraController{}.view(1.0f), {0, 10}, {}).has_value());
 }
+
+#include "GltfTestUtils.hpp"
+#include "TestUtils.hpp"
+#include "assets/AssetLibrary.hpp"
+#include "scene/ModelInstance.hpp"
+
+TEST_F(RendererTest, RendersImportedGltfModel) {
+    test::TempDir project;
+    std::filesystem::create_directories(project.path() / "Content" / "Models");
+    test::writeCubeGltf(project.path() / "Content" / "Models" / "cube.gltf", false);
+    AssetLibrary assets(project.path());
+    auto model = assets.model(project.path() / "Content" / "Models" / "cube.gltf");
+    ASSERT_TRUE(model.has_value()) << model.error().message;
+
+    auto scene = sceneWithSun();
+    const entt::entity root = instantiateModel(*scene, **model, "Content/Models/cube.gltf", "Model");
+    scene->registry().get<TransformComponent>(root).position = {0.0f, -1.0f, 0.0f};  // node lifts it by 1
+    scene->updateWorldTransforms();
+
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.0f, 4.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    RenderSettings settings;
+    settings.assets = &assets;
+    auto image = renderer_->capture(*scene, cam.view(1.0f), {96, 96}, settings);
+    ASSERT_TRUE(image.has_value()) << image.error().message;
+    const auto center = pixel(*image, 48, 48);
+    EXPECT_GT(center.r, 60);
+    EXPECT_GT(center.r, center.g + 30) << "imported red material";
+    EXPECT_EQ(renderer_->stats().scene.visibleObjects, 1u);
+
+    // Without an asset library the reference cannot be resolved and nothing is drawn.
+    ASSERT_TRUE(renderer_->capture(*scene, cam.view(1.0f), {32, 32}, {}).has_value());
+    EXPECT_EQ(renderer_->stats().scene.visibleObjects, 0u);
+}

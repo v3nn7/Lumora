@@ -47,6 +47,8 @@ public:
     /// Moves `child` under `parent` (null = root) at sibling position `index`.
     bool reparent(Uuid child, Uuid parent, int index);
     void addComponent(Uuid id, const ComponentDesc& component);
+    /// Arbitrary structural change recorded as one undo step (e.g. instantiating a model).
+    void edit(const QString& text, const std::function<void(Scene&)>& change);
     void removeComponent(Uuid id, const ComponentDesc& component);
 
     // ---- Value edits (mergeable commands) ---------------------------------------------------

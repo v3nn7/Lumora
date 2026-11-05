@@ -18,6 +18,8 @@
 #include "renderer/RenderContext.hpp"
 #include "renderer/Renderer.hpp"
 #include "runtime/Simulation.hpp"
+#include "assets/AssetImport.hpp"
+#include "scene/ModelInstance.hpp"
 #include "scene/SceneSerializer.hpp"
 
 #include <QActionGroup>
@@ -29,6 +31,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QImage>
+#include <QInputDialog>
 #include <QLabel>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -93,7 +96,9 @@ QDockWidget* makeDock(QMainWindow* window, const QString& title, const QString& 
 } // namespace
 
 EditorWindow::EditorWindow(app::AppContext& app, Project project, QWidget* parent)
-    : QMainWindow(parent), app_(app), project_(std::move(project)), client_(std::make_unique<EditorViewportClient>(ctx_)) {
+    : QMainWindow(parent), app_(app), project_(std::move(project)), assets_(project_.rootDir()),
+      client_(std::make_unique<EditorViewportClient>(ctx_)) {
+    client_->assets = &assets_;
     setWindowIcon(app::theme::icon(QStringLiteral("logo")));
     setDockOptions(QMainWindow::AllowTabbedDocks | QMainWindow::AllowNestedDocks | QMainWindow::AnimatedDocks);
     setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
@@ -148,6 +153,8 @@ void EditorWindow::buildActions() {
     saveScene_ = make(tr("Save Scene"), QStringLiteral("save"), QKeySequence::Save);
     saveScene_->setShortcutContext(Qt::ApplicationShortcut);
     saveSceneAs_ = make(tr("Save Scene As…"), QString(), QKeySequence::SaveAs);
+    importModel_ = make(tr("Import Model…"), QStringLiteral("cube"), QKeySequence(Qt::CTRL | Qt::Key_I));
+    connect(importModel_, &QAction::triggered, this, &EditorWindow::importModelDialog);
     projectSettings_ = make(tr("Project Settings…"), QStringLiteral("settings"));
     closeProject_ = make(tr("Close Project"), QStringLiteral("back"));
     exit_ = make(tr("Exit"), QString(), QKeySequence::Quit);
@@ -259,7 +266,7 @@ void EditorWindow::onRenderFailed(const QString& message) {
 
 void EditorWindow::buildDocks() {
     auto* hierarchy = makeDock(this, tr("Hierarchy"), QStringLiteral("dock.hierarchy"), QStringLiteral("hierarchy"), new SceneHierarchyPanel(ctx_));
-    auto* inspector = makeDock(this, tr("Inspector"), QStringLiteral("dock.inspector"), QStringLiteral("settings"), new InspectorPanel(ctx_));
+    auto* inspector = makeDock(this, tr("Inspector"), QStringLiteral("dock.inspector"), QStringLiteral("settings"), new InspectorPanel(ctx_, [this](QWidget* parent, const FieldDesc&) { return pickMeshAsset(parent); }));
     auto* content = new ContentBrowserPanel(app::toQString(project_.contentDir()));
     auto* contentDock = makeDock(this, tr("Content Browser"), QStringLiteral("dock.content"), QStringLiteral("folder"), content);
     auto* console = makeDock(this, tr("Console"), QStringLiteral("dock.console"), QStringLiteral("console"), new ConsolePanel(app_.logBridge()));
@@ -282,6 +289,8 @@ void EditorWindow::buildDocks() {
     resizeDocks({contentDock}, {230}, Qt::Vertical);
 
     connect(content, &ContentBrowserPanel::openSceneRequested, this, [this](const QString& path) { openScene(path); });
+    connect(content, &ContentBrowserPanel::addModelRequested, this, [this](const QString& path) { addModelToScene(path); });
+    connect(content, &ContentBrowserPanel::importRequested, this, &EditorWindow::importModels);
     connect(viewport_, &app::VulkanViewport::frameRendered, this,
             [this] { profiler_->onFrame(viewport_->frameIntervalMs()); });
 }
@@ -289,6 +298,8 @@ void EditorWindow::buildDocks() {
 void EditorWindow::buildMenus() {
     QMenu* file = menuBar()->addMenu(tr("&File"));
     file->addActions({newScene_, openScene_, saveScene_, saveSceneAs_});
+    file->addSeparator();
+    file->addAction(importModel_);
     file->addSeparator();
     file->addAction(projectSettings_);
     file->addSeparator();
@@ -481,6 +492,90 @@ void EditorWindow::newScene() {
     updateTitle();
 }
 
+void EditorWindow::importModelDialog() {
+    const QStringList files = QFileDialog::getOpenFileNames(this, tr("Import Model"), QString(),
+                                                            tr("glTF 2.0 models (*.glb *.gltf)"));
+    if (!files.isEmpty()) importModels(files, app::toQString(project_.contentDir() / "Models"));
+}
+
+void EditorWindow::importModels(const QStringList& files, const QString& targetDir) {
+    for (const QString& file : files) {
+        auto imported = importModelFile(app::toPath(file), app::toPath(targetDir));
+        if (!imported) {
+            QMessageBox::critical(this, tr("Import failed"), QString::fromStdString(imported.error().message));
+            continue;
+        }
+        log::info("Editor", "imported {} -> {}", file.toStdString(), imported->string());
+        addModelToScene(app::toQString(*imported));
+    }
+}
+
+entt::entity EditorWindow::addModelToScene(const QString& absolutePath) {
+    const std::filesystem::path path = app::toPath(absolutePath);
+    const std::string relative = project_.relativePath(path);
+    if (relative.empty() || relative.starts_with("..")) {
+        QMessageBox::warning(this, tr("Add model"), tr("Only models inside the project can be placed. Use Import Model."));
+        return entt::null;
+    }
+    auto model = assets_.model(std::filesystem::absolute(path));
+    if (!model) {
+        QMessageBox::critical(this, tr("Cannot load model"), QString::fromStdString(model.error().message));
+        return entt::null;
+    }
+    // Drop it where the camera looks: on the ground plane if the view ray hits it nearby.
+    const FlyCameraController& cam = client_->camera();
+    glm::vec3 spot = cam.position() + cam.forward() * 5.0f;
+    if (cam.forward().y < -0.05f) {
+        const float t = -cam.position().y / cam.forward().y;
+        if (t > 0.0f && t < 60.0f) spot = cam.position() + cam.forward() * t;
+    }
+    entt::entity root = entt::null;
+    const std::string name = path.stem().string();
+    ctx_.edit(tr("Add %1").arg(QString::fromStdString(name)), [&](Scene& scene) {
+        root = instantiateModel(scene, **model, relative, name);
+        scene.registry().get<TransformComponent>(root).position = spot;
+    });
+    if (root != entt::null) {
+        ctx_.select(editScene_->uuidOf(root));
+        statusBar()->showMessage(tr("Added %1 (%2 meshes)").arg(QString::fromStdString(name)).arg((*model)->meshes.size()), 4000);
+    }
+    return root;
+}
+
+std::optional<std::string> EditorWindow::pickMeshAsset(QWidget* parent) {
+    QString file = QFileDialog::getOpenFileName(parent, tr("Choose Mesh"), app::toQString(project_.contentDir()),
+                                                tr("glTF 2.0 models (*.glb *.gltf)"));
+    if (file.isEmpty()) return std::nullopt;
+    std::filesystem::path path = std::filesystem::absolute(app::toPath(file));
+    std::string relative = project_.relativePath(path);
+    if (relative.starts_with("..")) {
+        // Outside the project: bring it in first so the reference stays portable.
+        auto imported = importModelFile(path, project_.contentDir() / "Models");
+        if (!imported) {
+            QMessageBox::critical(parent, tr("Import failed"), QString::fromStdString(imported.error().message));
+            return std::nullopt;
+        }
+        path = *imported;
+        relative = project_.relativePath(path);
+    }
+    auto model = assets_.model(path);
+    if (!model || (*model)->meshes.empty()) {
+        QMessageBox::critical(parent, tr("Cannot use model"),
+                              model ? tr("The file contains no meshes.") : QString::fromStdString(model.error().message));
+        return std::nullopt;
+    }
+    int index = 0;
+    if ((*model)->meshes.size() > 1) {
+        QStringList names;
+        for (const ImportedMesh& m : (*model)->meshes) names << QString::fromStdString(m.name);
+        bool ok = false;
+        const QString chosen = QInputDialog::getItem(parent, tr("Choose Mesh"), tr("Mesh"), names, 0, false, &ok);
+        if (!ok) return std::nullopt;
+        index = static_cast<int>(names.indexOf(chosen));
+    }
+    return AssetLibrary::meshKey(relative, index);
+}
+
 void EditorWindow::openSceneDialog() {
     const QString path = QFileDialog::getOpenFileName(this, tr("Open Scene"), app::toQString(project_.scenesDir()),
                                                       tr("Lumora scene (*.lscene)"));
@@ -528,7 +623,9 @@ void EditorWindow::saveThumbnail() {
     if (renderer == nullptr || !editScene_) return;
     try {
         editScene_->updateWorldTransforms();
-        auto image = renderer->capture(*editScene_, client_->camera().view(16.0f / 9.0f), {640, 360}, {});
+        render::RenderSettings settings;
+        settings.assets = &assets_;
+        auto image = renderer->capture(*editScene_, client_->camera().view(16.0f / 9.0f), {640, 360}, settings);
         if (!image) {
             log::warn("Editor", "thumbnail capture failed: {}", image.error().message);
             return;

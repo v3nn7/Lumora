@@ -52,6 +52,7 @@ std::optional<FieldValue> fieldFromJson(FieldKind kind, const json& j) {
             if (auto v = vec3FromJson(j)) return FieldValue(*v);
             break;
         case FieldKind::String:
+        case FieldKind::Asset:
             if (j.is_string()) return FieldValue(j.get<std::string>());
             break;
     }

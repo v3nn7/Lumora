@@ -3,6 +3,9 @@
 #include "common/Theme.hpp"
 
 #include <QDesktopServices>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
 #include <QDir>
 #include <QFileIconProvider>
 #include <QFileSystemModel>
@@ -19,11 +22,20 @@
 namespace lumora::editor {
 
 namespace {
+bool isModel(const QFileInfo& info) {
+    return info.suffix().compare(QLatin1String("glb"), Qt::CaseInsensitive) == 0 ||
+           info.suffix().compare(QLatin1String("gltf"), Qt::CaseInsensitive) == 0;
+}
+
 class AssetIconProvider final : public QFileIconProvider {
 public:
     QIcon icon(const QFileInfo& info) const override {
         if (info.isDir()) return app::theme::icon(QStringLiteral("folder"));
         if (info.suffix() == QLatin1String("lscene")) return app::theme::icon(QStringLiteral("scene"));
+        if (info.suffix().compare(QLatin1String("glb"), Qt::CaseInsensitive) == 0 ||
+            info.suffix().compare(QLatin1String("gltf"), Qt::CaseInsensitive) == 0) {
+            return app::theme::icon(QStringLiteral("cube"));
+        }
         return app::theme::icon(QStringLiteral("file"));
     }
     using QFileIconProvider::icon;
@@ -78,6 +90,8 @@ ContentBrowserPanel::ContentBrowserPanel(const QString& contentRoot, QWidget* pa
             navigate(info.absoluteFilePath());
         } else if (info.suffix() == QLatin1String("lscene")) {
             emit openSceneRequested(info.absoluteFilePath());
+        } else if (isModel(info)) {
+            emit addModelRequested(info.absoluteFilePath());
         } else {
             QDesktopServices::openUrl(QUrl::fromLocalFile(info.absoluteFilePath()));
         }
@@ -93,6 +107,10 @@ ContentBrowserPanel::ContentBrowserPanel(const QString& contentRoot, QWidget* pa
     });
     connect(reveal, &QToolButton::clicked, this, [this] { QDesktopServices::openUrl(QUrl::fromLocalFile(current_)); });
     connect(view_, &QListView::customContextMenuRequested, this, &ContentBrowserPanel::showContextMenu);
+    // Accept external model files dropped from the desktop / file manager.
+    view_->setAcceptDrops(true);
+    view_->viewport()->setAcceptDrops(true);
+    view_->viewport()->installEventFilter(this);
     navigate(root_);
 }
 
@@ -106,6 +124,28 @@ void ContentBrowserPanel::navigate(const QString& dir) {
     up_->setEnabled(current_ != root_);
 }
 
+bool ContentBrowserPanel::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == view_->viewport()) {
+        if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove) {
+            auto* drag = static_cast<QDropEvent*>(event);
+            if (drag->mimeData()->hasUrls()) {
+                drag->acceptProposedAction();
+                return true;
+            }
+        } else if (event->type() == QEvent::Drop) {
+            auto* drop = static_cast<QDropEvent*>(event);
+            QStringList files;
+            for (const QUrl& url : drop->mimeData()->urls()) {
+                if (url.isLocalFile() && isModel(QFileInfo(url.toLocalFile()))) files << url.toLocalFile();
+            }
+            if (!files.isEmpty()) emit importRequested(files, current_);
+            drop->acceptProposedAction();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
 void ContentBrowserPanel::showContextMenu(const QPoint& pos) {
     const QModelIndex index = view_->indexAt(pos);
     QMenu menu(this);
@@ -114,6 +154,10 @@ void ContentBrowserPanel::showContextMenu(const QPoint& pos) {
         if (info.suffix() == QLatin1String("lscene")) {
             menu.addAction(app::theme::icon(QStringLiteral("scene")), tr("Open Scene"),
                            [this, info] { emit openSceneRequested(info.absoluteFilePath()); });
+        }
+        if (isModel(info)) {
+            menu.addAction(app::theme::icon(QStringLiteral("cube")), tr("Add to Scene"),
+                           [this, info] { emit addModelRequested(info.absoluteFilePath()); });
         }
         menu.addAction(tr("Rename"), [this, index] { view_->edit(index); });
     }

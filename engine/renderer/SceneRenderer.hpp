@@ -4,12 +4,14 @@
 #include "renderer/RenderGraph.hpp"
 #include "renderer/vulkan/Resources.hpp"
 #include "scene/Camera.hpp"
+#include "scene/Components.hpp"
 
 #include <entt/entity/entity.hpp>
 
 #include <unordered_map>
 
 namespace lumora {
+class AssetLibrary;
 class Scene;
 }
 
@@ -29,6 +31,7 @@ struct RenderSettings {
     std::uint32_t shadowResolution = 2048;
     entt::entity selected = entt::null;
     const OverlayGeometry* overlay = nullptr;  // drawn on top after tone mapping (gizmos)
+    AssetLibrary* assets = nullptr;            // resolves MeshRenderer::meshAsset; null = primitives only
 };
 
 struct SceneDrawStats {
@@ -67,6 +70,7 @@ public:
 
 private:
     void ensureObjectCapacity(FrameResources& frame, std::uint32_t count);
+    [[nodiscard]] const struct GpuMesh* meshFor(const MeshRendererComponent& mesh, AssetLibrary* assets);
     VkPipeline tonemapPipeline(VkFormat outputFormat);
     VkPipeline overlayPipeline(VkFormat outputFormat);
 

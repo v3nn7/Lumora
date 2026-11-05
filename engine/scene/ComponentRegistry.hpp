@@ -17,7 +17,8 @@ namespace lumora {
 /// the editor inspector and "Add Component" menus.
 using FieldValue = std::variant<bool, int, float, glm::vec3, std::string>;
 
-enum class FieldKind { Bool, Int, Float, Vec3, Color, String, Enum };
+/// Asset: a string holding a project-relative asset reference (edited with an asset picker).
+enum class FieldKind { Bool, Int, Float, Vec3, Color, String, Enum, Asset };
 
 struct FieldDesc {
     std::string id;     // stable serialization key

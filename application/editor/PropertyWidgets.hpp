@@ -8,6 +8,8 @@
 #include <QWidget>
 
 #include <functional>
+#include <optional>
+#include <string>
 #include <vector>
 
 class QToolButton;
@@ -69,10 +71,12 @@ private:
 using FieldGetter = std::function<FieldValue()>;
 using FieldSetter = std::function<void(const FieldValue&)>;
 using Refresher = std::function<void()>;
+/// Opens an asset chooser for a field; returns the chosen reference or nothing if cancelled.
+using AssetPicker = std::function<std::optional<std::string>(QWidget* parent, const FieldDesc& field)>;
 
 /// Builds an editor widget for a reflected field. `refreshers` receives a callback that
 /// re-reads the value (skipped while the user is editing that widget).
 [[nodiscard]] QWidget* createFieldEditor(const FieldDesc& desc, FieldGetter get, FieldSetter set,
-                                         std::vector<Refresher>& refreshers);
+                                         std::vector<Refresher>& refreshers, const AssetPicker& pickAsset = {});
 
 } // namespace lumora::editor

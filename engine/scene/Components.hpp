@@ -47,6 +47,8 @@ enum class SurfacePattern : std::int32_t { None = 0, Grid = 1, Checker = 2 };
 
 struct MeshRendererComponent {
     MeshPrimitive mesh = MeshPrimitive::Cube;
+    /// Imported mesh ("Content/Models/X.glb#0"); overrides `mesh` when set.
+    std::string meshAsset;
     glm::vec3 baseColor{0.8f};
     float metallic = 0.0f;
     float roughness = 0.5f;

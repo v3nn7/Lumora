@@ -7,6 +7,10 @@
 
 #include <functional>
 
+namespace lumora {
+class AssetLibrary;
+}
+
 namespace lumora::editor {
 
 class EditorContext;
@@ -26,6 +30,7 @@ public:
     void frameSelection();
 
     bool showGrid = true;
+    AssetLibrary* assets = nullptr;  // project asset library (meshes for rendering and picking)
     bool pilotSceneCamera = true;  // in play mode, look through the scene's primary camera
 
     void viewportTick(float dt, const InputState& input, bool hasFocus) override;

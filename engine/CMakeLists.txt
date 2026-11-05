@@ -26,8 +26,13 @@ lumora_engine_module(input
     DEPS lumora_core glm::glm)
 
 lumora_engine_module(assets
-    SOURCES assets/Primitives.cpp
-    DEPS lumora_core glm::glm)
+    SOURCES
+        assets/Primitives.cpp
+        assets/GltfImporter.cpp
+        assets/CgltfImpl.cpp
+        assets/AssetLibrary.cpp
+        assets/AssetImport.cpp
+    DEPS lumora_core glm::glm cgltf)
 
 lumora_engine_module(scene
     SOURCES
@@ -37,6 +42,7 @@ lumora_engine_module(scene
         scene/SceneSerializer.cpp
         scene/Camera.cpp
         scene/Picking.cpp
+        scene/ModelInstance.cpp
     DEPS lumora_core lumora_assets lumora_input EnTT::EnTT glm::glm nlohmann_json::nlohmann_json)
 
 lumora_engine_module(project

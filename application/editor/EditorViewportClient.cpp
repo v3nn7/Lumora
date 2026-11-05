@@ -79,6 +79,7 @@ render::RenderSettings EditorViewportClient::viewportSettings() const {
     s.showGrid = showGrid && !viewingThroughSceneCamera();
     s.selected = ctx_.isPlaying() ? entt::entity{entt::null} : ctx_.selectedEntity();
     s.overlay = overlay_.empty() ? nullptr : &overlay_;
+    s.assets = assets;
     return s;
 }
 
@@ -86,7 +87,7 @@ void EditorViewportClient::viewportClicked(glm::vec2 ndc) {
     const Scene* scene = ctx_.scene();
     if (scene == nullptr) return;
     const Ray ray = rayFromNdc(viewportCamera(lastAspect_), ndc);
-    const entt::entity hit = pickEntity(*scene, ray);
+    const entt::entity hit = pickEntity(*scene, ray, assets);
     ctx_.select(hit == entt::null ? Uuid{} : scene->uuidOf(hit));
 }
 

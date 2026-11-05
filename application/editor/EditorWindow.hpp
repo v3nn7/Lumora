@@ -1,11 +1,14 @@
 #pragma once
 
 #include "editor/EditorContext.hpp"
+#include "assets/AssetLibrary.hpp"
 #include "project/Project.hpp"
 
 #include <QMainWindow>
 
 #include <memory>
+#include <optional>
+#include <string>
 
 class QAction;
 class QLabel;
@@ -46,6 +49,11 @@ public:
     [[nodiscard]] EditorContext& context() noexcept { return ctx_; }
     [[nodiscard]] Scene* editScene() const noexcept { return editScene_.get(); }
     [[nodiscard]] const QString& scenePath() const noexcept { return scenePath_; }
+    [[nodiscard]] AssetLibrary& assets() noexcept { return assets_; }
+    /// Instantiates a model that lives inside the project into the scene (one undo step).
+    entt::entity addModelToScene(const QString& absolutePath);
+    /// Copies external model files into the project and adds them to the scene.
+    void importModels(const QStringList& files, const QString& targetDir);
 
 signals:
     void closeProjectRequested();
@@ -66,6 +74,8 @@ private:
 
     void newScene();
     void openSceneDialog();
+    void importModelDialog();
+    [[nodiscard]] std::optional<std::string> pickMeshAsset(QWidget* parent);
     bool saveSceneAs();
     bool maybeSave();
     void saveThumbnail();
@@ -79,6 +89,7 @@ private:
 
     app::AppContext& app_;
     Project project_;
+    AssetLibrary assets_;  // project assets (imported models); referenced by the viewport client
     std::unique_ptr<Scene> editScene_;
     std::unique_ptr<Scene> playScene_;
     std::unique_ptr<Simulation> simulation_;
@@ -98,6 +109,7 @@ private:
     QAction* openScene_ = nullptr;
     QAction* saveScene_ = nullptr;
     QAction* saveSceneAs_ = nullptr;
+    QAction* importModel_ = nullptr;
     QAction* projectSettings_ = nullptr;
     QAction* closeProject_ = nullptr;
     QAction* exit_ = nullptr;

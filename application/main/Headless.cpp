@@ -1,5 +1,8 @@
 #include "main/Headless.hpp"
 
+#include "assets/AssetImport.hpp"
+#include "assets/AssetLibrary.hpp"
+#include "scene/ModelInstance.hpp"
 #include "core/Log.hpp"
 #include "core/Timer.hpp"
 #include "core/Version.hpp"
@@ -71,7 +74,10 @@ int renderProject(const AppOptions& o, const Project& project, Scene& scene) {
         render::Renderer renderer(context);
         const float aspect = static_cast<float>(o.renderWidth) / static_cast<float>(o.renderHeight);
         Stopwatch timer;
-        auto image = renderer.capture(scene, sceneCameraView(scene, aspect), {o.renderWidth, o.renderHeight}, {});
+        AssetLibrary assets(project.rootDir());
+        render::RenderSettings settings;
+        settings.assets = &assets;
+        auto image = renderer.capture(scene, sceneCameraView(scene, aspect), {o.renderWidth, o.renderHeight}, settings);
         if (!image) {
             log::error("Headless", "render failed: {}", image.error().message);
             return 1;
@@ -113,6 +119,29 @@ int runHeadless(const AppOptions& o) {
     if (!scene) {
         log::error("Headless", "{}", scene.error().message);
         return 1;
+    }
+    if (!o.importFiles.empty()) {
+        AssetLibrary assets(project->rootDir());
+        float offset = 0.0f;
+        for (const std::string& file : o.importFiles) {
+            auto copied = importModelFile(file, project->contentDir() / "Models");
+            if (!copied) {
+                log::error("Headless", "{}", copied.error().message);
+                return 1;
+            }
+            auto model = assets.model(*copied);
+            if (!model) return 1;
+            const std::string relative = project->relativePath(*copied);
+            const entt::entity root = instantiateModel(**scene, **model, relative, copied->stem().string());
+            (*scene)->registry().get<TransformComponent>(root).position.x = offset;
+            offset += 2.5f;
+            out("Imported '{}' -> {} ({} meshes, {} nodes)\n", file, relative, (*model)->meshes.size(),
+                (*model)->nodes.size());
+        }
+        if (auto saved = SceneSerializer::save(**scene, project->defaultScenePath()); !saved) {
+            log::error("Headless", "{}", saved.error().message);
+            return 1;
+        }
     }
     if (o.validateProject) {
         out("Project '{}' OK: scene '{}', {} entities\n", project->name(), (*scene)->name(), (*scene)->entityCount());

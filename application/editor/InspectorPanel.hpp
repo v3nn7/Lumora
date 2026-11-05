@@ -21,7 +21,7 @@ class EditorContext;
 class InspectorPanel final : public QWidget {
     Q_OBJECT
 public:
-    explicit InspectorPanel(EditorContext& ctx, QWidget* parent = nullptr);
+    explicit InspectorPanel(EditorContext& ctx, AssetPicker pickAsset = {}, QWidget* parent = nullptr);
 
 private:
     void rebuild();
@@ -37,6 +37,7 @@ private:
     QLineEdit* nameEdit_ = nullptr;
     QTimer* refreshTimer_ = nullptr;
     std::vector<Refresher> refreshers_;
+    AssetPicker pickAsset_;
 };
 
 } // namespace lumora::editor

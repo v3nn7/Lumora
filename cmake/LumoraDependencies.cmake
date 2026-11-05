@@ -30,13 +30,21 @@ FetchContent_Declare(nlohmann_json
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     SYSTEM)
 
+# cgltf: single-header glTF 2.0 loader (no CMake project; exposed as an INTERFACE target).
+FetchContent_Declare(cgltf
+    URL https://github.com/jkuhlmann/cgltf/archive/refs/tags/v1.15.tar.gz
+    URL_HASH SHA256=84e352092e5cd6aab7f66de62ddb66beb5e6f18d412ca9d12950d7a55bfef25a
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+
 set(GLM_BUILD_TESTS OFF CACHE INTERNAL "")
 set(GLM_BUILD_LIBRARY OFF CACHE INTERNAL "")
 set(JSON_BuildTests OFF CACHE INTERNAL "")
 set(JSON_Install OFF CACHE INTERNAL "")
 set(VMA_ENABLE_INSTALL OFF CACHE INTERNAL "")
 
-FetchContent_MakeAvailable(glm EnTT VulkanMemoryAllocator nlohmann_json)
+FetchContent_MakeAvailable(glm EnTT VulkanMemoryAllocator nlohmann_json cgltf)
+add_library(cgltf INTERFACE)
+target_include_directories(cgltf SYSTEM INTERFACE ${cgltf_SOURCE_DIR})
 
 if(LUMORA_BUILD_TESTS)
     FetchContent_Declare(googletest

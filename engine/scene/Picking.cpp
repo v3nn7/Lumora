@@ -1,5 +1,6 @@
 #include "scene/Picking.hpp"
 
+#include "assets/AssetLibrary.hpp"
 #include "scene/Scene.hpp"
 
 #include <glm/geometric.hpp>
@@ -54,7 +55,7 @@ std::optional<float> intersectRayAabb(const Ray& ray, const Aabb& box) {
     return tMin;
 }
 
-entt::entity pickEntity(const Scene& scene, const Ray& ray) {
+entt::entity pickEntity(const Scene& scene, const Ray& ray, AssetLibrary* assets) {
     entt::entity best = entt::null;
     float bestDistance = std::numeric_limits<float>::max();
     const auto& reg = scene.registry();
@@ -66,6 +67,11 @@ entt::entity pickEntity(const Scene& scene, const Ray& ray) {
         if (scale < 1e-12f) continue;
         local.direction /= scale;
         Aabb box = primitiveBounds()[static_cast<std::size_t>(mesh.mesh)];
+        if (!mesh.meshAsset.empty()) {
+            auto asset = assets != nullptr ? assets->mesh(mesh.meshAsset) : Result<const ImportedMesh*>(makeError("no assets"));
+            if (!asset) continue;
+            box = (*asset)->data.bounds;
+        }
         // Give flat meshes a little thickness so planes remain clickable edge-on.
         box.min -= glm::vec3(1e-3f);
         box.max += glm::vec3(1e-3f);

@@ -17,6 +17,13 @@ public:
 
 signals:
     void openSceneRequested(const QString& path);
+    /// A model inside the project should be placed in the scene.
+    void addModelRequested(const QString& path);
+    /// External model files were dropped onto the browser (to be imported into `targetDir`).
+    void importRequested(const QStringList& files, const QString& targetDir);
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void navigate(const QString& dir);

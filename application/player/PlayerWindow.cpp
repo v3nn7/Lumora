@@ -12,7 +12,7 @@
 namespace lumora::app {
 
 PlayerWindow::PlayerWindow(AppContext& app, Project project, std::unique_ptr<Scene> scene)
-    : app_(app), project_(std::move(project)), scene_(std::move(scene)) {
+    : app_(app), project_(std::move(project)), assets_(project_.rootDir()), scene_(std::move(scene)) {
     scene_->updateWorldTransforms();
     simulation_ = std::make_unique<Simulation>(*scene_);
     const CameraView initial = sceneCameraView(*scene_, 16.0f / 9.0f);
@@ -55,7 +55,11 @@ CameraView PlayerWindow::viewportCamera(float aspect) const {
     return freeCam_ ? freeCamera_.view(aspect) : sceneCameraView(*scene_, aspect);
 }
 
-render::RenderSettings PlayerWindow::viewportSettings() const { return {}; }
+render::RenderSettings PlayerWindow::viewportSettings() const {
+    render::RenderSettings s;
+    s.assets = &assets_;
+    return s;
+}
 
 bool PlayerWindow::viewportKeyPressed(int key, Qt::KeyboardModifiers) {
     switch (key) {

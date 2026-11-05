@@ -169,7 +169,8 @@ Section::Section(const QString& title, const QIcon& icon, bool removable, QWidge
     });
 }
 
-QWidget* createFieldEditor(const FieldDesc& d, FieldGetter get, FieldSetter set, std::vector<Refresher>& refreshers) {
+QWidget* createFieldEditor(const FieldDesc& d, FieldGetter get, FieldSetter set, std::vector<Refresher>& refreshers,
+                           const AssetPicker& pickAsset) {
     switch (d.kind) {
         case FieldKind::Bool: {
             auto* box = new QCheckBox;
@@ -281,6 +282,37 @@ QWidget* createFieldEditor(const FieldDesc& d, FieldGetter get, FieldSetter set,
                              [set](const QColor& c) { set(FieldValue(fromQColor(c))); });
             refreshers.push_back([button, get] { button->setColor(toQColor(std::get<glm::vec3>(get()))); });
             return button;
+        }
+        case FieldKind::Asset: {
+            auto* row = new QWidget;
+            auto* layout = new QHBoxLayout(row);
+            layout->setContentsMargins(0, 0, 0, 0);
+            layout->setSpacing(4);
+            auto* label = new QLineEdit;
+            label->setReadOnly(true);
+            label->setPlaceholderText(QObject::tr("None (built-in mesh)"));
+            auto show = [label, get] {
+                const QString value = QString::fromStdString(std::get<std::string>(get()));
+                label->setText(value);
+                label->setToolTip(value);
+            };
+            show();
+            auto* browse = new QToolButton;
+            browse->setIcon(app::theme::icon(QStringLiteral("open")));
+            browse->setToolTip(QObject::tr("Choose asset…"));
+            browse->setEnabled(static_cast<bool>(pickAsset));
+            auto* clear = new QToolButton;
+            clear->setIcon(app::theme::icon(QStringLiteral("close")));
+            clear->setToolTip(QObject::tr("Clear"));
+            layout->addWidget(label, 1);
+            layout->addWidget(browse);
+            layout->addWidget(clear);
+            QObject::connect(browse, &QToolButton::clicked, row, [row, &d, pickAsset, set] {
+                if (auto chosen = pickAsset(row, d)) set(FieldValue(*chosen));
+            });
+            QObject::connect(clear, &QToolButton::clicked, row, [set] { set(FieldValue(std::string{})); });
+            refreshers.push_back(show);
+            return row;
         }
         case FieldKind::String: {
             auto* edit = new QLineEdit(QString::fromStdString(std::get<std::string>(get())));

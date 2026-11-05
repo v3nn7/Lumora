@@ -91,6 +91,9 @@ Result<AppOptions> parseCommandLine(const std::vector<std::string>& args) {
             auto n = parseNumber<std::uint32_t>(a, *v);
             if (!n) return std::unexpected(n.error());
             (a == "--width" ? o.renderWidth : o.renderHeight) = *n;
+        } else if (a == "--import") {
+            LUMORA_TRY_VALUE(v);
+            o.importFiles.push_back(*v);
         } else if (a == "--validate") {
             o.validateProject = true;
         } else if (a == "--simulate") {
@@ -110,10 +113,11 @@ Result<AppOptions> parseCommandLine(const std::vector<std::string>& args) {
     if (headless) {
         o.mode = AppMode::Headless;
         const bool hasAction = o.printInfo || !o.createDirectory.empty() || !o.renderOutput.empty() ||
-                               o.validateProject || o.simulateSeconds > 0.0;
+                               o.validateProject || o.simulateSeconds > 0.0 || !o.importFiles.empty();
         if (!hasAction) o.printInfo = true;
-        if ((!o.renderOutput.empty() || o.validateProject || o.simulateSeconds > 0.0) && o.projectPath.empty()) {
-            return makeError("--render/--validate/--simulate require --project <path>");
+        if ((!o.renderOutput.empty() || o.validateProject || o.simulateSeconds > 0.0 || !o.importFiles.empty()) &&
+            o.projectPath.empty()) {
+            return makeError("--render/--validate/--simulate/--import require --project <path>");
         }
         if (o.renderWidth == 0 || o.renderHeight == 0 || o.renderWidth > 16384 || o.renderHeight > 16384) {
             return makeError("--width/--height must be between 1 and 16384");
@@ -141,6 +145,8 @@ Usage:
 Headless actions:
   --info                                   Print engine and GPU information (default)
   --create <dir> [--name N] [--template T] Create a project (templates: empty, basic, showcase)
+  --project <p> --import <model.glb>       Copy a glTF model into Content/Models and add it to
+                                           the default scene (repeatable; saves the scene)
   --project <p> --validate                 Load the project and its default scene
   --project <p> --render <out.png>         Render the default scene offscreen
         [--width W] [--height H]

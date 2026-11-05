@@ -10,6 +10,7 @@
 
 namespace lumora {
 
+class AssetLibrary;
 class Scene;
 
 struct Ray {
@@ -22,6 +23,6 @@ struct Ray {
 /// Distance along the ray to the box, if hit (slab test).
 [[nodiscard]] std::optional<float> intersectRayAabb(const Ray& ray, const Aabb& box);
 /// Closest visible mesh entity under the ray, tested against its local-space bounds.
-[[nodiscard]] entt::entity pickEntity(const Scene& scene, const Ray& ray);
+[[nodiscard]] entt::entity pickEntity(const Scene& scene, const Ray& ray, AssetLibrary* assets = nullptr);
 
 } // namespace lumora

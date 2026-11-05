@@ -179,6 +179,11 @@ VkPipeline SceneRenderer::overlayPipeline(VkFormat outputFormat) {
         .first->second.get();
 }
 
+const GpuMesh* SceneRenderer::meshFor(const MeshRendererComponent& mesh, AssetLibrary* assets) {
+    if (mesh.meshAsset.empty()) return &ctx_.meshes().primitive(mesh.mesh);
+    return assets != nullptr ? ctx_.meshes().asset(*assets, mesh.meshAsset) : nullptr;
+}
+
 void SceneRenderer::ensureObjectCapacity(FrameResources& frame, std::uint32_t count) {
     if (count <= frame.objectCapacity && frame.objects) return;
     std::uint32_t capacity = std::max(frame.objectCapacity, 256u);
@@ -253,7 +258,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
 
     // ---- Objects + culling -----------------------------------------------------------------
     struct Draw {
-        MeshPrimitive mesh;
+        const GpuMesh* mesh;
         std::uint32_t object;
     };
     std::vector<Draw> draws;
@@ -261,7 +266,9 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     const Frustum frustum = Frustum::fromViewProjection(fc.viewProjection);
     for (auto [e, mesh, world] : reg.view<MeshRendererComponent, WorldTransformComponent>().each()) {
         if (!mesh.visible) continue;
-        const GpuMesh& gpuMesh = ctx_.meshes().primitive(mesh.mesh);
+        const GpuMesh* gpuMeshPtr = meshFor(mesh, settings.assets);
+        if (gpuMeshPtr == nullptr) continue;  // unresolved asset (already reported)
+        const GpuMesh& gpuMesh = *gpuMeshPtr;
         if (settings.frustumCulling) {
             const glm::vec3 localCenter = (gpuMesh.bounds.min + gpuMesh.bounds.max) * 0.5f;
             const glm::vec3 localExtent = (gpuMesh.bounds.max - gpuMesh.bounds.min) * 0.5f;
@@ -280,17 +287,17 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         obj.baseColorMetallic = glm::vec4(mesh.baseColor, mesh.metallic);
         obj.emissiveRoughness = glm::vec4(mesh.emissive * mesh.emissiveStrength, mesh.roughness);
         obj.flags = glm::vec4(e == settings.selected ? 1.0f : 0.0f, static_cast<float>(mesh.pattern), 0.0f, 0.0f);
-        draws.push_back({mesh.mesh, static_cast<std::uint32_t>(objects.size())});
+        draws.push_back({gpuMeshPtr, static_cast<std::uint32_t>(objects.size())});
         objects.push_back(obj);
     }
-    std::ranges::sort(draws, {}, [](const Draw& d) { return static_cast<int>(d.mesh); });
+    std::ranges::sort(draws, std::less<>{}, [](const Draw& d) { return d.mesh; });
     ensureObjectCapacity(frame, static_cast<std::uint32_t>(std::max<std::size_t>(objects.size(), 1)));
     if (!objects.empty()) {
         frame.objects.write(std::as_bytes(std::span(objects)));
     }
     stats.visibleObjects = static_cast<std::uint32_t>(objects.size());
     for (const Draw& d : draws) {
-        stats.triangles += ctx_.meshes().primitive(d.mesh).indexCount / 3;
+        stats.triangles += d.mesh->indexCount / 3;
     }
     stats.drawCalls = static_cast<std::uint32_t>(draws.size()) + 2 + (settings.showGrid ? 1u : 0u);
 
@@ -313,12 +320,10 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 if (casters.empty()) return;
                 vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_.get());
                 bindSets(ctx.cmd);
-                int boundMesh = -1;
                 const GpuMesh* mesh = nullptr;
                 for (const Draw& d : casters) {
-                    if (static_cast<int>(d.mesh) != boundMesh) {
-                        boundMesh = static_cast<int>(d.mesh);
-                        mesh = &ctx_.meshes().primitive(d.mesh);
+                    if (d.mesh != mesh) {
+                        mesh = d.mesh;
                         const VkBuffer vb = mesh->vertices.handle();
                         const VkDeviceSize offset = 0;
                         vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
@@ -353,12 +358,10 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             if (draws.empty()) return;
             vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, opaque_.get());
             bindSets(ctx.cmd);
-            int boundMesh = -1;
             const GpuMesh* mesh = nullptr;
             for (const Draw& d : draws) {
-                if (static_cast<int>(d.mesh) != boundMesh) {
-                    boundMesh = static_cast<int>(d.mesh);
-                    mesh = &ctx_.meshes().primitive(d.mesh);
+                if (d.mesh != mesh) {
+                    mesh = d.mesh;
                     const VkBuffer vb = mesh->vertices.handle();
                     const VkDeviceSize offset = 0;
                     vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);

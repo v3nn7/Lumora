@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/VulkanViewport.hpp"
+#include "assets/AssetLibrary.hpp"
 #include "project/Project.hpp"
 
 #include <QObject>
@@ -41,6 +42,7 @@ private:
 
     AppContext& app_;
     Project project_;
+    mutable AssetLibrary assets_;  // caches lazily while rendering
     std::unique_ptr<Scene> scene_;
     std::unique_ptr<Simulation> simulation_;
     std::unique_ptr<VulkanViewport> window_;

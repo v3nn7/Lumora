@@ -125,6 +125,9 @@ foreach(component editor hub)
         FILES_MATCHING PATTERN "*.spv")
 endforeach()
 install(TARGETS lumora-editor RUNTIME DESTINATION bin COMPONENT editor)
+foreach(component editor hub)
+    install(FILES ${CMAKE_SOURCE_DIR}/LICENSE ${CMAKE_SOURCE_DIR}/THIRD_PARTY.md DESTINATION . COMPONENT ${component})
+endforeach()
 install(TARGETS lumora-hub RUNTIME DESTINATION bin COMPONENT hub)
 # Qt's libraries and plugins (platform integrations, image formats, TLS for downloads, ...) go
 # into the package. On Linux a deterministic script bundles only Qt and its ICU, never system

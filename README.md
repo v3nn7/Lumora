@@ -221,18 +221,24 @@ One-time setup:
      (`https://<public url>/editor/manifest.json`)
    - an environment named `release` (add required reviewers there if publishing should need approval)
 
-Each release: set `VERSION` in `project()` in `CMakeLists.txt`, commit, then push a matching tag:
+Each release: set `VERSION` in `project()` in `CMakeLists.txt`, commit, then push a matching tag.
+Its suffix picks the **channel**: `v0.2.0` is stable, `v0.2.0-beta.1` and `v0.2.0-rc.1` are beta,
+`v0.2.0-alpha.3` is alpha. The suffix becomes part of the version the binaries report
+(`-DLUMORA_VERSION_SUFFIX=beta.1`) and of the projects they save.
 
 ```bash
-git tag v0.2.0 && git push origin v0.2.0
+git tag v0.2.0-beta.1 && git push origin v0.2.0-beta.1
 ```
+
+In the Hub, *Editors → Show* chooses what is offered: stable releases (default), stable and
+beta, or everything including alpha. *Install Latest* installs the newest one of those.
 
 The workflow `.github/workflows/release.yml` builds and tests on Linux and Windows. It packages
 the editor and the Hub, then installs the fresh editor package with the Hub's own installer. If
 that works, it uploads `editor/<version>/…` and `hub/<version>/…` (plus
 `hub/latest/lumora-hub-<platform>.zip` for stable releases) and updates and signs the feed.
-*Run workflow* builds without publishing unless you tick *publish*, and can target the `beta`
-channel.
+*Run workflow* builds without publishing unless you tick *publish*. It takes a channel and
+an optional suffix; alpha and beta default to `<channel>.<run number>`.
 
 Packaging locally:
 
@@ -305,3 +311,11 @@ detected); hardware ray tracing (RT GI and reflections); Jolt physics; miniaudio
 animation; C++ gameplay modules with hot reload; Tracy integration; world streaming.
 
 Only items in "What works today" are implemented.
+
+## License
+
+Lumora is free software: you can redistribute it and/or modify it under the terms of the GNU
+General Public License as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version (`GPL-3.0-or-later`). See [LICENSE](LICENSE).
+Third-party components and their licences are listed in [THIRD_PARTY.md](THIRD_PARTY.md).
+Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md).

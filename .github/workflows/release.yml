@@ -1,0 +1,236 @@
+# Builds the editor and the Hub for Linux and Windows, checks that the packages install with the
+# Hub's own installer, and publishes them to Cloudflare R2 with a signed release feed.
+#
+# Repository settings (Settings > Secrets and variables > Actions):
+#   secrets   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY   R2 API token (Object Read & Write, bucket only)
+#             LUMORA_SIGNING_KEY                       from scripts/release/manifest.py keygen
+#   variables R2_ENDPOINT        https://<account id>.r2.cloudflarestorage.com
+#             R2_BUCKET          lumora
+#             LUMORA_RELEASE_PUBLIC_KEY                from keygen (baked into the Hub)
+#             LUMORA_RELEASE_FEED                      https://<public url>/editor/manifest.json
+#
+# Release: bump VERSION in CMakeLists.txt, commit, then `git tag v0.2.0 && git push --tags`.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel
+        type: choice
+        options: [stable, beta]
+        default: beta
+      publish:
+        description: Upload to R2 (otherwise build and test only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: "6.8.2"
+  VULKAN_SDK_VERSION: "1.4.304.0"
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, platform: linux-x64, experimental: false }
+          # The Windows build has not been verified yet: a failure there must not block Linux releases.
+          - { os: windows-2022, platform: windows-x64, experimental: true }
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          version=$(sed -n '/^project(Lumora/,/)/s/^ *VERSION \([0-9.]*\)$/\1/p' CMakeLists.txt)
+          if [[ -z "$version" ]]; then echo "::error::cannot read VERSION from CMakeLists.txt"; exit 1; fi
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the project version $version"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: System packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++-14 libwayland-dev libxkbcommon-dev libgl1-mesa-dev \
+            libxcb-cursor0 libxkbcommon-x11-0 mesa-vulkan-drivers
+
+      - name: Vulkan SDK (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -sSLf -o "$RUNNER_TEMP/vulkan.tar.xz" \
+            "https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/linux/vulkansdk-linux-x86_64-$VULKAN_SDK_VERSION.tar.xz"
+          mkdir -p "$RUNNER_TEMP/vulkan" && tar -xJf "$RUNNER_TEMP/vulkan.tar.xz" -C "$RUNNER_TEMP/vulkan"
+          sdk="$RUNNER_TEMP/vulkan/$VULKAN_SDK_VERSION/x86_64"
+          echo "VULKAN_SDK=$sdk" >> "$GITHUB_ENV"
+          echo "$sdk/bin" >> "$GITHUB_PATH"
+
+      - name: Vulkan SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = "$env:RUNNER_TEMP\vulkan-sdk.exe"
+          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$env:VULKAN_SDK_VERSION/windows/VulkanSDK-$env:VULKAN_SDK_VERSION-Installer.exe" -OutFile $installer
+          Start-Process -Wait -FilePath $installer -ArgumentList '--root','C:\VulkanSDK','--accept-licenses','--default-answer','--confirm-command','install'
+          "VULKAN_SDK=C:\VulkanSDK" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "C:\VulkanSDK\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+
+      - name: MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        shell: bash
+        env:
+          PUBLIC_KEY: ${{ vars.LUMORA_RELEASE_PUBLIC_KEY }}
+          FEED: ${{ vars.LUMORA_RELEASE_FEED }}
+        run: |
+          compilers=()
+          if [[ "$RUNNER_OS" == "Linux" ]]; then compilers=(-DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14); fi
+          cmake --preset release "${compilers[@]}" -DLUMORA_RELEASE_PUBLIC_KEY="$PUBLIC_KEY" \
+            ${FEED:+-DLUMORA_RELEASE_FEED="$FEED"}
+
+      - name: Build
+        run: cmake --build --preset release
+
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --preset release --output-on-failure
+
+      - name: Install
+        shell: bash
+        run: |
+          cmake --install build/release --component editor --prefix dist/editor
+          cmake --install build/release --component hub --prefix dist/hub
+
+      - name: Package
+        shell: bash
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          for product in editor hub; do
+            python scripts/release/package.py --install-dir "dist/$product" --product "$product" \
+              --version "$v" --platform "${{ matrix.platform }}" --out out
+          done
+
+      - name: Check the package with the Hub's installer
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          # A throwaway key signs a local feed holding just this package; the real installer
+          # (the same code the Hub runs) must download, verify and unpack it.
+          python -m pip install --quiet cryptography
+          keys=$(python scripts/release/manifest.py keygen)
+          export LUMORA_SIGNING_KEY=$(sed -n 's/.*(secret) = //p' <<< "$keys")
+          public=$(sed -n 's/.*PUBLIC_KEY *= //p' <<< "$keys")
+          mkdir -p check/editor
+          cp out/lumora-editor-*.zip check/editor/
+          python scripts/release/manifest.py update --manifest check/manifest.json \
+            --version "${{ steps.version.outputs.version }}" --package out/lumora-editor-*.zip.json --url-prefix editor/
+          python scripts/release/manifest.py sign --manifest check/manifest.json
+          LUMORA_TEST_FEED="$PWD/check/manifest.json" LUMORA_TEST_FEED_KEY="$public" \
+            build/release/bin/lumora_launcher_tests --gtest_filter='*PublishedFeed*'
+          # The packaged editor runs from its own folder (bundled libraries, no build tree).
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            dist/editor/bin/lumora-editor --version
+            ldd dist/editor/bin/lumora-editor | grep -E "lumora|Qt6" || true
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.platform }}
+          path: |
+            out/*.zip
+            out/*.zip.json
+          if-no-files-found: error
+
+  publish:
+    name: Publish to R2
+    needs: build
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-24.04
+    environment: release
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      # R2 does not support the newer default integrity checksums of the AWS CLI.
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      R2: --endpoint-url ${{ vars.R2_ENDPOINT }}
+      BUCKET: s3://${{ vars.R2_BUCKET }}
+      VERSION: ${{ needs.build.outputs.version }}
+      CHANNEL: ${{ github.event_name == 'push' && 'stable' || inputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          pattern: packages-*
+          merge-multiple: true
+
+      - name: Packages to publish
+        run: |
+          ls -l out
+          ls out/lumora-editor-*.zip > /dev/null  # at least one platform built
+
+      - name: Tools
+        run: sudo apt-get update && sudo apt-get install -y python3-cryptography
+
+      - name: Upload packages
+        run: |
+          for zip in out/lumora-editor-*.zip; do
+            aws s3 cp "$zip" "$BUCKET/editor/$VERSION/$(basename "$zip")" $R2 --content-type application/zip
+          done
+          for zip in out/lumora-hub-*.zip; do
+            aws s3 cp "$zip" "$BUCKET/hub/$VERSION/$(basename "$zip")" $R2 --content-type application/zip
+            # Stable link for the download page: hub/latest/lumora-hub-<platform>.zip
+            platform=$(basename "$zip" .zip | sed "s/^lumora-hub-$VERSION-//")
+            if [[ "$CHANNEL" == "stable" ]]; then
+              aws s3 cp "$zip" "$BUCKET/hub/latest/lumora-hub-$platform.zip" $R2 --content-type application/zip \
+                --cache-control "no-cache"
+            fi
+          done
+
+      - name: Update and sign the release feed
+        env:
+          LUMORA_SIGNING_KEY: ${{ secrets.LUMORA_SIGNING_KEY }}
+          PUBLIC_KEY: ${{ vars.LUMORA_RELEASE_PUBLIC_KEY }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          aws s3 cp "$BUCKET/editor/manifest.json" manifest.json $R2 || echo "starting a new release feed"
+          notes=$(printf '%s' "$COMMIT_MESSAGE" | head -n 1)
+          python3 scripts/release/manifest.py update --manifest manifest.json --version "$VERSION" \
+            --channel "$CHANNEL" --notes "$notes" --package out/lumora-editor-*.zip.json --url-prefix "$VERSION/"
+          python3 scripts/release/manifest.py sign --manifest manifest.json
+          python3 scripts/release/manifest.py verify --manifest manifest.json --public-key "$PUBLIC_KEY"
+          # The feed changes with every release: never let a cache serve an old one.
+          aws s3 cp manifest.json "$BUCKET/editor/manifest.json" $R2 --content-type application/json --cache-control "no-cache"
+          aws s3 cp manifest.json.sig "$BUCKET/editor/manifest.json.sig" $R2 --content-type text/plain --cache-control "no-cache"
+          echo "Published Lumora $VERSION ($CHANNEL)" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,13 @@
+# HLSL shaders compiled to SPIR-V at build time into bin/shaders/<name>.spv.
+set(LUMORA_SHADER_FILES)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE mesh.hlsl     STAGE vert ENTRY VSMain OUTPUT mesh.vert.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE mesh.hlsl     STAGE frag ENTRY PSMain OUTPUT mesh.frag.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE sky.hlsl      STAGE vert ENTRY VSMain OUTPUT sky.vert.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE sky.hlsl      STAGE frag ENTRY PSMain OUTPUT sky.frag.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE grid.hlsl     STAGE vert ENTRY VSMain OUTPUT grid.vert.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE grid.hlsl     STAGE frag ENTRY PSMain OUTPUT grid.frag.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE tonemap.hlsl  STAGE vert ENTRY VSMain OUTPUT tonemap.vert.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE tonemap.hlsl  STAGE frag ENTRY PSMain OUTPUT tonemap.frag.spv)
+
+add_custom_target(lumora_shaders ALL DEPENDS ${LUMORA_SHADER_FILES}
+    SOURCES common.hlsli fullscreen.hlsli lighting.hlsli)

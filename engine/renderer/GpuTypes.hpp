@@ -1,0 +1,64 @@
+#pragma once
+
+#include <glm/mat4x4.hpp>
+#include <glm/vec4.hpp>
+
+#include <cstddef>
+#include <cstdint>
+
+// CPU mirrors of the structures declared in shaders/common.hlsli.
+// Layout rules: only 16-byte vectors and 4x4 matrices, so std140 == std430 == C++.
+
+namespace lumora::render {
+
+inline constexpr std::uint32_t kMaxLights = 16;
+
+struct GpuLight {
+    glm::vec4 positionRange{0.0f};
+    glm::vec4 colorIntensity{0.0f};
+    glm::vec4 directionType{0.0f};
+};
+
+struct FrameConstants {
+    glm::mat4 view{1.0f};
+    glm::mat4 projection{1.0f};
+    glm::mat4 viewProjection{1.0f};
+    glm::mat4 inverseViewProjection{1.0f};
+    glm::vec4 cameraPositionTime{0.0f};
+    glm::vec4 viewportSize{0.0f};
+    glm::vec4 skyZenith{0.0f};
+    glm::vec4 skyHorizon{0.0f};
+    glm::vec4 groundColor{0.0f};
+    glm::vec4 sunDirection{0.0f};
+    glm::vec4 sunColor{0.0f};
+    glm::vec4 gridParams{0.0f};
+    glm::uvec4 counts{0u};
+    GpuLight lights[kMaxLights]{};
+};
+
+struct GpuObject {
+    glm::mat4 world{1.0f};
+    glm::mat4 normalMatrix{1.0f};
+    glm::vec4 baseColorMetallic{0.0f};
+    glm::vec4 emissiveRoughness{0.0f};
+    glm::vec4 flags{0.0f};
+};
+
+struct PushConstants {
+    std::uint32_t index0 = 0;
+    std::uint32_t index1 = 0;
+    float param0 = 0.0f;
+    std::uint32_t flags = 0;
+};
+
+// Offsets verified against the SPIR-V produced from common.hlsli.
+static_assert(sizeof(GpuLight) == 48);
+static_assert(offsetof(FrameConstants, cameraPositionTime) == 256);
+static_assert(offsetof(FrameConstants, counts) == 384);
+static_assert(offsetof(FrameConstants, lights) == 400);
+static_assert(sizeof(FrameConstants) == 400 + 48 * kMaxLights);
+static_assert(sizeof(GpuObject) == 176);
+static_assert(offsetof(GpuObject, flags) == 160);
+static_assert(sizeof(PushConstants) == 16);
+
+} // namespace lumora::render

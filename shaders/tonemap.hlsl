@@ -1,0 +1,39 @@
+#include "common.hlsli"
+#include "fullscreen.hlsli"
+
+// gPush.index0 = HDR texture, index1 = sampler, param0 = exposure, flags bit0 = encode sRGB in shader.
+
+FullscreenOut VSMain(uint id : SV_VertexID) {
+    return fullscreenTriangle(id);
+}
+
+/// ACES filmic approximation (Narkowicz 2015).
+float3 acesFilm(float3 x) {
+    const float a = 2.51;
+    const float b = 0.03;
+    const float c = 2.43;
+    const float d = 0.59;
+    const float e = 0.14;
+    return saturate((x * (a * x + b)) / (x * (c * x + d) + e));
+}
+
+float3 linearToSrgb(float3 c) {
+    float3 low = c * 12.92;
+    float3 high = 1.055 * pow(max(c, 0.0.xxx), 1.0 / 2.4) - 0.055;
+    return lerp(high, low, step(c, 0.0031308.xxx));
+}
+
+/// Interleaved gradient noise, used to dither away 8-bit banding.
+float gradientNoise(float2 pixel) {
+    return frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
+}
+
+float4 PSMain(FullscreenOut input) : SV_Target0 {
+    float3 hdr = gTextures[gPush.index0].SampleLevel(gSamplers[gPush.index1], input.uv, 0.0).rgb;
+    float3 color = acesFilm(hdr * gPush.param0);
+    if ((gPush.flags & 1u) != 0u) {
+        color = linearToSrgb(color);
+    }
+    float noise = (gradientNoise(input.position.xy) - 0.5) / 255.0;
+    return float4(color + noise, 1.0);
+}

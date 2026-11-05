@@ -46,3 +46,22 @@ lumora_engine_module(project
         project/ProjectRegistry.cpp
     DEPS lumora_scene)
 
+lumora_engine_module(renderer
+    SOURCES
+        renderer/vulkan/VulkanCommon.cpp
+        renderer/vulkan/Instance.cpp
+        renderer/vulkan/Device.cpp
+        renderer/vulkan/Resources.cpp
+        renderer/vulkan/Swapchain.cpp
+        renderer/vulkan/Pipeline.cpp
+        renderer/vulkan/BindlessTable.cpp
+        renderer/vulkan/UploadQueue.cpp
+        renderer/vulkan/VmaImpl.cpp
+        renderer/RenderGraph.cpp
+        renderer/GpuProfiler.cpp
+        renderer/TransientImagePool.cpp
+        renderer/MeshCache.cpp
+        renderer/RenderContext.cpp
+        renderer/Renderer.cpp
+        renderer/SceneRenderer.cpp
+    DEPS lumora_scene Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)

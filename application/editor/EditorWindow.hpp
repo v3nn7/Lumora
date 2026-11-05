@@ -101,6 +101,8 @@ private:
     QAction* projectSettings_ = nullptr;
     QAction* closeProject_ = nullptr;
     QAction* exit_ = nullptr;
+    QAction* undo_ = nullptr;
+    QAction* redo_ = nullptr;
     QAction* duplicate_ = nullptr;
     QAction* delete_ = nullptr;
     QAction* frame_ = nullptr;

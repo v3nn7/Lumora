@@ -150,6 +150,12 @@ void EditorWindow::buildActions() {
     projectSettings_ = make(tr("Project Settings…"), QStringLiteral("settings"));
     closeProject_ = make(tr("Close Project"), QStringLiteral("back"));
     exit_ = make(tr("Exit"), QString(), QKeySequence::Quit);
+    undo_ = ctx_.undoStack().createUndoAction(this, tr("Undo"));
+    undo_->setShortcut(QKeySequence::Undo);
+    undo_->setIcon(icon(QStringLiteral("undo")));
+    redo_ = ctx_.undoStack().createRedoAction(this, tr("Redo"));
+    redo_->setShortcuts({QKeySequence::Redo, QKeySequence(Qt::CTRL | Qt::Key_Y)});
+    redo_->setIcon(icon(QStringLiteral("redo")));
     duplicate_ = make(tr("Duplicate"), QString(), QKeySequence(Qt::CTRL | Qt::Key_D));
     delete_ = make(tr("Delete"), QStringLiteral("trash"), QKeySequence::Delete);
     frame_ = make(tr("Frame Selection"), QString(), QKeySequence(Qt::Key_F));
@@ -274,6 +280,8 @@ void EditorWindow::buildMenus() {
     file->addActions({closeProject_, exit_});
 
     QMenu* edit = menuBar()->addMenu(tr("&Edit"));
+    edit->addActions({undo_, redo_});
+    edit->addSeparator();
     edit->addActions({duplicate_, delete_});
     edit->addSeparator();
     edit->addAction(frame_);
@@ -327,6 +335,8 @@ void EditorWindow::buildToolbar() {
     bar->addSeparator();
 
     bar->addAction(saveScene_);
+    bar->addAction(undo_);
+    bar->addAction(redo_);
     auto* createButton = new QToolButton;
     createButton->setIcon(app::theme::icon(QStringLiteral("plus")));
     createButton->setToolTip(tr("Create entity"));
@@ -421,7 +431,7 @@ void EditorWindow::setEditScene(std::unique_ptr<Scene> scene, const QString& pat
     scenePath_ = path;
     ctx_.setScene(editScene_.get(), false);  // panels detach from `old` before it is destroyed
     old.reset();
-    ctx_.setDirty(false);
+    ctx_.resetHistory();
 
     // Start the editor camera where the scene's camera is, which frames the content nicely.
     if (const entt::entity cam = editScene_->primaryCamera(); cam != entt::null) {
@@ -467,7 +477,7 @@ bool EditorWindow::saveScene() {
         log::warn("Editor", "project descriptor not saved: {}", saved.error().message);
     }
     saveThumbnail();
-    ctx_.setDirty(false);
+    ctx_.markSaved();
     statusBar()->showMessage(tr("Saved %1").arg(QFileInfo(scenePath_).fileName()), 4000);
     log::info("Editor", "saved scene {}", scenePath_.toStdString());
     return true;
@@ -577,6 +587,15 @@ void EditorWindow::updatePlayState() {
                                  .arg(QString::fromLatin1(chipColor)));
     viewportFrame_->setStyleSheet(QStringLiteral("#viewportFrame { background: %1; }").arg(QString::fromLatin1(border)));
     for (QAction* a : {newScene_, openScene_, saveSceneAs_}) a->setEnabled(!playing);
+    ctx_.undoStack().setActive(!playing);
+    undo_->setVisible(true);
+    if (playing) {
+        undo_->setEnabled(false);
+        redo_->setEnabled(false);
+    } else {
+        undo_->setEnabled(ctx_.undoStack().canUndo());
+        redo_->setEnabled(ctx_.undoStack().canRedo());
+    }
 }
 
 bool EditorWindow::handleShortcut(int key, Qt::KeyboardModifiers mods) {
@@ -587,6 +606,10 @@ bool EditorWindow::handleShortcut(int key, Qt::KeyboardModifiers mods) {
         ctx_.deleteSelected();
     } else if (key == Qt::Key_D && ctrl) {
         ctx_.duplicateSelected();
+    } else if (key == Qt::Key_Z && ctrl) {
+        (mods & Qt::ShiftModifier) ? ctx_.undoStack().redo() : ctx_.undoStack().undo();
+    } else if (key == Qt::Key_Y && ctrl) {
+        ctx_.undoStack().redo();
     } else if (key == Qt::Key_F && !ctrl) {
         client_->frameSelection();
     } else if (key == Qt::Key_G && !ctrl) {
@@ -612,6 +635,7 @@ void EditorWindow::showControls() {
                                 "<tr><td><b>Left click</b></td><td>Select</td></tr>"
                                 "<tr><td><b>F</b></td><td>Frame selection</td></tr>"
                                 "<tr><td><b>G</b></td><td>Toggle grid</td></tr>"
+                                "<tr><td><b>Ctrl+Z / Ctrl+Shift+Z</b></td><td>Undo / redo</td></tr>"
                                 "<tr><td><b>F5 / F6 / Shift+F5</b></td><td>Play / Pause / Stop</td></tr>"
                                 "<tr><td><b>F8</b></td><td>Toggle scene camera in play mode</td></tr>"
                                 "</table>"));

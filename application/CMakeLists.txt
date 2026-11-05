@@ -36,6 +36,7 @@ lumora_qt_module(hub
 lumora_qt_module(editor
     SOURCES
         editor/EditorContext.cpp
+        editor/Commands.cpp
         editor/EditorWindow.cpp
         editor/EditorViewportClient.cpp
         editor/EntityFactory.cpp

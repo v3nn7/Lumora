@@ -25,6 +25,8 @@ public:
                                             entt::entity parent = entt::null);
     /// Destroys the entity and all of its descendants.
     void destroyEntity(entt::entity entity);
+    /// Removes every entity and resets the environment (the Scene object itself stays valid).
+    void clear();
     /// Deep-copies an entity subtree (new UUIDs) and inserts it next to the original.
     entt::entity duplicateEntity(entt::entity entity);
 

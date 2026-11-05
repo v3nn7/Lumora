@@ -19,6 +19,10 @@ public:
 
     [[nodiscard]] static nlohmann::json toJson(const Scene& scene);
     [[nodiscard]] static Result<std::unique_ptr<Scene>> fromJson(const nlohmann::json& json);
+    /// Replaces the contents of an existing scene in place (UUIDs preserved). Used by undo/redo,
+    /// which must keep the Scene object (and every pointer to it) alive. On error the scene is
+    /// left cleared.
+    [[nodiscard]] static Result<> loadInto(Scene& scene, const nlohmann::json& json);
 
     [[nodiscard]] static std::string toString(const Scene& scene);
     [[nodiscard]] static Result<std::unique_ptr<Scene>> fromString(const std::string& text);

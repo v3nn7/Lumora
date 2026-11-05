@@ -50,6 +50,13 @@ void Scene::destroyEntity(entt::entity entity) {
     registry_.destroy(entity);
 }
 
+void Scene::clear() {
+    registry_.clear();
+    uuidMap_.clear();
+    roots_.clear();
+    environment_ = EnvironmentSettings{};
+}
+
 void Scene::detach(entt::entity entity) {
     auto& h = registry_.get<HierarchyComponent>(entity);
     if (h.parent != entt::null && registry_.valid(h.parent)) {

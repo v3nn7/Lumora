@@ -206,3 +206,87 @@ TEST_F(EditorUiTest, InspectorBuildsSectionsFromReflection) {
         editor->grab().save(dir + QStringLiteral("/inspector.png"));
     }
 }
+
+TEST_F(EditorUiTest, UndoRedoStructuralEdits) {
+    editor::EditorWindow* editor = openEditor();
+    ASSERT_NE(editor, nullptr);
+    editor::EditorContext& ctx = editor->context();
+    Scene& scene = *editor->editScene();
+    const std::size_t initial = scene.entityCount();
+    EXPECT_FALSE(ctx.isDirty());
+
+    const entt::entity e = ctx.createEntity(QStringLiteral("Undoable"));
+    const Uuid id = scene.uuidOf(e);
+    EXPECT_EQ(scene.entityCount(), initial + 1);
+    EXPECT_TRUE(ctx.isDirty());
+
+    ctx.undoStack().undo();
+    EXPECT_EQ(scene.entityCount(), initial);
+    EXPECT_EQ(scene.findByUuid(id), entt::entity{entt::null});
+    EXPECT_FALSE(ctx.isDirty()) << "undoing back to the saved state is clean";
+    EXPECT_FALSE(ctx.selectedUuid().isValid()) << "selection of a removed entity is cleared";
+
+    ctx.undoStack().redo();
+    EXPECT_EQ(scene.entityCount(), initial + 1);
+    EXPECT_NE(scene.findByUuid(id), entt::entity{entt::null}) << "redo restores the same UUID";
+
+    // Delete a subtree with components, then undo restores everything.
+    entt::entity props = entt::null;
+    for (entt::entity root : scene.roots()) {
+        if (scene.nameOf(root) == "Props") props = root;
+    }
+    ASSERT_NE(props, entt::entity{entt::null});
+    const Uuid propsId = scene.uuidOf(props);
+    const std::size_t children = scene.childrenOf(props).size();
+    ctx.select(propsId);
+    ctx.deleteSelected();
+    EXPECT_EQ(scene.findByUuid(propsId), entt::entity{entt::null});
+    ctx.undoStack().undo();
+    const entt::entity restored = scene.findByUuid(propsId);
+    ASSERT_NE(restored, entt::entity{entt::null});
+    EXPECT_EQ(scene.childrenOf(restored).size(), children);
+
+    // Rejected re-parent (cycle) records nothing.
+    const int depth = ctx.undoStack().index();
+    EXPECT_FALSE(ctx.reparent(propsId, scene.uuidOf(scene.childrenOf(restored).front()), -1));
+    EXPECT_EQ(ctx.undoStack().index(), depth);
+}
+
+TEST_F(EditorUiTest, FieldEditsMergeIntoOneUndoStep) {
+    editor::EditorWindow* editor = openEditor();
+    ASSERT_NE(editor, nullptr);
+    editor::EditorContext& ctx = editor->context();
+    Scene& scene = *editor->editScene();
+    const entt::entity e = scene.roots().front();
+    const Uuid id = scene.uuidOf(e);
+    const ComponentDesc& transform = *ComponentRegistry::builtin().find("Transform");
+    const FieldDesc& position = *transform.findField("position");
+    const glm::vec3 original = scene.registry().get<TransformComponent>(e).position;
+
+    // Scrubbing produces a burst of edits to the same field.
+    for (int i = 1; i <= 5; ++i) {
+        ctx.setField(id, transform, position, FieldValue(original + glm::vec3(static_cast<float>(i), 0.0f, 0.0f)));
+    }
+    EXPECT_EQ(scene.registry().get<TransformComponent>(e).position.x, original.x + 5.0f);
+    EXPECT_EQ(ctx.undoStack().count(), 1) << "consecutive edits of one field merge";
+    ctx.undoStack().undo();
+    EXPECT_EQ(scene.registry().get<TransformComponent>(e).position, original);
+
+    // Environment edits are undoable too.
+    const float exposure = scene.environment().exposure;
+    ctx.setEnvironment(QStringLiteral("Exposure"), [](EnvironmentSettings& env) { env.exposure = 3.0f; });
+    EXPECT_FLOAT_EQ(scene.environment().exposure, 3.0f);
+    ctx.undoStack().undo();
+    EXPECT_FLOAT_EQ(scene.environment().exposure, exposure);
+}
+
+TEST_F(EditorUiTest, PlayModeEditsAreNotRecorded) {
+    editor::EditorWindow* editor = openEditor();
+    ASSERT_NE(editor, nullptr);
+    editor::EditorContext& ctx = editor->context();
+    editor->play();
+    ctx.createEntity(QStringLiteral("Transient"));
+    EXPECT_EQ(ctx.undoStack().count(), 0);
+    editor->stop();
+    EXPECT_FALSE(ctx.isDirty());
+}

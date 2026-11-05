@@ -34,5 +34,7 @@
     <file alias="clock.svg">icons/clock.svg</file>
     <file alias="rotate.svg">icons/rotate.svg</file>
     <file alias="sparkle.svg">icons/sparkle.svg</file>
+    <file alias="undo.svg">icons/undo.svg</file>
+    <file alias="redo.svg">icons/redo.svg</file>
   </qresource>
 </RCC>

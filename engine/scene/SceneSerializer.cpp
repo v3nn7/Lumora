@@ -107,14 +107,26 @@ json SceneSerializer::toJson(const Scene& scene) {
 }
 
 Result<std::unique_ptr<Scene>> SceneSerializer::fromJson(const json& root) {
+    auto scene = std::make_unique<Scene>();
+    if (auto loaded = loadInto(*scene, root); !loaded) {
+        return std::unexpected(loaded.error());
+    }
+    return scene;
+}
+
+namespace {
+
+Result<> populateScene(Scene& target, const json& root) {
     if (!root.is_object() || root.value("format", "") != "lumora.scene") {
         return makeError("not a Lumora scene file");
     }
     const int version = root.value("version", 0);
-    if (version < 1 || version > kFormatVersion) {
-        return makeError("unsupported scene format version {} (supported: 1..{})", version, kFormatVersion);
+    if (version < 1 || version > SceneSerializer::kFormatVersion) {
+        return makeError("unsupported scene format version {} (supported: 1..{})", version, SceneSerializer::kFormatVersion);
     }
-    auto scene = std::make_unique<Scene>(root.value("name", std::string("Untitled")));
+    target.clear();
+    target.setName(root.value("name", std::string("Untitled")));
+    Scene* scene = &target;
 
     if (const auto it = root.find("environment"); it != root.end() && it->is_object()) {
         EnvironmentSettings& env = scene->environment();
@@ -176,7 +188,15 @@ Result<std::unique_ptr<Scene>> SceneSerializer::fromJson(const json& root) {
         }
     }
     scene->updateWorldTransforms();
-    return scene;
+    return {};
+}
+
+} // namespace
+
+Result<> SceneSerializer::loadInto(Scene& scene, const json& document) {
+    auto result = populateScene(scene, document);
+    if (!result) scene.clear();  // never leave a half-loaded scene behind
+    return result;
 }
 
 std::string SceneSerializer::toString(const Scene& scene) { return toJson(scene).dump(2); }

@@ -148,23 +148,11 @@ void InspectorPanel::buildEntity() {
                 }
                 return field.get(s->registry(), ent);
             };
-            FieldSetter set = [this, id, &field](const FieldValue& v) {
-                Scene* s = ctx_.scene();
-                const entt::entity ent = s ? s->findByUuid(id) : entt::entity{entt::null};
-                if (ent == entt::null) return;
-                field.set(s->registry(), ent, v);
-                ctx_.notifyValuesChanged(this);
-            };
+            FieldSetter set = [this, id, &desc, &field](const FieldValue& v) { ctx_.setField(id, desc, field, v); };
             form->addRow(fieldLabel(QString::fromStdString(field.label)),
                          createFieldEditor(field, std::move(get), std::move(set), refreshers_));
         }
-        connect(section, &Section::removeRequested, this, [this, id, &desc] {
-            Scene* s = ctx_.scene();
-            const entt::entity ent = s ? s->findByUuid(id) : entt::entity{entt::null};
-            if (ent == entt::null) return;
-            desc.remove(s->registry(), ent);
-            ctx_.notifyStructureChanged();
-        });
+        connect(section, &Section::removeRequested, this, [this, id, &desc] { ctx_.removeComponent(id, desc); });
         contentLayout_->addWidget(section);
     }
 
@@ -173,13 +161,7 @@ void InspectorPanel::buildEntity() {
     auto* menu = new QMenu(add);
     for (const ComponentDesc& desc : registry.components()) {
         if (!desc.userAddable || desc.has(scene.registry(), e)) continue;
-        menu->addAction(QString::fromStdString(desc.label), this, [this, id, &desc] {
-            Scene* s = ctx_.scene();
-            const entt::entity ent = s ? s->findByUuid(id) : entt::entity{entt::null};
-            if (ent == entt::null) return;
-            desc.add(s->registry(), ent);
-            ctx_.notifyStructureChanged();
-        });
+        menu->addAction(QString::fromStdString(desc.label), this, [this, id, &desc] { ctx_.addComponent(id, desc); });
     }
     add->setMenu(menu);
     add->setEnabled(!menu->isEmpty());
@@ -215,10 +197,8 @@ void InspectorPanel::buildEnvironment() {
             FieldGetter get = [this, getter = f.get] {
                 return ctx_.scene() ? getter(ctx_.scene()->environment()) : FieldValue(0.0f);
             };
-            FieldSetter set = [this, setter = f.set](const FieldValue& v) {
-                if (!ctx_.scene()) return;
-                setter(ctx_.scene()->environment(), v);
-                ctx_.notifyValuesChanged(this);
+            FieldSetter set = [this, setter = f.set, label = f.label](const FieldValue& v) {
+                ctx_.setEnvironment(tr(label), [&setter, &v](EnvironmentSettings& env) { setter(env, v); });
             };
             form->addRow(fieldLabel(tr(f.label)), createFieldEditor(desc, std::move(get), std::move(set), refreshers_));
         }

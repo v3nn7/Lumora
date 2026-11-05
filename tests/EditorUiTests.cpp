@@ -396,7 +396,8 @@ TEST_F(EditorUiTest, TwoEditorsShareASceneLive) {
     QObject::connect(raw, &collab::CollabClient::joined, &guest, [&](const nlohmann::json& scene, quint64 seq) {
         guest.attachSession(std::move(client), scene, seq);  // synchronously, like Application
     });
-    raw->connectTo({QStringLiteral("127.0.0.1"), host->sessionServer()->port()}, QStringLiteral("Guest"), {});
+    raw->connectTo({QStringLiteral("127.0.0.1"), host->sessionServer()->port(), host->sessionServer()->fingerprint()},
+                   QStringLiteral("Guest"), {});
     ASSERT_TRUE(waitFor([&] { return guest.inSession(); }));
     EXPECT_EQ(SceneSerializer::toJson(*guest.editScene()), SceneSerializer::toJson(*host->editScene()));
 

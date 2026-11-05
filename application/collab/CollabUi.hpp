@@ -93,6 +93,7 @@ public:
     struct HostInfo {
         quint16 port = 0;
         QString publicAddress;
+        QByteArray fingerprint;  // host certificate, appended to every shared address
     };
     /// Shows a running session. `host` is set when this editor hosts it.
     void attach(CollabClient* client, std::optional<HostInfo> host);

@@ -1,6 +1,7 @@
 #include "collab/CollabUi.hpp"
 
 #include "collab/CollabClient.hpp"
+#include "collab/HostIdentity.hpp"
 
 #include <QApplication>
 #include <QClipboard>
@@ -76,7 +77,8 @@ constexpr const char* kPlayitHelp =
     "1. Install and run the <a href='https://playit.gg/download'>playit.gg agent</a> on this computer.<br>"
     "2. In your playit.gg dashboard add a tunnel of type <b>TCP+UDP</b> to local port <b>%1</b> "
     "(TCP only works too; camera positions then travel over TCP).<br>"
-    "3. Paste the address playit.gg gives you below and send it to your collaborators.";
+    "3. Paste the address playit.gg gives you below. The Session panel then shows it with the host "
+    "certificate's fingerprint attached - share that link.";
 
 } // namespace
 
@@ -365,9 +367,11 @@ void CollabPanel::attach(CollabClient* client, std::optional<HostInfo> host) {
     }
     if (host_) {
         for (const QString& ip : lanAddresses()) {
-            shareRows_->addWidget(copyRow(tr("LAN"), QStringLiteral("%1:%2").arg(ip).arg(host_->port)));
+            shareRows_->addWidget(copyRow(tr("LAN"), shareAddress(ip, host_->port, host_->fingerprint)));
         }
-        if (!host_->publicAddress.isEmpty()) shareRows_->addWidget(copyRow(tr("Internet"), host_->publicAddress));
+        if (const auto pub = parseAddress(host_->publicAddress)) {
+            shareRows_->addWidget(copyRow(tr("Internet"), shareAddress(pub->host, pub->port, host_->fingerprint)));
+        }
         if (host_->publicAddress.isEmpty()) {
             shareRows_->addWidget(hint(tr("For people outside your network, tunnel port %1 (TCP+UDP) with "
                                           "<a href='https://playit.gg'>playit.gg</a> and share its address.")
@@ -414,6 +418,10 @@ void CollabPanel::refreshStatus() {
     parts << tr("%n person(s)", nullptr, static_cast<int>(client_->participants().size()));
     parts << (client_->udpActive() ? tr("cameras via UDP") : tr("cameras via TCP"));
     if (const auto ms = client_->latencyMs()) parts << tr("%1 ms").arg(*ms);
+    parts << tr("🔒 %1").arg(client_->encryption());
+    if (!client_->hostFingerprint().isEmpty()) {
+        parts << tr("host certificate %1").arg(formatFingerprint(client_->hostFingerprint(), 4));
+    }
     status_->setText(parts.join(QStringLiteral("  ·  ")));
 }
 

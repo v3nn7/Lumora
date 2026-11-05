@@ -16,7 +16,8 @@
 #include <memory>
 #include <optional>
 
-class QTcpSocket;
+class QSslSocket;
+class QSslError;
 class QUdpSocket;
 
 namespace lumora {
@@ -39,9 +40,14 @@ struct Participant {
     QString selection;  // entity uuid, empty = nothing
 };
 
-/// One participant's connection to a session: protocol, presence over UDP (falling back to TCP
-/// when datagrams do not get through), and asset files in both directions. Scene changes are
-/// passed through as patches; SceneSync decides how they meet the local scene.
+/// One participant's connection to a session: TLS to the host, presence over sealed UDP (falling
+/// back to the TLS connection when datagrams do not get through), and asset files in both
+/// directions. Scene changes are passed through as patches; SceneSync decides how they meet the
+/// local scene.
+///
+/// The host's certificate is self-signed, so it is checked by fingerprint: the one pinned in
+/// the address, else the one remembered for that host (KnownHosts). An unknown host is not
+/// connected to - untrustedHost() reports its fingerprint so the user can confirm it and retry.
 class LUMORA_COLLAB_API CollabClient final : public QObject {
     Q_OBJECT
 public:
@@ -63,6 +69,9 @@ public:
     [[nodiscard]] const std::map<int, Participant>& participants() const noexcept { return participants_; }
     [[nodiscard]] bool udpActive() const noexcept;
     [[nodiscard]] std::optional<int> latencyMs() const noexcept { return latency_; }
+    /// Host certificate fingerprint and negotiated protocol of the current connection.
+    [[nodiscard]] const QByteArray& hostFingerprint() const noexcept { return hostFingerprint_; }
+    [[nodiscard]] QString encryption() const;
 
     void sendPatch(const ScenePatch& patch);
     void sendPresence(const glm::vec3& position, const glm::vec3& forward, const QString& selection);
@@ -74,6 +83,8 @@ signals:
     void joined(const nlohmann::json& scene, quint64 seq);
     /// Connecting failed or the host refused (wrong password, version, full).
     void joinFailed(const QString& reason);
+    /// The host's certificate is neither pinned nor known; emitted before joinFailed.
+    void untrustedHost(const QString& host, quint16 port, const QByteArray& fingerprint);
     /// A joined session ended (host left, network lost, or disconnectFromHost()).
     void left(const QString& reason);
     void patchReceived(const lumora::ScenePatch& patch, int from, quint64 seq);
@@ -89,6 +100,7 @@ signals:
 
 private:
     void onReadable();
+    void onSslErrors(const QList<QSslError>& errors);
     void onDatagrams();
     void handle(const Frame& frame);
     void onWelcome(const nlohmann::json& m);
@@ -98,7 +110,7 @@ private:
     void heartbeat();
     void finish(const QString& reason);
 
-    std::unique_ptr<QTcpSocket> socket_;
+    std::unique_ptr<QSslSocket> socket_;
     std::unique_ptr<QUdpSocket> udp_;
     std::unique_ptr<AssetSender> sender_;
     std::unique_ptr<AssetReceiver> receiver_;
@@ -111,7 +123,8 @@ private:
     QString session_;
     QString project_;
     int id_ = 0;
-    quint32 token_ = 0;
+    QByteArray udpKey_;
+    QByteArray hostFingerprint_;
     bool hostUdp_ = false;
     QHostAddress udpTarget_;
     QElapsedTimer sinceUdpAck_;

@@ -5,7 +5,11 @@
 #include "scene/ScenePatch.hpp"
 
 #include <QNetworkDatagram>
-#include <QTcpSocket>
+#include "collab/HostIdentity.hpp"
+
+#include <QSslCipher>
+#include <QSslConfiguration>
+#include <QSslSocket>
 #include <QUdpSocket>
 
 #include <algorithm>
@@ -65,26 +69,66 @@ void CollabClient::connectTo(const Address& address, const QString& name, const 
     password_ = password;
     state_ = State::Connecting;
     reader_ = FrameReader{};
-    socket_ = std::make_unique<QTcpSocket>();
+    socket_ = std::make_unique<QSslSocket>();
     socket_->setSocketOption(QAbstractSocket::LowDelayOption, 1);
+    QSslConfiguration tls = socket_->sslConfiguration();
+    tls.setProtocol(QSsl::TlsV1_2OrLater);
+    socket_->setSslConfiguration(tls);
+    hostFingerprint_.clear();
     sender_ = std::make_unique<AssetSender>(*socket_, root_);
     receiver_ = std::make_unique<AssetReceiver>(root_);
-    connect(socket_.get(), &QTcpSocket::connected, this, [this] {
+    connect(socket_.get(), &QSslSocket::sslErrors, this, &CollabClient::onSslErrors);
+    connect(socket_.get(), &QSslSocket::encrypted, this, [this] {
+        hostFingerprint_ = certificateFingerprint(socket_->peerCertificate());
+        log::info("Collab", "secure connection ({}), host certificate {}", encryption().toStdString(),
+                  formatFingerprint(hostFingerprint_, 4).toStdString());
         send({{"t", "hello"},
               {"v", kProtocolVersion},
               {"name", name_.toStdString()},
               {"password", password_.toStdString()}});
     });
-    connect(socket_.get(), &QTcpSocket::readyRead, this, &CollabClient::onReadable);
-    connect(socket_.get(), &QTcpSocket::bytesWritten, this, [this] {
+    connect(socket_.get(), &QSslSocket::readyRead, this, &CollabClient::onReadable);
+    connect(socket_.get(), &QSslSocket::bytesWritten, this, [this] {
         if (sender_) sender_->pump();
     });
-    connect(socket_.get(), &QTcpSocket::disconnected, this, [this] { finish(tr("The host closed the session.")); });
-    connect(socket_.get(), &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
+    connect(socket_.get(), &QSslSocket::disconnected, this, [this] { finish(tr("The host closed the session.")); });
+    connect(socket_.get(), &QSslSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
         if (socket_) finish(socket_->errorString());
     });
+    if (!QSslSocket::supportsSsl()) {
+        QTimer::singleShot(0, this, [this] { finish(tr("TLS is not available on this computer (OpenSSL is missing).")); });
+        return;
+    }
     log::info("Collab", "connecting to {}", formatAddress(address).toStdString());
-    socket_->connectToHost(address.host, address.port);
+    socket_->connectToHostEncrypted(address.host, address.port);
+}
+
+void CollabClient::onSslErrors(const QList<QSslError>&) {
+    // A session host's certificate is self-signed: trust comes from its fingerprint instead.
+    const QByteArray fingerprint = certificateFingerprint(socket_->peerCertificate());
+    const QByteArray expected = !address_.fingerprint.isEmpty()
+                                    ? address_.fingerprint
+                                    : KnownHosts::fingerprintFor(address_.host, address_.port);
+    if (!expected.isEmpty() && fingerprint == expected) {
+        socket_->ignoreSslErrors();
+        return;
+    }
+    if (!expected.isEmpty()) {
+        log::error("Collab", "host certificate {} does not match the expected {}",
+                   formatFingerprint(fingerprint, 4).toStdString(), formatFingerprint(expected, 4).toStdString());
+        return finish(tr("The host's certificate does not match the one expected for this address. "
+                         "Someone may be intercepting the connection - not connecting."));
+    }
+    const QString host = address_.host;
+    const quint16 port = address_.port;
+    emit untrustedHost(host, port, fingerprint);
+    finish(tr("The host's identity has not been confirmed yet."));
+}
+
+QString CollabClient::encryption() const {
+    if (!socket_ || !socket_->isEncrypted()) return tr("not encrypted");
+    const QSslCipher cipher = socket_->sessionCipher();
+    return QStringLiteral("%1, %2").arg(cipher.protocolString(), cipher.name());
 }
 
 void CollabClient::disconnectFromHost() {
@@ -129,9 +173,7 @@ void CollabClient::send(const json& message) {
 void CollabClient::sendDatagram(const json& message) {
     if (!udp_ || udpTarget_.isNull()) return;
     json m = message;
-    m["id"] = id_;
-    m["token"] = token_;
-    udp_->writeDatagram(encodeDatagram(m), udpTarget_, address_.port);
+    udp_->writeDatagram(sealDatagram(m, static_cast<quint32>(id_), udpKey_), udpTarget_, address_.port);
 }
 
 void CollabClient::sendPatch(const ScenePatch& patch) {
@@ -236,10 +278,10 @@ void CollabClient::handle(const Frame& frame) {
 
 void CollabClient::onWelcome(const json& m) {
     id_ = m.value("id", 0);
-    token_ = m.value("token", 0u);
+    udpKey_ = QByteArray::fromBase64(QByteArray::fromStdString(m.value("udpKey", std::string{})));
     session_ = QString::fromStdString(m.value("session", std::string{}));
     project_ = QString::fromStdString(m.value("project", std::string{}));
-    hostUdp_ = m.value("udp", false);
+    hostUdp_ = m.value("udp", false) && udpKey_.size() == kSessionKeySize;
     participants_.clear();
     if (const auto users = m.find("users"); users != m.end() && users->is_array()) {
         for (const json& u : *users) {
@@ -286,8 +328,8 @@ void CollabClient::updatePresence(const json& m) {
 void CollabClient::onDatagrams() {
     while (udp_ && udp_->hasPendingDatagrams()) {
         const QNetworkDatagram datagram = udp_->receiveDatagram(4096);
-        const auto message = decodeDatagram(datagram.data());
-        if (!message) continue;
+        const auto message = openDatagram(datagram.data(), udpKey_);
+        if (!message) continue;  // not from the host (or altered)
         const bool wasActive = udpActive();
         sinceUdpAck_.restart();
         if (!wasActive) heartbeat();  // report the switch to UDP right away

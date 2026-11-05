@@ -2,7 +2,12 @@
 
 #include "scene/ComponentRegistry.hpp"
 
+extern "C" {
+#include <monocypher.h>
+}
+
 #include <QCryptographicHash>
+#include <QRandomGenerator>
 #include <QtEndian>
 #include <QUrl>
 
@@ -12,6 +17,10 @@
 namespace lumora::collab {
 
 using nlohmann::json;
+
+namespace {
+constexpr qsizetype kHeaderSize = 8;  // magic + participant id (authenticated, not encrypted)
+}
 
 namespace {
 
@@ -44,19 +53,46 @@ QByteArray encodeChunk(const AssetChunk& chunk) {
     return frame(FrameKind::AssetChunk, payload);
 }
 
-QByteArray encodeDatagram(const json& message) {
-    QByteArray out(kUdpMagic, 4);
+QByteArray newSessionKey() {
+    QByteArray key(kSessionKeySize, '\0');
+    QRandomGenerator::system()->fillRange(reinterpret_cast<quint32*>(key.data()), kSessionKeySize / 4);
+    return key;
+}
+
+QByteArray sealDatagram(const json& message, quint32 participant, const QByteArray& key) {
+    if (key.size() != kSessionKeySize) return {};
     const std::string text = message.dump(-1, ' ', false, json::error_handler_t::replace);
-    out.append(text.data(), static_cast<qsizetype>(text.size()));
+    QByteArray out(kHeaderSize + 24 + 16 + static_cast<qsizetype>(text.size()), '\0');
+    std::memcpy(out.data(), kUdpMagic, 4);
+    qToBigEndian<quint32>(participant, out.data() + 4);
+    auto* nonce = reinterpret_cast<uint8_t*>(out.data() + kHeaderSize);
+    QRandomGenerator::system()->fillRange(reinterpret_cast<quint32*>(nonce), 6);
+    crypto_aead_lock(reinterpret_cast<uint8_t*>(out.data() + kHeaderSize + 40), nonce + 24,
+                     reinterpret_cast<const uint8_t*>(key.constData()), nonce,
+                     reinterpret_cast<const uint8_t*>(out.constData()), kHeaderSize,
+                     reinterpret_cast<const uint8_t*>(text.data()), text.size());
     return out;
 }
 
-std::optional<json> decodeDatagram(const QByteArray& datagram) {
-    if (datagram.size() < 6 || datagram.size() > 4096 || std::memcmp(datagram.constData(), kUdpMagic, 4) != 0) {
+std::optional<quint32> datagramParticipant(const QByteArray& datagram) {
+    if (datagram.size() < kHeaderSize + 40 + 2 || datagram.size() > 4096 ||
+        std::memcmp(datagram.constData(), kUdpMagic, 4) != 0) {
         return std::nullopt;
     }
-    if (!jsonNestingWithin(datagram, 16)) return std::nullopt;
-    json message = json::parse(datagram.constData() + 4, datagram.constData() + datagram.size(), nullptr, false);
+    return qFromBigEndian<quint32>(datagram.constData() + 4);
+}
+
+std::optional<json> openDatagram(const QByteArray& datagram, const QByteArray& key) {
+    if (!datagramParticipant(datagram) || key.size() != kSessionKeySize) return std::nullopt;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(datagram.constData());
+    QByteArray plain(datagram.size() - kHeaderSize - 40, '\0');
+    if (crypto_aead_unlock(reinterpret_cast<uint8_t*>(plain.data()), bytes + kHeaderSize + 24,
+                           reinterpret_cast<const uint8_t*>(key.constData()), bytes + kHeaderSize, bytes, kHeaderSize,
+                           bytes + kHeaderSize + 40, static_cast<size_t>(plain.size())) != 0) {
+        return std::nullopt;  // forged or altered
+    }
+    if (!jsonNestingWithin(plain, 16)) return std::nullopt;
+    json message = json::parse(plain.constData(), plain.constData() + plain.size(), nullptr, false);
     if (message.is_discarded() || !message.is_object()) return std::nullopt;
     return message;
 }
@@ -199,9 +235,15 @@ std::optional<Address> parseAddress(const QString& input) {
     for (const QString& scheme : {QStringLiteral("lumora://"), QStringLiteral("tcp://")}) {
         if (text.startsWith(scheme, Qt::CaseInsensitive)) text = text.mid(scheme.size());
     }
+    Address address;
+    if (const qsizetype hash = text.indexOf(QLatin1Char('#')); hash >= 0) {
+        const QByteArray fingerprint = text.mid(hash + 1).toLatin1().toLower().replace(":", "").replace(" ", "");
+        if (fingerprint.size() != 64 || QByteArray::fromHex(fingerprint).toHex() != fingerprint) return std::nullopt;
+        address.fingerprint = fingerprint;
+        text = text.left(hash);
+    }
     while (text.endsWith(QLatin1Char('/'))) text.chop(1);
     if (text.isEmpty() || text.contains(QLatin1Char(' '))) return std::nullopt;
-    Address address;
     QString portText;
     if (text.startsWith(QLatin1Char('['))) {  // [ipv6]:port
         const qsizetype close = text.indexOf(QLatin1Char(']'));
@@ -230,7 +272,13 @@ std::optional<Address> parseAddress(const QString& input) {
 
 QString formatAddress(const Address& address) {
     const QString host = address.host.contains(QLatin1Char(':')) ? QStringLiteral("[%1]").arg(address.host) : address.host;
-    return QStringLiteral("%1:%2").arg(host).arg(address.port);
+    QString text = QStringLiteral("%1:%2").arg(host).arg(address.port);
+    if (!address.fingerprint.isEmpty()) text += QLatin1Char('#') + QString::fromLatin1(address.fingerprint);
+    return text;
+}
+
+QString shareAddress(const QString& host, quint16 port, const QByteArray& fingerprint) {
+    return QStringLiteral("lumora://") + formatAddress({host, port, fingerprint});
 }
 
 QString sanitizeName(const QString& name) {

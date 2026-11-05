@@ -21,6 +21,7 @@
 #include "assets/AssetImport.hpp"
 #include "collab/CollabClient.hpp"
 #include "collab/CollabServer.hpp"
+#include "collab/HostIdentity.hpp"
 #include "collab/CollabSession.hpp"
 #include "collab/CollabUi.hpp"
 #include "renderer/MeshCache.hpp"
@@ -932,6 +933,10 @@ Result<> EditorWindow::startHosting(const HostOptions& host) {
     options.projectName = projectName;
     options.sessionName = QStringLiteral("%1 · %2").arg(projectName, QString::fromStdString(editScene_->name()));
     options.projectRoot = app::toQString(project_.rootDir());
+    // The same certificate every time, so guests who confirmed it once keep trusting this host.
+    auto identity = collab::loadOrCreateHostIdentity(collab::defaultIdentityFolder());
+    if (!identity) return std::unexpected(identity.error());
+    options.identity = *identity;
     auto server = std::make_unique<collab::CollabServer>();
     if (auto started = server->start(options, SceneSerializer::toJson(*editScene_)); !started) return started;
     collabServer_ = std::move(server);
@@ -946,7 +951,8 @@ Result<> EditorWindow::startHosting(const HostOptions& host) {
         updateSessionUi();
         QTimer::singleShot(0, this, [this, reason] { QMessageBox::warning(this, tr("Cannot Host Session"), reason); });
     });
-    collabClient_->connectTo({QStringLiteral("127.0.0.1"), collabServer_->port()}, host.name, host.password);
+    collabClient_->connectTo({QStringLiteral("127.0.0.1"), collabServer_->port(), options.identity.fingerprint}, host.name,
+                             host.password);
     updateSessionUi();
     return {};
 }
@@ -997,7 +1003,7 @@ void EditorWindow::beginSession(bool hosting, const QString& publicAddress, cons
 
     collabSession_->begin(scene, seq);
     std::optional<collab::CollabPanel::HostInfo> host;
-    if (hosting && collabServer_) host = collab::CollabPanel::HostInfo{collabServer_->port(), publicAddress};
+    if (hosting && collabServer_) host = collab::CollabPanel::HostInfo{collabServer_->port(), publicAddress, collabServer_->fingerprint()};
     collabPanel_->attach(client, host);
     collabDock_->show();
     collabDock_->raise();

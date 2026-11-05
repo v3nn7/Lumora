@@ -6,6 +6,7 @@
 #include "core/Log.hpp"
 #include "collab/CollabClient.hpp"
 #include "collab/CollabUi.hpp"
+#include "collab/HostIdentity.hpp"
 #include "editor/EditorWindow.hpp"
 #include "launcher/EditorRegistry.hpp"
 #include "project/Project.hpp"
@@ -250,11 +251,33 @@ void Application::joinSessionAt(const QString& addressText, const QString& name,
         failure = reason;
         progress.cancel();
     });
+    QByteArray unconfirmed;  // fingerprint of a host seen for the first time
+    connect(raw, &collab::CollabClient::untrustedHost, &progress,
+            [&](const QString&, quint16, const QByteArray& fingerprint) { unconfirmed = fingerprint; });
     raw->connectTo(address, name, password);
     progress.exec();
     if (joined) return;
     raw->disconnect(&progress);  // cancelled or failed: no more callbacks into this frame
     raw->disconnectFromHost();
+    if (!unconfirmed.isEmpty()) {
+        showHub();
+        const auto answer = QMessageBox::question(
+            hub_, tr("Confirm the Host"),
+            tr("<p>This is your first connection to <b>%1</b>. The session is encrypted, but its "
+               "certificate is the host's own, so confirm it belongs to them:</p>"
+               "<p style='font-family: monospace; font-size: 11pt'>%2</p>"
+               "<p>Ask the host to read the fingerprint shown in their <i>Session</i> panel. Trust "
+               "and join only if it matches. (Addresses copied from that panel include it, and skip "
+               "this question.)</p>")
+                .arg(collab::formatAddress({address.host, address.port, {}}).toHtmlEscaped(),
+                     collab::formatFingerprint(unconfirmed)),
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+        if (answer == QMessageBox::Yes) {
+            collab::KnownHosts::remember(address.host, address.port, unconfirmed);
+            QTimer::singleShot(0, this, [this, addressText, name, password] { joinSessionAt(addressText, name, password); });
+        }
+        return;
+    }
     if (!failure.isEmpty()) {
         showHub();
         QMessageBox::warning(hub_, tr("Cannot Join Session"), failure);

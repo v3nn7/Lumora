@@ -165,8 +165,14 @@ included, plus each participant's camera and selection and a chat. Edits of diff
 even on the same entity; when two people change the same field at once, the one the host
 received last wins. While a session runs, *New Scene* and *Open Scene* are disabled.
 
-The connection is not encrypted, and the password is only an entry check. Share session
-addresses only with people you trust.
+**Sessions are encrypted.** The connection uses TLS (1.3 where available) and camera datagrams
+are sealed with XChaCha20-Poly1305 under a per-participant key sent over TLS. The host has its own
+certificate (created once, kept in `~/.local/share/Lumora/collab/`). The addresses in the
+*Session* panel end with its fingerprint (`lumora://192.168.1.20:7777#ab12…`), and a guest
+joining with such an address verifies it automatically. An address without one prompts once:
+compare the fingerprint with the host's *Session* panel, and Lumora remembers it. If a host's
+certificate ever changes for a remembered address, joining is refused. The password is
+checked over the encrypted connection.
 
 ## Releases and installing editors
 

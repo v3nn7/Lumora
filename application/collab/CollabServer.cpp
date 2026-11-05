@@ -11,7 +11,9 @@
 #include <QNetworkDatagram>
 #include <QPointer>
 #include <QRandomGenerator>
-#include <QTcpServer>
+#include <QSslConfiguration>
+#include <QSslServer>
+#include <QSslSocket>
 #include <QTcpSocket>
 #include <QUdpSocket>
 
@@ -57,7 +59,7 @@ struct CollabServer::Peer {
     int id = 0;  // 0 until admitted
     QString name;
     QString color;
-    quint32 token = 0;
+    QByteArray udpKey;  // seals this participant's presence datagrams (sent over TLS)
     bool udp = false;  // presence is delivered over UDP
     QHostAddress udpHost;
     quint16 udpPort = 0;
@@ -80,7 +82,18 @@ Result<> CollabServer::start(const Options& options, const json& sceneDocument) 
     document_ = std::move(*scene);
     seq_ = 0;
 
-    tcp_ = std::make_unique<QTcpServer>();
+    if (!QSslSocket::supportsSsl()) {
+        return makeError("TLS is not available: Qt's OpenSSL backend (or OpenSSL itself) is missing");
+    }
+    if (!options.identity.isValid()) return makeError("the session needs a host certificate");
+    tcp_ = std::make_unique<QSslServer>();
+    QSslConfiguration tls = QSslConfiguration::defaultConfiguration();
+    tls.setLocalCertificate(options.identity.certificate);
+    tls.setPrivateKey(options.identity.key);
+    tls.setProtocol(QSsl::TlsV1_2OrLater);
+    tls.setPeerVerifyMode(QSslSocket::VerifyNone);  // guests authenticate with the session password
+    tcp_->setSslConfiguration(tls);
+    tcp_->setHandshakeTimeout(kHelloTimeoutMs);
     if (!tcp_->listen(options.bindAddress, options.port)) {
         const QString why = tcp_->errorString();
         tcp_.reset();
@@ -98,7 +111,8 @@ Result<> CollabServer::start(const Options& options, const json& sceneDocument) 
         udp_.reset();
     }
     digestTimer_.start();
-    log::info("Collab", "hosting '{}' on port {}", options.sessionName.toStdString(), tcp_->serverPort());
+    log::info("Collab", "hosting '{}' on port {} (TLS, certificate {})", options.sessionName.toStdString(),
+              tcp_->serverPort(), formatFingerprint(options.identity.fingerprint, 4).toStdString());
     return {};
 }
 
@@ -282,7 +296,7 @@ void CollabServer::admit(Peer& peer, const json& hello) {
     peer.id = nextId_++;
     peer.name = sanitizeName(QString::fromStdString(hello.value("name", std::string{})));
     peer.color = QString::fromLatin1(kPalette[(peer.id - 1) % std::size(kPalette)]);
-    peer.token = QRandomGenerator::system()->generate() | 1u;
+    peer.udpKey = newSessionKey();
     peer.reader.setJsonLimit(kMaxJsonFrame);
 
     json users = json::array();
@@ -300,7 +314,7 @@ void CollabServer::admit(Peer& peer, const json& hello) {
     send(peer, {{"t", "welcome"},
                 {"v", kProtocolVersion},
                 {"id", peer.id},
-                {"token", peer.token},
+                {"udpKey", peer.udpKey.toBase64().toStdString()},
                 {"color", peer.color.toStdString()},
                 {"session", options_.sessionName.toStdString()},
                 {"project", options_.projectName.toStdString()},
@@ -350,12 +364,11 @@ void CollabServer::relayPresence(const Peer& from) {
     json message = from.presence;
     message["t"] = "presence";
     message["id"] = from.id;
-    const QByteArray datagram = encodeDatagram(message);
     const QByteArray frame = encodeMessage(message);
     for (auto& p : peers_) {
         if (p->id == 0 || p.get() == &from) continue;
         if (p->udp && udp_) {
-            udp_->writeDatagram(datagram, p->udpHost, p->udpPort);
+            udp_->writeDatagram(sealDatagram(message, static_cast<quint32>(p->id), p->udpKey), p->udpHost, p->udpPort);
         } else {
             p->socket->write(frame);
         }
@@ -365,15 +378,17 @@ void CollabServer::relayPresence(const Peer& from) {
 void CollabServer::onDatagrams() {
     while (udp_ && udp_->hasPendingDatagrams()) {
         const QNetworkDatagram datagram = udp_->receiveDatagram(4096);
-        const auto message = decodeDatagram(datagram.data());
-        if (!message) continue;
-        Peer* peer = findPeer(message->value("id", 0));
-        if (peer == nullptr || message->value("token", 0u) != peer->token) continue;
+        const auto id = datagramParticipant(datagram.data());
+        Peer* peer = id ? findPeer(static_cast<int>(*id)) : nullptr;
+        if (peer == nullptr) continue;
+        const auto message = openDatagram(datagram.data(), peer->udpKey);
+        if (!message) continue;  // forged, altered or replayed under another id
         peer->udpHost = datagram.senderAddress();
         peer->udpPort = static_cast<quint16>(datagram.senderPort());
         const std::string type = message->value("t", std::string{});
         if (type == "hello") {
-            udp_->writeDatagram(encodeDatagram({{"t", "udpAck"}}), peer->udpHost, peer->udpPort);
+            udp_->writeDatagram(sealDatagram({{"t", "udpAck"}}, static_cast<quint32>(peer->id), peer->udpKey),
+                                peer->udpHost, peer->udpPort);
         } else if (type == "presence" && validPresence(*message)) {
             peer->presence = presenceFields(*message);
             relayPresence(*peer);

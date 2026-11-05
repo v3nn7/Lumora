@@ -33,6 +33,19 @@ if(LUMORA_WAYLAND_POINTER_LOCK)
     target_compile_definitions(lumora_appcommon PRIVATE LUMORA_HAS_WAYLAND_POINTER_LOCK=1)
 endif()
 
+# micro-ecc: ECDSA P-256 for the session host's self-signed TLS certificate (BSD-2-Clause).
+include(FetchContent)
+FetchContent_Declare(micro_ecc
+    URL https://github.com/kmackay/micro-ecc/archive/refs/tags/v1.1.tar.gz
+    URL_HASH SHA256=0e39fba553f6ae1870c3033201d3eaa61a59bf4aa3bdbabed7a26e1bb5b7e890
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(micro_ecc)  # no CMake project: sources only
+enable_language(C)
+add_library(lumora_uecc STATIC ${micro_ecc_SOURCE_DIR}/uECC.c)
+target_include_directories(lumora_uecc SYSTEM PUBLIC ${micro_ecc_SOURCE_DIR})
+target_compile_definitions(lumora_uecc PUBLIC uECC_SUPPORTS_secp160r1=0 uECC_SUPPORTS_secp192r1=0
+    uECC_SUPPORTS_secp224r1=0 uECC_SUPPORTS_secp256k1=0)
+
 # Live collaboration: session server, client, scene sync, and the host/join dialogs and panel.
 lumora_qt_module(collab
     SOURCES
@@ -43,7 +56,9 @@ lumora_qt_module(collab
         collab/SceneSync.cpp
         collab/CollabSession.cpp
         collab/CollabUi.cpp
+        collab/HostIdentity.cpp
     DEPS lumora_scene lumora_core Qt6::Network Qt6::Widgets)
+target_link_libraries(lumora_collab PRIVATE lumora_uecc lumora_monocypher)
 
 add_subdirectory(launcher)
 

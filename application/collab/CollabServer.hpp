@@ -2,6 +2,7 @@
 
 #include "common/ModuleExport.hpp"
 
+#include "collab/HostIdentity.hpp"
 #include "collab/Protocol.hpp"
 #include "core/Error.hpp"
 
@@ -13,7 +14,7 @@
 #include <memory>
 #include <vector>
 
-class QTcpServer;
+class QSslServer;
 class QTcpSocket;
 class QUdpSocket;
 
@@ -23,8 +24,9 @@ class Scene;
 
 namespace lumora::collab {
 
-/// Hosts a live editing session: listens on one port for TCP (scene changes, chat, asset
-/// files) and UDP (presence), keeps the authoritative copy of the shared scene and orders all
+/// Hosts a live editing session: listens on one port for TLS over TCP (scene changes, chat,
+/// asset files) and sealed UDP datagrams (presence), keeps the authoritative copy of the shared
+/// scene and orders all
 /// changes. Each change is applied in arrival order (last writer wins per entity) and echoed to
 /// every client, including its author, as the acknowledgement. A digest of the scene goes out
 /// every few seconds so clients can detect and repair drift.
@@ -43,6 +45,7 @@ public:
         QString projectName;
         QString projectRoot;          // asset store (the host's project folder)
         int maxClients = 16;
+        HostIdentity identity;        // TLS certificate and key (required)
     };
 
     explicit CollabServer(QObject* parent = nullptr);
@@ -53,6 +56,8 @@ public:
     [[nodiscard]] bool isRunning() const noexcept;
     [[nodiscard]] quint16 port() const noexcept;
     [[nodiscard]] bool udpAvailable() const noexcept;
+    /// SHA-256 of the host certificate guests must see.
+    [[nodiscard]] const QByteArray& fingerprint() const noexcept { return options_.identity.fingerprint; }
     [[nodiscard]] int clientCount() const noexcept;
     [[nodiscard]] std::uint64_t sequence() const noexcept { return seq_; }
     [[nodiscard]] nlohmann::json document() const;
@@ -80,7 +85,7 @@ private:
     [[nodiscard]] nlohmann::json userJson(const Peer& peer) const;
 
     Options options_;
-    std::unique_ptr<QTcpServer> tcp_;
+    std::unique_ptr<QSslServer> tcp_;
     std::unique_ptr<QUdpSocket> udp_;
     std::vector<std::unique_ptr<Peer>> peers_;
     std::vector<std::unique_ptr<Peer>> retired_;  // removed during a handler; freed on the next loop pass

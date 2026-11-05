@@ -331,7 +331,19 @@ that, 64 MiB for messages and 256 KiB per chunk. JSON nesting deeper than 64 is 
 parsing. Asset paths must be relative, inside `Content/`, with no `..`, empty, dot or `.part`
 segments. Asset files are limited to 1 GiB, chat to 500 characters and names to 32. A peer has
 10 s to say hello, sessions hold up to 16 clients, and a password, if set, is checked on
-admission. Patches from the network are validated like scene files. Traffic is not encrypted.
+admission. Patches from the network are validated like scene files.
+
+**Encryption.** The TCP stream is TLS (`QSslServer`/`QSslSocket`, TLS 1.2 or later). The host's
+identity (`HostIdentity`) is an ECDSA P-256 key (micro-ecc) in a self-signed X.509 certificate
+that Lumora encodes in DER itself, because Qt cannot create certificates and no OpenSSL headers
+are needed. It is created once per user and reused, so a guest's trust carries over. Guests
+verify the certificate by SHA-256 fingerprint, not by a CA. The fingerprint is pinned in the
+shared address (`lumora://host:port#<sha256>`), else taken from `KnownHosts` (remembered after
+the user confirmed it once). An unknown host is reported (`untrustedHost`) and not joined, and
+a mismatch is a hard failure. UDP presence datagrams are `"LMRE" | id | nonce | MAC |
+XChaCha20-Poly1305(JSON)` (Monocypher), keyed per participant with a random key sent in the
+welcome message, with the header authenticated as associated data. The host drops datagrams
+that do not open under the claimed participant's key.
 
 **Editor integration.** The host's editor runs the server in-process and joins it over loopback
 like everyone else. A joiner connects first. The `joined` signal is handled synchronously: the

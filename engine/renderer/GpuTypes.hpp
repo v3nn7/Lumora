@@ -12,6 +12,8 @@
 namespace lumora::render {
 
 inline constexpr std::uint32_t kMaxLights = 16;
+/// Sun shadow cascades, rendered as the 2x2 tiles of one depth atlas.
+inline constexpr std::uint32_t kShadowCascades = 4;
 
 struct GpuLight {
     glm::vec4 positionRange{0.0f};
@@ -33,8 +35,10 @@ struct FrameConstants {
     glm::vec4 sunColor{0.0f};
     glm::vec4 gridParams{0.0f};
     glm::uvec4 counts{0u};                  // x light count, y shadowed sun (or ~0u), z material sampler
-    glm::mat4 lightViewProjection{1.0f};    // sun shadow map transform
-    glm::vec4 shadowParams{0.0f};           // x enabled, y comparison sampler, z texel size (uv), w normal offset (m)
+    glm::mat4 cascadeViewProjection[kShadowCascades]{};  // world -> cascade clip (orthographic)
+    glm::vec4 shadowParams{0.0f};           // x enabled, y comparison sampler, z 1/atlas size, w atlas size (texels)
+    glm::vec4 cascadeTexelWorld{0.0f};      // world size of one shadow texel in each cascade (m)
+    glm::vec4 shadowFade{0.0f};             // x distance where shadows start to fade, y where they end
     glm::vec4 fogParams{0.0f};              // x density, y height falloff, z max opacity
     GpuLight lights[kMaxLights]{};
 };
@@ -65,11 +69,13 @@ struct PushConstants {
 static_assert(sizeof(GpuLight) == 48);
 static_assert(offsetof(FrameConstants, cameraPositionTime) == 256);
 static_assert(offsetof(FrameConstants, counts) == 384);
-static_assert(offsetof(FrameConstants, lightViewProjection) == 400);
-static_assert(offsetof(FrameConstants, shadowParams) == 464);
-static_assert(offsetof(FrameConstants, fogParams) == 480);
-static_assert(offsetof(FrameConstants, lights) == 496);
-static_assert(sizeof(FrameConstants) == 496 + 48 * kMaxLights);
+static_assert(offsetof(FrameConstants, cascadeViewProjection) == 400);
+static_assert(offsetof(FrameConstants, shadowParams) == 656);
+static_assert(offsetof(FrameConstants, cascadeTexelWorld) == 672);
+static_assert(offsetof(FrameConstants, shadowFade) == 688);
+static_assert(offsetof(FrameConstants, fogParams) == 704);
+static_assert(offsetof(FrameConstants, lights) == 720);
+static_assert(sizeof(FrameConstants) == 720 + 48 * kMaxLights);
 static_assert(sizeof(GpuObject) == 192);
 static_assert(offsetof(GpuObject, textures) == 176);
 static_assert(offsetof(GpuObject, flags) == 160);

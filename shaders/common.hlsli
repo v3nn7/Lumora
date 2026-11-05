@@ -3,6 +3,7 @@
 #define LUMORA_COMMON_HLSLI
 
 #define MAX_LIGHTS 16
+#define SHADOW_CASCADES 4
 #define LIGHT_DIRECTIONAL 0
 #define LIGHT_POINT 1
 
@@ -28,8 +29,10 @@ struct FrameData {
     float4 sunColor;            // rgb radiance
     float4 gridParams;          // x enabled, y cell size, z fade distance
     uint4 counts;               // x light count, y shadowed sun index (0xFFFFFFFF = none), z material sampler
-    column_major float4x4 lightViewProjection;
-    float4 shadowParams;        // x enabled, y comparison sampler, z texel size (uv), w normal offset
+    column_major float4x4 cascadeViewProjection[SHADOW_CASCADES];  // 2x2 tiles of the shadow atlas
+    float4 shadowParams;        // x enabled, y comparison sampler, z 1/atlas size, w atlas size (texels)
+    float4 cascadeTexelWorld;   // world size of one shadow texel per cascade (m)
+    float4 shadowFade;          // x distance where shadows start fading out, y where they are gone
     float4 fogParams;           // x density, y height falloff, z max opacity
     GpuLight lights[MAX_LIGHTS];
 };

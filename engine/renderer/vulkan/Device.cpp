@@ -109,6 +109,7 @@ std::vector<DeviceCandidate> enumerateDevices(VkInstance instance, bool requireS
         caps.timestampPeriodNs = props.properties.limits.timestampPeriod;
         caps.maxPushConstantsSize = props.properties.limits.maxPushConstantsSize;
         caps.maxAnisotropy = props.properties.limits.maxSamplerAnisotropy;
+        caps.maxImageDimension2D = props.properties.limits.maxImageDimension2D;
         caps.maxBindlessSampledImages = std::min(props12.maxPerStageDescriptorUpdateAfterBindSampledImages,
                                                  props12.maxDescriptorSetUpdateAfterBindSampledImages);
         caps.maxBindlessSamplers = std::min(props12.maxPerStageDescriptorUpdateAfterBindSamplers,

@@ -10,6 +10,7 @@
 #include <glm/matrix.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <span>
 #include <string>
 
@@ -67,9 +68,13 @@ ShadowFit fitSunShadow(const CameraView& camera, const glm::vec3& lightDirection
 
     const glm::vec3 dir = glm::normalize(lightDirection);
     const glm::vec3 lightUp = std::abs(dir.y) > 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
-    constexpr float kCasterMargin = 60.0f;  // include occluders outside the view slice
-    const glm::mat4 view = glm::lookAt(center - dir * (radius + kCasterMargin), center, lightUp);
-    glm::mat4 projection = glm::ortho(-radius, radius, -radius, radius, 0.0f, 2.0f * radius + kCasterMargin);
+    // Depth range symmetric around the slice centre (depth 0.5 = centre). Towards the sun it
+    // includes occluders outside the view slice; away from it, receivers that a low sun spreads
+    // far along its direction while they still project inside this cascade's square.
+    constexpr float kCasterMargin = 60.0f;
+    const float halfDepth = std::max(radius + kCasterMargin, 4.0f * radius);
+    const glm::mat4 view = glm::lookAt(center - dir * halfDepth, center, lightUp);
+    glm::mat4 projection = glm::ortho(-radius, radius, -radius, radius, 0.0f, 2.0f * halfDepth);
 
     // Snap the projected world origin to whole texels.
     const glm::mat4 vp = projection * view;
@@ -79,6 +84,19 @@ ShadowFit fitSunShadow(const CameraView& camera, const glm::vec3& lightDirection
     projection[3][0] += offset.x;
     projection[3][1] += offset.y;
     return {projection * view, radius};
+}
+
+std::array<float, kShadowCascades> cascadeSplits(float nearPlane, float distance, float lambda) {
+    std::array<float, kShadowCascades> splits{};
+    const float n = std::max(nearPlane, 0.01f);
+    const float f = std::max(distance, n * 2.0f);
+    const float l = std::clamp(lambda, 0.0f, 1.0f);
+    for (std::uint32_t i = 0; i < kShadowCascades; ++i) {
+        const float p = static_cast<float>(i + 1) / static_cast<float>(kShadowCascades);
+        splits[i] = l * n * std::pow(f / n, p) + (1.0f - l) * (n + (f - n) * p);
+    }
+    splits.back() = f;
+    return splits;
 }
 
 SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
@@ -243,15 +261,26 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             fc.sunColor = glm::vec4(light.color * light.intensity, 1.0f);
         }
     }
-    const bool shadows = settings.shadows && haveSun && settings.shadowResolution > 0;
+    const bool shadows = settings.shadows && haveSun && settings.shadowResolution > 0 && settings.shadowDistance > 0.0f;
     fc.counts = glm::uvec4(lightCount, shadows ? sunIndex : UINT32_MAX, ctx_.materialSampler(), 0);
     stats.lights = lightCount;
+    // Cascades are the 2x2 tiles of one atlas; each covers the view frustum from the near plane
+    // to its split (nested), so every visible point within the shadow distance has a cascade.
+    const std::uint32_t tile =
+        std::min(settings.shadowResolution, ctx_.device().caps().maxImageDimension2D / 2);
+    const std::uint32_t atlasSize = tile * 2;
+    std::array<glm::mat4, kShadowCascades> cascadeMatrices{};
     if (shadows) {
-        const ShadowFit fit = fitSunShadow(camera, sunTravel, settings.shadowDistance, settings.shadowResolution);
-        const float texelWorld = 2.0f * fit.radius / static_cast<float>(settings.shadowResolution);
-        fc.lightViewProjection = fit.viewProjection;
+        const auto splits = cascadeSplits(camera.nearPlane, settings.shadowDistance, settings.cascadeSplitLambda);
+        for (std::uint32_t c = 0; c < kShadowCascades; ++c) {
+            const ShadowFit fit = fitSunShadow(camera, sunTravel, splits[c], tile);
+            cascadeMatrices[c] = fit.viewProjection;
+            fc.cascadeViewProjection[c] = fit.viewProjection;
+            fc.cascadeTexelWorld[static_cast<int>(c)] = 2.0f * fit.radius / static_cast<float>(tile);
+        }
         fc.shadowParams = glm::vec4(1.0f, static_cast<float>(ctx_.shadowCompareSampler()),
-                                    1.0f / static_cast<float>(settings.shadowResolution), texelWorld * 1.5f);
+                                    1.0f / static_cast<float>(atlasSize), static_cast<float>(atlasSize));
+        fc.shadowFade = glm::vec4(settings.shadowDistance * 0.85f, settings.shadowDistance, 0.0f, 0.0f);
         stats.shadowsRendered = true;
     }
     frame.constants.write(std::as_bytes(std::span(&fc, 1)));
@@ -260,8 +289,11 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     struct Draw {
         const GpuMesh* mesh;
         std::uint32_t object;
+        glm::vec3 center;  // world AABB
+        glm::vec3 extent;
     };
-    std::vector<Draw> draws;
+    std::vector<Draw> draws;    // visible to the camera
+    std::vector<Draw> casters;  // may cast into a shadow cascade (also off-screen objects)
     std::vector<GpuObject> objects;
     const Frustum frustum = Frustum::fromViewProjection(fc.viewProjection);
     for (auto [e, mesh, world] : reg.view<MeshRendererComponent, WorldTransformComponent>().each()) {
@@ -269,17 +301,16 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         const GpuMesh* gpuMeshPtr = meshFor(mesh, settings.assets, settings.blockOnAssets);
         if (gpuMeshPtr == nullptr) continue;  // still loading, or unresolved (already reported)
         const GpuMesh& gpuMesh = *gpuMeshPtr;
-        if (settings.frustumCulling) {
-            const glm::vec3 localCenter = (gpuMesh.bounds.min + gpuMesh.bounds.max) * 0.5f;
-            const glm::vec3 localExtent = (gpuMesh.bounds.max - gpuMesh.bounds.min) * 0.5f;
-            const glm::vec3 center(world.matrix * glm::vec4(localCenter, 1.0f));
-            const glm::mat3 m(world.matrix);
-            const glm::vec3 extentWorld = glm::abs(m[0]) * localExtent.x + glm::abs(m[1]) * localExtent.y +
-                                          glm::abs(m[2]) * localExtent.z;
-            if (!frustum.intersectsAabb(center, extentWorld)) {
-                ++stats.culledObjects;
-                continue;
-            }
+        const glm::vec3 localCenter = (gpuMesh.bounds.min + gpuMesh.bounds.max) * 0.5f;
+        const glm::vec3 localExtent = (gpuMesh.bounds.max - gpuMesh.bounds.min) * 0.5f;
+        const glm::vec3 center(world.matrix * glm::vec4(localCenter, 1.0f));
+        const glm::mat3 m(world.matrix);
+        const glm::vec3 extentWorld =
+            glm::abs(m[0]) * localExtent.x + glm::abs(m[1]) * localExtent.y + glm::abs(m[2]) * localExtent.z;
+        const bool visible = !settings.frustumCulling || frustum.intersectsAabb(center, extentWorld);
+        if (!visible) {
+            ++stats.culledObjects;
+            if (!shadows) continue;
         }
         GpuObject obj;
         obj.world = world.matrix;
@@ -287,7 +318,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         obj.baseColorMetallic = glm::vec4(mesh.baseColor, mesh.metallic);
         obj.emissiveRoughness = glm::vec4(mesh.emissive * mesh.emissiveStrength, mesh.roughness);
         obj.flags = glm::vec4(e == settings.selected ? 1.0f : 0.0f, static_cast<float>(mesh.pattern), 0.0f, 0.0f);
-        if (settings.assets != nullptr) {
+        if (visible && settings.assets != nullptr) {  // casters only need depth, not materials
             TextureCache& textures = ctx_.textures();
             const bool block = settings.blockOnAssets;
             obj.textures = glm::uvec4(textures.index(*settings.assets, mesh.baseColorTexture, TextureColorSpace::Srgb, block),
@@ -295,15 +326,18 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                                       textures.index(*settings.assets, mesh.emissiveTexture, TextureColorSpace::Srgb, block),
                                       textures.index(*settings.assets, mesh.normalTexture, TextureColorSpace::Linear, block));
         }
-        draws.push_back({gpuMeshPtr, static_cast<std::uint32_t>(objects.size())});
+        const Draw draw{gpuMeshPtr, static_cast<std::uint32_t>(objects.size()), center, extentWorld};
+        if (visible) draws.push_back(draw);
+        if (shadows) casters.push_back(draw);
         objects.push_back(obj);
     }
     std::ranges::sort(draws, std::less<>{}, [](const Draw& d) { return d.mesh; });
+    std::ranges::sort(casters, std::less<>{}, [](const Draw& d) { return d.mesh; });
     ensureObjectCapacity(frame, static_cast<std::uint32_t>(std::max<std::size_t>(objects.size(), 1)));
     if (!objects.empty()) {
         frame.objects.write(std::as_bytes(std::span(objects)));
     }
-    stats.visibleObjects = static_cast<std::uint32_t>(objects.size());
+    stats.visibleObjects = static_cast<std::uint32_t>(draws.size());
     for (const Draw& d : draws) {
         stats.triangles += d.mesh->indexCount / 3;
     }
@@ -320,31 +354,49 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
 
     RGImage shadowMap{};
     if (shadows) {
-        shadowMap = graph.createImage("SunShadowMap",
-                                      {ctx_.depthFormat(), {settings.shadowResolution, settings.shadowResolution}});
+        // Per-cascade caster culling against the cascade's side planes. Casters between the sun
+        // and the cascade are kept: the light-facing plane never culls.
+        std::array<std::vector<Draw>, kShadowCascades> cascadeCasters;
+        for (std::uint32_t c = 0; c < kShadowCascades; ++c) {
+            Frustum box = Frustum::fromViewProjection(cascadeMatrices[c]);
+            box.planes[4] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+            for (const Draw& d : casters) {
+                if (box.intersectsAabb(d.center, d.extent)) cascadeCasters[c].push_back(d);
+            }
+            stats.drawCalls += static_cast<std::uint32_t>(cascadeCasters[c].size());
+        }
+        shadowMap = graph.createImage("SunShadowAtlas", {ctx_.depthFormat(), {atlasSize, atlasSize}});
         graph.addRasterPass(
             "SunShadow", [&](PassBuilder& b) { b.writeDepth(shadowMap, LoadOp::Clear, 1.0f); },
-            [this, bindSets, layout, casters = draws](PassContext& ctx) {
-                if (casters.empty()) return;
+            [this, bindSets, layout, tile, cascadeCasters = std::move(cascadeCasters)](PassContext& ctx) {
                 vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_.get());
                 bindSets(ctx.cmd);
-                const GpuMesh* mesh = nullptr;
-                for (const Draw& d : casters) {
-                    if (d.mesh != mesh) {
-                        mesh = d.mesh;
-                        const VkBuffer vb = mesh->vertices.handle();
-                        const VkDeviceSize offset = 0;
-                        vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
-                        vkCmdBindIndexBuffer(ctx.cmd, mesh->indices.handle(), 0, VK_INDEX_TYPE_UINT32);
+                for (std::uint32_t c = 0; c < kShadowCascades; ++c) {
+                    const auto x = static_cast<std::int32_t>((c % 2) * tile);
+                    const auto y = static_cast<std::int32_t>((c / 2) * tile);
+                    const VkViewport viewport{static_cast<float>(x), static_cast<float>(y), static_cast<float>(tile),
+                                              static_cast<float>(tile), 0.0f, 1.0f};
+                    const VkRect2D scissor{{x, y}, {tile, tile}};
+                    vkCmdSetViewport(ctx.cmd, 0, 1, &viewport);
+                    vkCmdSetScissor(ctx.cmd, 0, 1, &scissor);
+                    const GpuMesh* mesh = nullptr;
+                    for (const Draw& d : cascadeCasters[c]) {
+                        if (d.mesh != mesh) {
+                            mesh = d.mesh;
+                            const VkBuffer vb = mesh->vertices.handle();
+                            const VkDeviceSize offset = 0;
+                            vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
+                            vkCmdBindIndexBuffer(ctx.cmd, mesh->indices.handle(), 0, VK_INDEX_TYPE_UINT32);
+                        }
+                        PushConstants pc;
+                        pc.index0 = d.object;
+                        pc.index1 = c;
+                        vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                           0, sizeof(pc), &pc);
+                        vkCmdDrawIndexed(ctx.cmd, mesh->indexCount, 1, 0, 0, 0);
                     }
-                    PushConstants pc;
-                    pc.index0 = d.object;
-                    vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                       sizeof(pc), &pc);
-                    vkCmdDrawIndexed(ctx.cmd, mesh->indexCount, 1, 0, 0, 0);
                 }
             });
-        stats.drawCalls += static_cast<std::uint32_t>(draws.size());
     }
 
     graph.addRasterPass(
@@ -362,7 +414,8 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             b.writeDepth(depth, LoadOp::Clear, 0.0f);  // reversed-Z: 0 is the far plane
             if (shadows) b.sample(shadowMap);
         },
-        [this, bindSets, layout, shadows, shadowMap, draws = std::move(draws)](PassContext& ctx) {
+        [this, bindSets, layout, shadows, shadowMap, debugCascades = settings.debugCascades,
+         draws = std::move(draws)](PassContext& ctx) {
             if (draws.empty()) return;
             vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, opaque_.get());
             bindSets(ctx.cmd);
@@ -378,7 +431,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 PushConstants pc;
                 pc.index0 = d.object;
                 pc.index1 = shadows ? ctx.bindlessIndex(shadowMap) : 0u;
-                pc.flags = shadows ? 1u : 0u;
+                pc.flags = (shadows ? 1u : 0u) | (shadows && debugCascades ? 2u : 0u);
                 vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                    sizeof(pc), &pc);
                 vkCmdDrawIndexed(ctx.cmd, mesh->indexCount, 1, 0, 0, 0);

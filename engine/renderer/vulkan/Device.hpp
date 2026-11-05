@@ -29,6 +29,7 @@ struct DeviceCapabilities {
     float timestampPeriodNs = 0.0f;
     bool samplerAnisotropy = false;
     float maxAnisotropy = 1.0f;
+    std::uint32_t maxImageDimension2D = 4096;  // guaranteed minimum
     bool memoryBudget = false;
     bool swapchain = false;
     bool rayTracingPipeline = false;

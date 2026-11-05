@@ -11,6 +11,7 @@ where the current design leaves room for them.
                            lumora_shell  (window orchestration, headless mode)
                 ┌────────────────┼────────────────┐
            lumora_hub       lumora_editor     lumora_player
+                │                ├── lumora_collab  (live sessions: Qt Network + scene patches)
                 └────────────────┼────────────────┘
                          lumora_appcommon  (AppContext, VulkanViewport, theme, snapshots)
                                  │                         Qt 6 boundary ▲
@@ -165,6 +166,13 @@ multithreaded command recording.
   identical output (tested).
 - Core components: `Id`, `Name`, `Transform`, `WorldTransform` (cache), `Hierarchy`,
   `MeshRenderer`, `Light`, `Camera`, `Rotator`.
+- **Scene patches** (`ScenePatch`): the difference between two scene states, as small as possible.
+  New entities are full records (with parent and sibling index). Changed entities are partial
+  records carrying only the new name, a move (parent + index), the changed fields of each
+  component, and ids of added or removed components. A reorder moves only the siblings outside
+  the longest run that is already in order, so deleting or inserting a sibling never rewrites
+  its neighbours. Applying a patch ignores edits of entities or components that no longer exist,
+  so a deletion wins over edits. Undo/redo and collaboration both use patches.
 - **Reflection** (`ComponentRegistry`): each component describes its fields with typed accessors.
   That one description drives JSON serialization, the inspector UI and the "Add Component" menu.
   Adding a reflected component therefore requires no serializer or editor changes. Unknown
@@ -217,9 +225,10 @@ simulates the copy and discards it on Stop, so play-mode changes never reach the
   `PlayerWindow`).
 - `EditorContext` holds the active scene, the selection, the undo stack, mutation entry points
   and change signals. Panels never modify the scene behind each other's backs.
-- **Undo/redo** (`QUndoStack`): structural edits record whole-scene snapshots and restore them
-  in place (`SceneSerializer::loadInto`), so the `Scene` object and every pointer to it stay
-  valid and UUIDs survive. Field and environment edits are typed commands that merge bursts
+- **Undo/redo** (`QUndoStack`): structural edits record the scene before and after and apply the
+  `ScenePatch` between them in place, so the `Scene` object and every pointer to it stay valid,
+  UUIDs survive, and only what the edit changed is reverted (collaborators' concurrent changes
+  stay). Field and environment edits are typed commands that merge bursts
   (scrubbing, sliders) into one step. Gizmo drags record one transform command on release.
   The dirty flag follows the stack's clean state; play-mode edits are never recorded.
 - **Gizmos**: `TransformGizmo` picks handles in screen space and constrains drags to the picked
@@ -229,6 +238,59 @@ simulates the copy and discards it on Stop, so play-mode changes never reach the
   teardown it flushes deferred deletions before the `AppContext` is destroyed (a use-after-free
   that ASan found).
 
+## Live collaboration
+
+`lumora_collab` (Qt Network, no engine changes beyond `ScenePatch`) has a server, a client, the
+scene synchronisation and the editor-facing dialogs and panel.
+
+**Transport.** The host listens on one port for TCP and UDP. TCP is a stream of frames
+`u32 length | u8 kind | payload`: kind 0 is a JSON object with a `"t"` type, kind 1 is an asset
+chunk (path, offset, total size, bytes). UDP datagrams (`"LMRU" | JSON`) carry only presence:
+camera position, view direction and selection. A client switches to UDP once the host has
+answered its UDP hello within the last 5 s, and otherwise sends presence over TCP and tells the
+host to relay others' presence over TCP. A TCP-only tunnel therefore loses nothing but latency.
+
+**Ordering.** The server keeps the authoritative scene (a `Scene` built from the host's document)
+and applies every patch in arrival order, then broadcasts it with a sequence number to everyone,
+the author included. The echo is the acknowledgement. Each patch from a client is applied as a
+whole, and the last writer per field wins.
+
+**SceneSync.** A client finds local edits by diffing its scene against the state last exchanged
+with the host, about 15 times per second. That covers every editing path (inspector, gizmo
+drags, undo, imports) without hooks. Each sent patch is recorded as fine-grained pending keys
+(entity × field, name, move, component added/removed, full record, removal). When someone else's
+patch arrives, local edits are sent first, and then the parts of that patch that a pending key
+covers are dropped. Our patch is later in the host's order, so the host ends up with our value
+too, and everyone converges without operational transforms. Our own echo releases the keys.
+
+**Drift repair.** Every 3 s the host broadcasts a digest (SHA-1 of the scene JSON) with its
+sequence number. A client that has applied that sequence and has nothing in flight compares
+digests; on a mismatch it asks for a snapshot and replaces its scene with it. That covers cases
+the merge rule does not (for example sibling order after concurrent inserts).
+
+**Assets.** The host's project folder is the shared store. Clients request files that the scene
+references but their project lacks (and, for `.gltf`, the buffers and images it names). When a
+client's patch refers to a file the host lacks, the host fetches it from that client, then
+announces it, and clients that were told "missing" ask again. Transfers stream in 256 KiB chunks
+with back-pressure, are written to `<path>.part` and renamed only when complete. Existing files
+are never overwritten. When files arrive the editor clears cached load failures
+(`AssetLibrary`, `MeshCache`, `TextureCache`), so they appear without a reload.
+
+**Limits and checks.** Before a client is admitted, JSON frames are limited to 64 KiB; after
+that, 64 MiB for messages and 256 KiB per chunk. JSON nesting deeper than 64 is rejected before
+parsing. Asset paths must be relative, inside `Content/`, with no `..`, empty, dot or `.part`
+segments. Asset files are limited to 1 GiB, chat to 500 characters and names to 32. A peer has
+10 s to say hello, sessions hold up to 16 clients, and a password, if set, is checked on
+admission. Patches from the network are validated like scene files. Traffic is not encrypted.
+
+**Editor integration.** The host's editor runs the server in-process and joins it over loopback
+like everyone else. A joiner connects first. The `joined` signal is handled synchronously: the
+Application opens (or creates) a local session project in `AppLocalDataLocation/Sessions/<project>`
+and hands the client to that editor before any later message is read. Remote patches go through
+`EditorContext::applyPatch`, or straight to the edit scene during play mode. Collaborators'
+cameras and selections are drawn by `EditorViewportClient` through the overlay pass in their
+colour.
+
 ## Testing
 
 | Suite | What it proves |
@@ -237,17 +299,23 @@ simulates the copy and discards it on Stop, so play-mode changes never reach the
 | Primitives | Index validity, unit normals, **CCW winding per triangle**, bounds |
 | RenderGraph | Barrier planning for typical frames and hazard types |
 | Renderer (GPU) | Renders real frames offscreen and asserts on pixels: a lit cube against sky, back-face culling, frustum culling counts. Skipped when no Vulkan 1.4 device exists |
-| UI (offscreen QPA) | Hub → Editor → Hub, hierarchy editing, reparent + save round trip, play-mode isolation, reflection-built inspector |
+| UI (offscreen QPA) | Hub → Editor → Hub, hierarchy editing, reparent + save round trip, play-mode isolation, reflection-built inspector, two editors sharing a live session |
+| Scene patches | Every kind of edit round-trips, partial records, reorders, concurrent field merges, deletion wins, malformed input |
+| Collaboration (loopback sockets) | Framing under arbitrary splits, hostile frames, path confinement, address parsing, joining, convergence under concurrent edits, drift repair from the digest, presence over UDP, chat, asset download and guest upload, path traversal, wrong password and old protocol versions, host shutdown |
 
 Useful environment variables: `LUMORA_TEST_VALIDATION=1` (validation in GPU tests), `LUMORA_GPU=n`,
 `LUMORA_SHADER_DIR`, and `LUMORA_UI_SNAPSHOT=/path/prefix`, which writes PNGs of all windows
-with the Vulkan viewports composited in.
+with the Vulkan viewports composited in. With `LUMORA_UI_SNAPSHOT_QUIT=1` the app then leaves any
+live session and quits without prompts. Two such processes, one started with
+`--editor <p> --host <port>` and one with `--join 127.0.0.1:<port>`, make a scripted two-process
+session test.
 
 ## Key decisions
 
 | Decision | Reason |
 |---|---|
-| Whole-scene snapshots for structural undo | Exact and simple for today's scene sizes; per-entity diffs can replace it without changing the command API |
+| Per-entity scene patches for structural undo | Only what an edit changed is reverted, so undo stays correct while others edit the same scene; the same patches are the collaboration wire format |
+| Host-ordered patches with pending-key filtering for collaboration | Converges without OT/CRDT machinery: the host's order decides, a client skips only what its own in-flight patch overrides, and a periodic digest repairs anything the rule misses |
 | HLSL compiled by `glslc` (shaderc) | Ships with the Vulkan SDK and Debian. Slang is not packaged here; shaders are plain HLSL, so a later switch to `slangc` only changes `cmake/LumoraShaders.cmake`. glslang quirks are documented in `shaders/common.hlsli` (`vk::push_constant` only works on `ConstantBuffer<T>`; there is no `NonUniformResourceIndex`) |
 | Vulkan C API with thin RAII wrappers | Full control and fast compile times; Vulkan-Hpp RAII adds a lot of compile time |
 | One process for Hub and Editor | A requirement. It also lets them share the Vulkan context, log history and recent-project state |

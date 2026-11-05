@@ -16,12 +16,13 @@ works today from what is planned, and nothing listed as planned exists yet.
 | Application | One `Lumora` executable; Hub → Editor → Hub transitions in one process; Player and headless modes |
 | Hub | Hero banner rendered live by the engine, recent projects grid with thumbnails, search and sort, project creation from 3 templates with live-rendered previews (saved as the project thumbnail), project settings, GPU/engine info |
 | Editor | Embedded Vulkan viewport, fly camera, click picking with selection highlight, move/rotate/scale gizmos (snapping, parent-space aware), undo/redo for every edit, hierarchy (drag & drop re-parenting, rename, duplicate, delete, filter), reflection-driven inspector with asset pickers, content browser (open scenes, add/drop-import models), console, GPU profiler, play/pause/stop, scene save/load, dockable and persisted layout |
+| Collaboration | Live multi-user editing of one scene: host on a port (TCP + UDP), others join by LAN address or a playit.gg tunnel address; edits merge per field, collaborators' cameras and selections are drawn in their colour, chat, missing models/textures are transferred automatically, optional password |
 | Renderer | Vulkan 1.4 instance/device with capability detection, VMA, dynamic rendering, synchronization2, render graph with automatic barriers, bindless descriptors (update-after-bind), timeline-semaphore uploads, persistent pipeline cache, GPU timestamp profiling, frames in flight, swapchain recreation, device-loss reporting |
 | Rendering | HDR forward PBR (GGX / Smith / Schlick) with base colour, metallic-roughness, normal and emissive maps (mipmapped, anisotropic), directional + point lights, cascaded sun shadows (4 texel-snapped cascades in one atlas, blended borders, smooth 7x7 PCF with receiver-plane bias; off-screen casters included), procedural sky with horizon haze and sun glow, exponential height fog (aerial perspective), physically based bloom, vignette, ACES tonemapping, procedural grid/checker surface patterns, hemispherical ambient, editor grid and gizmo overlay pass, CPU frustum culling |
 | Scene | EnTT ECS, UUID identity, hierarchy, component reflection → JSON serialization + inspector |
 | Assets | glTF 2.0 import (.gltf/.glb: meshes, node hierarchy, PBR materials and textures), PNG/JPEG/TGA/BMP textures, portable project-relative asset references, import copies files into the project without overwriting |
 | Runtime | Fixed-timestep simulation (deterministic), built-in `Rotator` behaviour |
-| Tests | 121 GoogleTest cases: core, scene, serialization, projects, CLI, glTF/texture import (incl. a locale regression), render-graph barrier planning, gizmo math, undo/redo, **GPU tests that render real frames and check pixels**, Hub/Editor UI integration tests |
+| Tests | 151 GoogleTest cases: core, scene, serialization, scene patches, projects, CLI, glTF/texture import (incl. a locale regression), render-graph barrier planning, gizmo math, undo/redo, **GPU tests that render real frames and check pixels**, Hub/Editor UI integration tests, collaboration over real loopback sockets (convergence, assets, presence, hostile input) |
 
 Verified on Parrot OS 7.4 (KDE Plasma, Wayland) with an NVIDIA GTX 1650 (Mesa NVK, Vulkan
 1.4.354) and on Mesa llvmpipe. Validation layers and GPU-assisted validation report no errors.
@@ -82,6 +83,8 @@ cmake --preset debug && cmake --build --preset debug && ctest --preset debug
 | `Lumora --editor <project>` | Editor (`<project>` = project folder or `.lumora` file) |
 | `Lumora --project <project> --play` | Standalone player (Esc quits, F11 fullscreen, F8 free camera) |
 | `Lumora --headless [actions]` | Automation, no window |
+| `Lumora --join <host:port>` | Join a live session (LAN address or playit.gg address) |
+| `Lumora --editor <project> --host <port>` | Open a project and host a live session |
 
 Headless examples:
 
@@ -102,7 +105,8 @@ Headless examples:
 ```
 
 Global options: `--gpu <index>`, `--validation` / `--no-validation`, `--no-vsync`,
-`--log-level <trace|debug|info|warn|error>`. Logs also go to `~/.local/state/Lumora/logs/lumora.log`.
+`--log-level <trace|debug|info|warn|error>`, `--user <name>` and `--password <pw>` (for `--join` /
+`--host`). Logs also go to `~/.local/state/Lumora/logs/lumora.log`.
 
 ### Viewport controls
 
@@ -122,6 +126,44 @@ Global options: `--gpu <index>`, `--validation` / `--no-validation`, `--no-vsync
 | Delete, Ctrl+D | Delete, duplicate |
 | F5 / F6 / Shift+F5 | Play / Pause / Stop |
 | F8 | Toggle the scene camera in play mode |
+
+### Live collaboration
+
+Several people can edit the same scene at once. One editor hosts the session; everyone else
+joins it.
+
+**Host (editor):** *Collaborate → Host Session…* (or the *Session* panel). Pick your name, a port
+(default 7777, used for TCP and UDP) and optionally a password. The dialog lists this computer's
+LAN addresses. From the command line:
+
+```bash
+./build/release/bin/Lumora --editor ~/LumoraProjects/Demo --host 7777 --user Ada
+```
+
+**Over the internet with [playit.gg](https://playit.gg):** run the playit.gg agent on the host
+computer, add a tunnel of type **TCP+UDP** to local port 7777 and share the address playit.gg
+shows (for example `bright-fox.at.ply.gg:23145`). Paste it into the host dialog to show it in the
+*Session* panel with a Copy button. A TCP-only tunnel also works: camera positions then travel over
+TCP instead of UDP.
+
+**Join:** *Join Live Session…* in the Hub, *Collaborate → Join Session…* in the editor, or:
+
+```bash
+./build/release/bin/Lumora --join bright-fox.at.ply.gg:23145 --user Bob
+```
+
+A joiner works in a local copy of the host's project
+(`~/.local/share/Lumora/Lumora/Sessions/<project>`). Models and textures the scene uses are
+downloaded from the host when missing, and files a joiner imports are sent to the host and on
+to everyone else. Saving writes each participant's own copy.
+
+What is shared: every scene edit (entities, components, hierarchy, environment), undo and redo
+included, plus each participant's camera and selection and a chat. Edits of different fields merge,
+even on the same entity; when two people change the same field at once, the one the host
+received last wins. While a session runs, *New Scene* and *Open Scene* are disabled.
+
+The connection is not encrypted, and the password is only an entry check. Share session
+addresses only with people you trust.
 
 ## Project format
 
@@ -149,7 +191,7 @@ engine/        engine modules, no Qt: core, platform, input, assets, scene (ECS)
 runtime/       fixed-step simulation and gameplay systems
 shaders/       HLSL sources compiled to SPIR-V at build time
 application/   Qt layer: common (app context, Vulkan viewport, theme), hub, editor,
-               player, main (CLI, window orchestration, headless)
+               player, collab (live sessions), main (CLI, window orchestration, headless)
 tests/         unit, GPU and UI integration tests
 docs/          architecture notes
 ```

@@ -1,7 +1,8 @@
 ; Lumora Hub installer for Windows (NSIS 3, Unicode).
 ;
 ;   makensis /DVERSION=0.2.0-beta.1 /DNUMERIC_VERSION=0.2.0.0 /DSOURCE_DIR=<dist\hub>
-;            /DOUT_FILE=<out\lumora-hub-...-setup.exe> packaging\windows\hub-installer.nsi
+;            /DICON=<packaging\lumora-hub.ico> /DOUT_FILE=<out\lumora-hub-...-setup.exe>
+;            packaging\windows\hub-installer.nsi
 ;
 ; Installs per user (no administrator rights) into %LOCALAPPDATA%\Programs\Lumora Hub, adds Start
 ; menu and desktop shortcuts and an entry in "Installed apps". Editors and projects live
@@ -19,6 +20,9 @@ Unicode true
 !endif
 !ifndef SOURCE_DIR
   !error "pass /DSOURCE_DIR=... (see the top of this file)"
+!endif
+!ifndef ICON
+  !error "pass /DICON=... (see the top of this file)"
 !endif
 !ifndef OUT_FILE
   !error "pass /DOUT_FILE=... (see the top of this file)"
@@ -44,8 +48,8 @@ VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "FileDescription" "${PRODUCT} installer"
 VIAddVersionKey "LegalCopyright" "GPL-3.0-or-later"
 
-!define MUI_ICON "${__FILEDIR__}\..\lumora-hub.ico"
-!define MUI_UNICON "${__FILEDIR__}\..\lumora-hub.ico"
+!define MUI_ICON "${ICON}"
+!define MUI_UNICON "${ICON}"
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${EXE}"
 

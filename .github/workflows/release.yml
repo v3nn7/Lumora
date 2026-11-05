@@ -258,7 +258,7 @@ jobs:
           $nsis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
           if (-not (Test-Path $nsis)) { choco install nsis -y --no-progress }
           $setup = "$PWD\out\lumora-hub-$v-windows-x64-setup.exe"
-          & $nsis /V3 "/DVERSION=$v" "/DNUMERIC_VERSION=$numeric" "/DSOURCE_DIR=$PWD\dist\hub" "/DOUT_FILE=$setup" `
+          & $nsis /V3 "/DVERSION=$v" "/DNUMERIC_VERSION=$numeric" "/DSOURCE_DIR=$PWD\dist\hub" "/DICON=$PWD\packaging\lumora-hub.ico" "/DOUT_FILE=$setup" `
             packaging\windows\hub-installer.nsi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # Silent install and uninstall into a scratch folder.

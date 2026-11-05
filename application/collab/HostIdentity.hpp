@@ -15,8 +15,8 @@ namespace lumora::collab {
 /// fingerprint, which travels inside the address the host shares (lumora://host:port#<sha256>)
 /// or is confirmed once and remembered (trust on first use).
 struct HostIdentity {
-    QSslCertificate certificate;
-    QSslKey key;
+    QSslCertificate certificate{};  // {}: its default constructor is explicit (MSVC rejects aggregate {} otherwise)
+    QSslKey key{};
     QByteArray fingerprint;  // SHA-256 of the DER certificate, lower-case hex
 
     [[nodiscard]] bool isValid() const { return !certificate.isNull() && !key.isNull(); }

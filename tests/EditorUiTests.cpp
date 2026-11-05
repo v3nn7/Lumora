@@ -15,6 +15,7 @@
 
 #include <QApplication>
 #include <QDockWidget>
+#include <QToolButton>
 #include <QTreeWidget>
 
 using namespace lumora;
@@ -179,4 +180,29 @@ TEST_F(EditorUiTest, PlayModeRunsOnACopyAndStopRestores) {
     EXPECT_EQ(editScene->registry().get<TransformComponent>(spinner).rotationDeg, before)
         << "play-mode changes never leak into the edited scene";
     EXPECT_FALSE(ctx.isDirty());
+}
+
+TEST_F(EditorUiTest, InspectorBuildsSectionsFromReflection) {
+    editor::EditorWindow* editor = openEditor();
+    ASSERT_NE(editor, nullptr);
+    editor->resize(1600, 960);
+    Scene& scene = *editor->editScene();
+    entt::entity cube = entt::null;
+    for (auto [e, rot] : scene.registry().view<RotatorComponent>().each()) cube = e;
+    ASSERT_NE(cube, entt::entity{entt::null});
+    editor->context().select(scene.uuidOf(cube));
+    processEvents();
+
+    QStringList sections;
+    for (QToolButton* b : editor->findChildren<QToolButton*>()) {
+        if (b->isCheckable() && b->isVisible() && b->arrowType() != Qt::NoArrow) sections << b->text();
+    }
+    EXPECT_TRUE(sections.contains(QStringLiteral("Transform"))) << sections.join(',').toStdString();
+    EXPECT_TRUE(sections.contains(QStringLiteral("Mesh Renderer")));
+    EXPECT_TRUE(sections.contains(QStringLiteral("Rotator")));
+    EXPECT_FALSE(sections.contains(QStringLiteral("Light")));
+
+    if (const QString dir = qEnvironmentVariable("LUMORA_TEST_SNAPSHOT_DIR"); !dir.isEmpty()) {
+        editor->grab().save(dir + QStringLiteral("/inspector.png"));
+    }
 }

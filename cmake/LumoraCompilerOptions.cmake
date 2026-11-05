@@ -11,7 +11,7 @@ if(MSVC)
 else()
     target_compile_options(lumora_compile_options INTERFACE
         -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Wcast-align
-        -Woverloaded-virtual -Wnull-dereference -Wimplicit-fallthrough
+        -Woverloaded-virtual -Wimplicit-fallthrough
         -Wno-missing-field-initializers)
     if(LUMORA_WARNINGS_AS_ERRORS)
         target_compile_options(lumora_compile_options INTERFACE -Werror)

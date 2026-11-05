@@ -50,11 +50,15 @@ lumora_qt_module(player
     SOURCES player/PlayerWindow.cpp
     DEPS lumora_appcommon)
 
-add_executable(Lumora
-    main/main.cpp
-    main/Application.cpp
-    main/Headless.cpp)
-target_link_libraries(Lumora PRIVATE lumora_hub lumora_editor lumora_player lumora_compile_options)
+# Top-level window orchestration and headless mode (linked by the executable and the UI tests).
+lumora_qt_module(shell
+    SOURCES
+        main/Application.cpp
+        main/Headless.cpp
+    DEPS lumora_hub lumora_editor lumora_player)
+
+add_executable(Lumora main/main.cpp)
+target_link_libraries(Lumora PRIVATE lumora_shell lumora_compile_options)
 add_dependencies(Lumora lumora_shaders)
 set_target_properties(Lumora PROPERTIES WIN32_EXECUTABLE $<CONFIG:Release>)
 # Icons are compiled into the executable (not a static library) so their registration is never dropped.

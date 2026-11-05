@@ -33,10 +33,18 @@ Application::Application(AppContext& context) : ctx_(context) {
 }
 
 Application::~Application() {
+    // Windows closed earlier may still be queued for deleteLater(); they reference the
+    // AppContext (renderer, log bridge), so destroy them now, before the context goes away.
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    for (const QPointer<QWidget>& w : retired_) delete w.data();
     delete editor_.data();
     delete hub_.data();
     player_.reset();
 }
+
+HubWindow* Application::hub() const { return hub_.data(); }
+
+editor::EditorWindow* Application::editor() const { return editor_.data(); }
 
 void Application::showHub() {
     if (!hub_) {
@@ -76,7 +84,8 @@ bool Application::openEditor(const QString& projectPath) {
 void Application::closeEditor() {
     if (editor_) {
         editor_->hide();
-        editor_->deleteLater();
+        editor_->deleteLater();  // we may be inside one of its signal handlers
+        retired_.push_back(editor_.data());
         editor_ = nullptr;
     }
     showHub();

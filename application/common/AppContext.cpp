@@ -29,7 +29,8 @@ std::vector<std::string> surfaceExtensions() {
 AppContext::AppContext(AppOptions options)
     : options_(std::move(options)), recent_(ProjectRegistry::defaultStorageFile()), logBridge_(std::make_unique<LogBridge>()) {
     qRegisterMetaType<UiLogEntry>("lumora::app::UiLogEntry");
-    Logger::instance().addSink(std::make_shared<QtLogSink>(*logBridge_));
+    logSink_ = std::make_shared<QtLogSink>(*logBridge_);
+    Logger::instance().addSink(logSink_);
     if (auto loaded = recent_.load(); !loaded) {
         log::warn("Hub", "{}", loaded.error().message);
     }
@@ -39,6 +40,7 @@ AppContext::~AppContext() {
     qvk_.reset();
     renderer_.reset();
     renderContext_.reset();
+    Logger::instance().removeSink(logSink_);
 }
 
 bool AppContext::validationEnabled() const noexcept {

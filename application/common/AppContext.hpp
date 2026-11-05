@@ -1,6 +1,7 @@
 #pragma once
 
 #include "main/CommandLine.hpp"
+#include "core/Log.hpp"
 #include "project/ProjectRegistry.hpp"
 
 #include <QString>
@@ -48,6 +49,7 @@ private:
     AppOptions options_;
     ProjectRegistry recent_;
     std::unique_ptr<LogBridge> logBridge_;
+    std::shared_ptr<LogSink> logSink_;  // removed from the global logger before logBridge_ dies
     std::unique_ptr<render::RenderContext> renderContext_;
     std::unique_ptr<render::Renderer> renderer_;
     std::unique_ptr<QVulkanInstance> qvk_;  // adopts renderContext_'s VkInstance; destroyed first

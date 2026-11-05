@@ -36,7 +36,16 @@ public:
 
     /// Loads a scene file into the editor (replacing the current one, after prompting to save).
     bool openScene(const QString& path, bool prompt = true);
+    bool saveScene();
+    void play();
+    void togglePause();
+    void stop();
+    [[nodiscard]] bool isPlaying() const noexcept { return simulation_ != nullptr; }
+    [[nodiscard]] bool isPaused() const noexcept { return paused_; }
     [[nodiscard]] const Project& project() const noexcept { return project_; }
+    [[nodiscard]] EditorContext& context() noexcept { return ctx_; }
+    [[nodiscard]] Scene* editScene() const noexcept { return editScene_.get(); }
+    [[nodiscard]] const QString& scenePath() const noexcept { return scenePath_; }
 
 signals:
     void closeProjectRequested();
@@ -52,19 +61,16 @@ private:
     void buildDocks();
     void buildStatusBar();
     void restoreLayout();
+    void saveLayout();
     void resetLayout();
 
     void newScene();
     void openSceneDialog();
-    bool saveScene();
     bool saveSceneAs();
     bool maybeSave();
     void saveThumbnail();
     void setEditScene(std::unique_ptr<Scene> scene, const QString& path);
 
-    void play();
-    void togglePause();
-    void stop();
     void updatePlayState();
     void updateTitle();
     bool handleShortcut(int key, Qt::KeyboardModifiers modifiers);

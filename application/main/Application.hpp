@@ -4,6 +4,9 @@
 #include <QPointer>
 
 #include <memory>
+#include <vector>
+
+class QWidget;
 
 namespace lumora::editor {
 class EditorWindow;
@@ -27,13 +30,16 @@ public:
     bool openEditor(const QString& projectPath);
     bool runPlayer(const QString& projectPath);
 
-private:
+    [[nodiscard]] HubWindow* hub() const;
+    [[nodiscard]] editor::EditorWindow* editor() const;
     void closeEditor();
 
+private:
     AppContext& ctx_;
     QPointer<HubWindow> hub_;
     QPointer<editor::EditorWindow> editor_;
     std::unique_ptr<PlayerWindow> player_;
+    std::vector<QPointer<QWidget>> retired_;  // closed windows awaiting deferred deletion
 };
 
 } // namespace lumora::app

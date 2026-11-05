@@ -14,18 +14,27 @@
 
 #include <cmath>
 #include <cstdio>
+#include <format>
 #include <filesystem>
 
 namespace lumora::app {
 
 namespace {
 
+/// Locale-independent stdout output (QCoreApplication switches the C locale to the user's).
+template <class... Args>
+void out(std::format_string<Args...> fmt, Args&&... args) {
+    const std::string text = std::format(fmt, std::forward<Args>(args)...);
+    std::fwrite(text.data(), 1, text.size(), stdout);
+    std::fflush(stdout);
+}
+
 int printInfo() {
-    std::printf("%s %s (%s)\n", version::kEngineName, version::kString, version::kBuildType);
+    out("{} {} ({})\n", version::kEngineName, version::kString, version::kBuildType);
     try {
-        std::printf("%s", render::RenderContext::describeDevices(false).c_str());
+        out("{}", render::RenderContext::describeDevices(false));
     } catch (const std::exception& e) {
-        std::printf("Vulkan unavailable: %s\n", e.what());
+        out("Vulkan unavailable: {}\n", e.what());
         return 2;
     }
     return 0;
@@ -44,7 +53,7 @@ int createProject(const AppOptions& o) {
         log::error("Headless", "{}", project.error().message);
         return 1;
     }
-    std::printf("Created project '%s' at %s\n", project->name().c_str(), project->descriptorPath().string().c_str());
+    out("Created project '{}' at {}\n", project->name(), project->descriptorPath().string());
     return 0;
 }
 
@@ -74,9 +83,9 @@ int renderProject(const AppOptions& o, const Project& project, Scene& scene) {
             return 1;
         }
         const auto& s = renderer.stats();
-        std::printf("Rendered '%s' (%ux%u) on %s in %.1f ms (GPU %.3f ms, %u draws, %u triangles) -> %s\n",
-                    project.name().c_str(), image->width, image->height, context.caps().name.c_str(), timer.elapsedMs(),
-                    s.gpuFrameMs, s.scene.drawCalls, s.scene.triangles, o.renderOutput.c_str());
+        out("Rendered '{}' ({}x{}) on {} in {:.1f} ms (GPU {:.3f} ms, {} draws, {} triangles) -> {}\n", project.name(),
+            image->width, image->height, context.caps().name, timer.elapsedMs(), s.gpuFrameMs, s.scene.drawCalls,
+            s.scene.triangles, o.renderOutput);
         return 0;
     } catch (const rhi::UnsupportedHardwareError& e) {
         log::error("Headless", "{}", e.what());
@@ -106,16 +115,14 @@ int runHeadless(const AppOptions& o) {
         return 1;
     }
     if (o.validateProject) {
-        std::printf("Project '%s' OK: scene '%s', %zu entities\n", project->name().c_str(), (*scene)->name().c_str(),
-                    (*scene)->entityCount());
+        out("Project '{}' OK: scene '{}', {} entities\n", project->name(), (*scene)->name(), (*scene)->entityCount());
     }
     if (o.simulateSeconds > 0.0) {
         Simulation sim(**scene);
         const auto steps = static_cast<std::uint64_t>(std::ceil(o.simulateSeconds / sim.fixedStep()));
         Stopwatch timer;
         for (std::uint64_t i = 0; i < steps; ++i) sim.step();
-        std::printf("Simulated %.3f s (%llu fixed steps) in %.2f ms\n", sim.simulatedSeconds(),
-                    static_cast<unsigned long long>(steps), timer.elapsedMs());
+        out("Simulated {:.3f} s ({} fixed steps) in {:.2f} ms\n", sim.simulatedSeconds(), steps, timer.elapsedMs());
     }
     if (!o.renderOutput.empty()) {
         status = renderProject(o, *project, **scene);

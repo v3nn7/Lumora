@@ -146,6 +146,7 @@ void EditorWindow::buildActions() {
     connect(closeProject_, &QAction::triggered, this, [this] {
         if (!maybeSave()) return;
         stop();
+        saveLayout();
         emit closeProjectRequested();
     });
     connect(exit_, &QAction::triggered, this, &QWidget::close);
@@ -325,6 +326,12 @@ void EditorWindow::restoreLayout() {
     QSettings settings;
     restoreGeometry(settings.value(QStringLiteral("editor/geometry")).toByteArray());
     restoreState(settings.value(QStringLiteral("editor/state")).toByteArray());
+}
+
+void EditorWindow::saveLayout() {
+    QSettings settings;
+    settings.setValue(QStringLiteral("editor/geometry"), saveGeometry());
+    settings.setValue(QStringLiteral("editor/state"), saveState());
 }
 
 void EditorWindow::resetLayout() {
@@ -535,9 +542,7 @@ void EditorWindow::closeEvent(QCloseEvent* event) {
         return;
     }
     stop();
-    QSettings settings;
-    settings.setValue(QStringLiteral("editor/geometry"), saveGeometry());
-    settings.setValue(QStringLiteral("editor/state"), saveState());
+    saveLayout();
     event->accept();
 }
 

@@ -67,9 +67,11 @@ void SceneSync::apply(const ScenePatch& patch) {
     }
 }
 
-void SceneSync::replaceWith(const json& document) {
-    apply(ScenePatch::between(SceneIndex::fromScene(scene_), SceneIndex::fromDocument(document)));
+bool SceneSync::replaceWith(const json& document) {
+    const ScenePatch patch = ScenePatch::between(SceneIndex::fromScene(scene_), SceneIndex::fromDocument(document));
+    apply(patch);
     markSynced();
+    return !patch.empty();
 }
 
 std::optional<ScenePatch> SceneSync::takeLocalChanges() {

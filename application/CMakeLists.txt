@@ -30,7 +30,7 @@ if(LUMORA_WAYLAND_POINTER_LOCK)
     target_compile_definitions(lumora_appcommon PRIVATE LUMORA_HAS_WAYLAND_POINTER_LOCK=1)
 endif()
 
-# Live collaboration: session server, client, scene sync (Qt Network, no widgets).
+# Live collaboration: session server, client, scene sync, and the host/join dialogs and panel.
 lumora_qt_module(collab
     SOURCES
         collab/Protocol.cpp
@@ -39,7 +39,8 @@ lumora_qt_module(collab
         collab/CollabClient.cpp
         collab/SceneSync.cpp
         collab/CollabSession.cpp
-    DEPS lumora_scene lumora_core Qt6::Network Qt6::Gui)
+        collab/CollabUi.cpp
+    DEPS lumora_scene lumora_core Qt6::Network Qt6::Widgets)
 
 lumora_qt_module(hub
     SOURCES
@@ -66,7 +67,7 @@ lumora_qt_module(editor
         editor/ContentBrowserPanel.cpp
         editor/ConsolePanel.cpp
         editor/ProfilerPanel.cpp
-    DEPS lumora_appcommon)
+    DEPS lumora_appcommon lumora_collab)
 
 lumora_qt_module(player
     SOURCES player/PlayerWindow.cpp

@@ -13,6 +13,7 @@
     <file alias="folder.svg">icons/folder.svg</file>
     <file alias="grid.svg">icons/grid.svg</file>
     <file alias="hierarchy.svg">icons/hierarchy.svg</file>
+    <file alias="users.svg">icons/users.svg</file>
     <file alias="info.svg">icons/info.svg</file>
     <file alias="light.svg">icons/light.svg</file>
     <file alias="logo.svg">icons/logo.svg</file>

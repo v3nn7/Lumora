@@ -41,12 +41,12 @@ CollabSession::CollabSession(CollabClient& client, Scene& scene, SceneSync::Appl
 }
 
 void CollabSession::begin(const nlohmann::json& scene, quint64 seq) {
-    sync_.replaceWith(scene);
+    const bool changed = sync_.replaceWith(scene);
     lastSeq_ = seq;
     requestMissing(referencedAssetFilesOfScene(scene));
     sincePose_.start();
     timer_.start();
-    emit remoteChange();
+    if (changed) emit remoteChange();
 }
 
 void CollabSession::tick() {
@@ -84,10 +84,10 @@ void CollabSession::onPatch(const ScenePatch& patch, int from, quint64 seq) {
 void CollabSession::onSnapshot(const nlohmann::json& scene, quint64 seq) {
     resyncPending_ = false;
     tick();
-    sync_.replaceWith(scene);
+    const bool changed = sync_.replaceWith(scene);
     lastSeq_ = seq;
     requestMissing(referencedAssetFilesOfScene(scene));
-    emit remoteChange();
+    if (changed) emit remoteChange();
 }
 
 void CollabSession::onDigest(quint64 seq, const QString& digest) {

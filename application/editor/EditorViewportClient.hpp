@@ -29,6 +29,16 @@ public:
     void frameEntity(entt::entity e);
     void frameSelection();
 
+    /// Collaborators: where their camera is and what they have selected (drawn in their colour).
+    struct RemoteMarker {
+        glm::vec3 position{0.0f};
+        glm::vec3 forward{0.0f, 0.0f, -1.0f};
+        glm::vec4 color{1.0f};
+        bool hasPose = false;
+        Uuid selection;
+    };
+    std::vector<RemoteMarker> remoteMarkers;
+
     bool showGrid = true;
     AssetLibrary* assets = nullptr;  // project asset library (meshes for rendering and picking)
     bool pilotSceneCamera = true;  // in play mode, look through the scene's primary camera
@@ -49,6 +59,7 @@ private:
     [[nodiscard]] bool gizmoVisible() const;
     /// Translucent collider outline for the selected entity (editing only).
     void drawColliderOf(const Scene& scene, entt::entity e);
+    void drawRemoteMarkers(const Scene& scene);
 
     EditorContext& ctx_;
     FlyCameraController camera_;

@@ -70,6 +70,8 @@ public:
     void waitIdle();
     /// Drops all cached assets (waits for background loads first).
     void clear();
+    /// Forgets cached failures so the next request tries again (e.g. a missing file arrived).
+    void forgetFailures();
 
 private:
     template <class T>

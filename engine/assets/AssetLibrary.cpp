@@ -92,6 +92,19 @@ Result<std::string> AssetLibrary::canonicalTextureKey(std::string_view key) cons
     return ref->image >= 0 ? std::format("{}#tex{}", ref->file.generic_string(), ref->image) : ref->file.generic_string();
 }
 
+void AssetLibrary::forgetFailures() {
+    std::scoped_lock lock(mutex_);
+    auto prune = [](auto& map) {
+        std::erase_if(map, [](auto& entry) {
+            std::scoped_lock slotLock(entry.second->mutex);
+            return entry.second->status == std::remove_reference_t<decltype(*entry.second)>::Status::Done &&
+                   !entry.second->value;
+        });
+    };
+    prune(models_);
+    prune(textures_);
+}
+
 // ---- Load slots ---------------------------------------------------------------------------
 
 template <class T>

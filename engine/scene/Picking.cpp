@@ -55,6 +55,16 @@ std::optional<float> intersectRayAabb(const Ray& ray, const Aabb& box) {
     return tMin;
 }
 
+std::optional<Aabb> localBounds(const Scene& scene, entt::entity entity, AssetLibrary* assets) {
+    const auto* mesh = scene.registry().try_get<MeshRendererComponent>(entity);
+    if (mesh == nullptr) return std::nullopt;
+    if (mesh->meshAsset.empty()) return primitiveBounds()[static_cast<std::size_t>(mesh->mesh)];
+    if (assets == nullptr) return std::nullopt;
+    const auto asset = assets->requestMesh(mesh->meshAsset);  // non-blocking
+    if (asset.state != AssetState::Ready) return std::nullopt;
+    return asset.value->data.bounds;
+}
+
 entt::entity pickEntity(const Scene& scene, const Ray& ray, AssetLibrary* assets) {
     entt::entity best = entt::null;
     float bestDistance = std::numeric_limits<float>::max();

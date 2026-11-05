@@ -25,6 +25,15 @@ class AppContext;
 class VulkanViewport;
 }
 
+namespace lumora::collab {
+class CollabClient;
+class CollabPanel;
+class CollabServer;
+class CollabSession;
+}
+
+class QDockWidget;
+
 namespace lumora::editor {
 
 class EditorViewportClient;
@@ -54,9 +63,30 @@ public:
     entt::entity addModelToScene(const QString& absolutePath);
     /// Copies external model files into the project and adds them to the scene.
     void importModels(const QStringList& files, const QString& targetDir);
+    /// Asks to save unsaved changes and leaves play mode; false if the user cancelled.
+    bool prepareToClose();
+
+    // ---- Live collaboration ----------------------------------------------------------------
+    /// Shows the host dialog, starts a session server for the current scene and joins it.
+    void hostSession();
+    struct HostOptions {
+        quint16 port = 0;  // 0 = any free port
+        QString name;
+        QString password;
+        QString publicAddress;  // shown to share (e.g. a playit.gg address)
+    };
+    /// Starts hosting without the dialog; the session begins once the local client has joined.
+    Result<> startHosting(const HostOptions& options);
+    /// Continues a session the Application already joined (the editor adopts the client).
+    void attachSession(std::unique_ptr<collab::CollabClient> client, const nlohmann::json& scene, quint64 seq);
+    void leaveSession(const QString& note = {});
+    [[nodiscard]] bool inSession() const noexcept { return collabSession_ != nullptr; }
+    [[nodiscard]] collab::CollabServer* sessionServer() const noexcept { return collabServer_.get(); }
+    [[nodiscard]] collab::CollabClient* sessionClient() const noexcept { return collabClient_.get(); }
 
 signals:
     void closeProjectRequested();
+    void joinSessionRequested();
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -85,6 +115,10 @@ private:
     void updatePlayState();
     void updateTitle();
     bool handleShortcut(int key, Qt::KeyboardModifiers modifiers);
+    void beginSession(bool hosting, const QString& publicAddress, const nlohmann::json& scene, quint64 seq);
+    void retireClient();
+    void updateSessionUi();
+    void updateRemoteMarkers();
     void showControls();
     void onRenderFailed(const QString& message);
 
@@ -136,6 +170,16 @@ private:
     QLabel* statusCamera_ = nullptr;
     QLabel* statusFps_ = nullptr;
     QLabel* statusGpu_ = nullptr;
+    QLabel* statusCollab_ = nullptr;
+
+    QAction* hostSession_ = nullptr;
+    QAction* joinSession_ = nullptr;
+    QAction* leaveSession_ = nullptr;
+    std::unique_ptr<collab::CollabServer> collabServer_;
+    std::unique_ptr<collab::CollabClient> collabClient_;
+    std::unique_ptr<collab::CollabSession> collabSession_;
+    collab::CollabPanel* collabPanel_ = nullptr;
+    QDockWidget* collabDock_ = nullptr;
 };
 
 } // namespace lumora::editor

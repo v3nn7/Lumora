@@ -37,6 +37,8 @@ public:
     /// when not blocking, while it is still loading in the background.
     [[nodiscard]] const GpuMesh* asset(AssetLibrary& library, const std::string& key, bool block);
     [[nodiscard]] std::size_t assetCount() const noexcept { return assets_.size(); }
+    /// Lets meshes that failed to load be tried again.
+    void forgetFailures() { failed_.clear(); }
 
 private:
     rhi::UploadQueue& uploads_;

@@ -29,6 +29,7 @@ public:
 
 signals:
     void openProjectRequested(const QString& descriptorPath);
+    void joinSessionRequested();
 
 protected:
     void showEvent(QShowEvent* event) override;

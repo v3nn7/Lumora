@@ -173,6 +173,13 @@ QWidget* HubWindow::buildSidebar() {
     create->setMinimumHeight(38);
     connect(create, &QPushButton::clicked, this, &HubWindow::newProject);
     layout->addWidget(create);
+    layout->addSpacing(6);
+    auto* join = new QPushButton(theme::icon(QStringLiteral("users")), tr("Join Live Session…"));
+    join->setObjectName(QStringLiteral("hubJoinSession"));
+    join->setMinimumHeight(34);
+    join->setToolTip(tr("Edit together with someone hosting a session on your network or over playit.gg"));
+    connect(join, &QPushButton::clicked, this, &HubWindow::joinSessionRequested);
+    layout->addWidget(join);
     layout->addSpacing(18);
     layout->addWidget(label(tr("NAVIGATION"), "color: #5d6472; font-size: 8pt; font-weight: 700; letter-spacing: 1.5px; padding-left: 4px;"));
     layout->addSpacing(4);

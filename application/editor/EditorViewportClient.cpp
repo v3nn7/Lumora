@@ -36,6 +36,7 @@ void EditorViewportClient::viewportTick(float dt, const InputState& input, bool)
     Scene* scene = ctx_.scene();
     if (scene != nullptr) scene->updateWorldTransforms();
     overlay_.clear();
+    if (scene != nullptr && !remoteMarkers.empty() && !viewingThroughSceneCamera()) drawRemoteMarkers(*scene);
     if (gizmoVisible()) {
         drawColliderOf(*scene, ctx_.selectedEntity());
         gizmo_.build(*scene, ctx_.selectedEntity(), camera_.view(lastAspect_), overlay_);
@@ -88,6 +89,39 @@ void EditorViewportClient::drawColliderOf(const Scene& scene, entt::entity e) {
             }
             break;
         }
+    }
+}
+
+void EditorViewportClient::drawRemoteMarkers(const Scene& scene) {
+    const CameraView view = camera_.view(lastAspect_);
+    const glm::vec3 eye(glm::inverse(view.view)[3]);
+    const glm::vec3 viewForward = -glm::normalize(glm::vec3(glm::inverse(view.view)[2]));
+    render::OverlayBuilder b(overlay_, viewForward);
+    for (const RemoteMarker& m : remoteMarkers) {
+        // What they have selected: a wire box around its bounds.
+        if (const entt::entity e = scene.findByUuid(m.selection); e != entt::null) {
+            const Aabb box = localBounds(scene, e, assets).value_or(Aabb{glm::vec3(-0.5f), glm::vec3(0.5f)});
+            const glm::mat4 world = scene.worldMatrix(e);
+            const glm::vec3 localCenter = (box.min + box.max) * 0.5f;
+            const glm::vec3 half = (box.max - box.min) * 0.5f + glm::vec3(0.02f);
+            const glm::vec3 center(world * glm::vec4(localCenter, 1.0f));
+            const glm::vec3 axes[3] = {glm::vec3(world[0]) * half.x, glm::vec3(world[1]) * half.y,
+                                       glm::vec3(world[2]) * half.z};
+            const float line = std::max(glm::distance(eye, center) * 0.0015f, 0.003f);
+            b.wireBox(center, axes, line, m.color);
+        }
+        // Their camera: a small body with a lens, sized to stay readable at any distance.
+        if (!m.hasPose) continue;
+        const float distance = glm::distance(eye, m.position);
+        if (distance < 0.3f) continue;  // we are standing in it
+        const float s = std::clamp(distance * 0.03f, 0.08f, 3.0f);
+        const glm::vec3 f = glm::length(m.forward) > 1e-4f ? glm::normalize(m.forward) : glm::vec3(0, 0, -1);
+        const glm::vec3 up0 = std::abs(f.y) > 0.98f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
+        const glm::vec3 r = glm::normalize(glm::cross(f, up0));
+        const glm::vec3 u = glm::cross(r, f);
+        const glm::vec3 body[3] = {r * (0.35f * s), u * (0.25f * s), f * (0.45f * s)};
+        b.solidBox(m.position - f * (0.2f * s), body, m.color * glm::vec4(0.85f, 0.85f, 0.85f, 1.0f));
+        b.cone(m.position + f * (0.9f * s), m.position + f * (0.2f * s), 0.35f * s, m.color * glm::vec4(1, 1, 1, 0.75f));
     }
 }
 

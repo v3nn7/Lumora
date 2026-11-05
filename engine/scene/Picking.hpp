@@ -22,6 +22,9 @@ struct Ray {
 [[nodiscard]] Ray rayFromNdc(const CameraView& view, glm::vec2 ndc);
 /// Distance along the ray to the box, if hit (slab test).
 [[nodiscard]] std::optional<float> intersectRayAabb(const Ray& ray, const Aabb& box);
+/// Local-space bounds of an entity's mesh (primitive or loaded asset); nullopt when it has no
+/// mesh or the asset is not loaded yet.
+[[nodiscard]] std::optional<Aabb> localBounds(const Scene& scene, entt::entity entity, AssetLibrary* assets);
 /// Closest visible mesh entity under the ray, tested against its local-space bounds.
 [[nodiscard]] entt::entity pickEntity(const Scene& scene, const Ray& ray, AssetLibrary* assets = nullptr);
 

@@ -30,8 +30,8 @@ public:
 
     /// Treats the current scene as exchanged with the host (after joining or a resync).
     void markSynced();
-    /// Replaces the local scene with the host's document.
-    void replaceWith(const nlohmann::json& document);
+    /// Replaces the local scene with the host's document; true if anything changed.
+    bool replaceWith(const nlohmann::json& document);
 
     /// Local changes since the last exchange, or nothing. Call before receive().
     [[nodiscard]] std::optional<ScenePatch> takeLocalChanges();

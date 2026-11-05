@@ -2,6 +2,8 @@
 // (the offscreen platform has no Vulkan surfaces); see RendererTests for GPU coverage.
 #include "TestUtils.hpp"
 
+#include "collab/CollabClient.hpp"
+#include "collab/CollabServer.hpp"
 #include "common/AppContext.hpp"
 #include "common/ProjectUi.hpp"
 #include "common/VulkanViewport.hpp"
@@ -15,6 +17,8 @@
 #include "runtime/Simulation.hpp"
 
 #include <QApplication>
+#include <QElapsedTimer>
+#include <QThread>
 #include <QAction>
 #include <QDockWidget>
 #include <QEnterEvent>
@@ -29,6 +33,25 @@ namespace {
 
 void processEvents() {
     for (int i = 0; i < 5; ++i) QApplication::processEvents();
+}
+
+bool waitFor(const std::function<bool()>& done, int timeoutMs = 5000) {
+    QElapsedTimer timer;
+    timer.start();
+    while (!done()) {
+        if (timer.elapsed() > timeoutMs) return false;
+        QApplication::processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(1);
+    }
+    return true;
+}
+
+entt::entity findNamed(const Scene& scene, std::string_view name) {
+    entt::entity found = entt::null;
+    scene.forEachDepthFirst([&](entt::entity e, int) {
+        if (scene.nameOf(e) == name) found = e;
+    });
+    return found;
 }
 
 class EditorUiTest : public ::testing::Test {
@@ -356,4 +379,48 @@ TEST_F(EditorUiTest, KeyboardReachingTheMainWindowFliesTheViewportCamera) {
     QCoreApplication::sendEvent(viewport, &enter);
     send(QEvent::KeyPress, Qt::Key_A);
     EXPECT_FALSE(viewport->input().isDown(Key::A));
+}
+
+TEST_F(EditorUiTest, TwoEditorsShareASceneLive) {
+    editor::EditorWindow* host = openEditor();
+    ASSERT_NE(host, nullptr);
+    ASSERT_TRUE(host->startHosting({0, QStringLiteral("Host"), {}, {}}).has_value());
+    ASSERT_TRUE(waitFor([&] { return host->inSession(); }));
+
+    // A guest editor with a project of its own joins over loopback.
+    auto guestProject = Project::create(dir_.path() / "Guest", "Guest", ProjectTemplate::Empty);
+    ASSERT_TRUE(guestProject.has_value()) << guestProject.error().message;
+    editor::EditorWindow guest(*context_, std::move(*guestProject));
+    auto client = std::make_unique<collab::CollabClient>();
+    collab::CollabClient* raw = client.get();
+    QObject::connect(raw, &collab::CollabClient::joined, &guest, [&](const nlohmann::json& scene, quint64 seq) {
+        guest.attachSession(std::move(client), scene, seq);  // synchronously, like Application
+    });
+    raw->connectTo({QStringLiteral("127.0.0.1"), host->sessionServer()->port()}, QStringLiteral("Guest"), {});
+    ASSERT_TRUE(waitFor([&] { return guest.inSession(); }));
+    EXPECT_EQ(SceneSerializer::toJson(*guest.editScene()), SceneSerializer::toJson(*host->editScene()));
+
+    // Host creates, guest renames, host undoes its creation: everyone follows.
+    host->context().createEntity(QStringLiteral("Shared Cube"));
+    ASSERT_TRUE(waitFor([&] { return findNamed(*guest.editScene(), "Shared Cube") != entt::null; }));
+    EXPECT_TRUE(guest.context().isDirty());
+    const Uuid cube = guest.editScene()->uuidOf(findNamed(*guest.editScene(), "Shared Cube"));
+    guest.context().renameEntity(cube, QStringLiteral("Guest's Cube"));
+    ASSERT_TRUE(waitFor([&] { return findNamed(*host->editScene(), "Guest's Cube") != entt::null; }));
+
+    // Both cameras are visible to the other side.
+    ASSERT_TRUE(waitFor([&] {
+        for (const auto& [id, p] : host->sessionClient()->participants()) {
+            if (p.name == QStringLiteral("Guest") && p.hasPose) return true;
+        }
+        return false;
+    }));
+
+    host->context().undoStack().undo();  // the host undoes its creation; the guest's rename goes with it
+    ASSERT_TRUE(waitFor([&] { return findNamed(*guest.editScene(), "Guest's Cube") == entt::null; }));
+
+    guest.leaveSession();
+    ASSERT_TRUE(waitFor([&] { return host->sessionClient()->participants().size() == 1; }));
+    host->leaveSession();
+    EXPECT_FALSE(host->inSession());
 }

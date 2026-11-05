@@ -34,6 +34,8 @@ public:
     /// blocking) is still decoding in the background.
     [[nodiscard]] std::uint32_t index(AssetLibrary& library, const std::string& key, TextureColorSpace space, bool block);
     [[nodiscard]] std::size_t size() const noexcept { return textures_.size(); }
+    /// Lets textures that failed to load be tried again.
+    void forgetFailures() { failed_.clear(); }
 
 private:
     struct Entry {

@@ -19,6 +19,13 @@
 #include "renderer/Renderer.hpp"
 #include "runtime/Simulation.hpp"
 #include "assets/AssetImport.hpp"
+#include "collab/CollabClient.hpp"
+#include "collab/CollabServer.hpp"
+#include "collab/CollabSession.hpp"
+#include "collab/CollabUi.hpp"
+#include "renderer/MeshCache.hpp"
+#include "renderer/TextureCache.hpp"
+#include "scene/ScenePatch.hpp"
 #include "scene/ModelInstance.hpp"
 #include "scene/PhysicsHelpers.hpp"
 #include "scene/SceneSerializer.hpp"
@@ -141,10 +148,15 @@ EditorWindow::EditorWindow(app::AppContext& app, Project project, QWidget* paren
         ctx_.setDirty(true);
     }
     updatePlayState();
+    updateSessionUi();
     log::info("Editor", "opened project '{}'", project_.name());
 }
 
 EditorWindow::~EditorWindow() {
+    // End any live session first: it references the scene, the context and the panel.
+    collabSession_.reset();
+    collabClient_.reset();
+    collabServer_.reset();
     // Tear down UI (including the native viewport and its swapchain) before the scenes and
     // context it references.
     for (QDockWidget* dock : findChildren<QDockWidget*>()) delete dock;
@@ -168,6 +180,22 @@ void EditorWindow::buildActions() {
     importModel_ = make(tr("Import Model…"), QStringLiteral("cube"), QKeySequence(Qt::CTRL | Qt::Key_I));
     connect(importModel_, &QAction::triggered, this, &EditorWindow::importModelDialog);
     projectSettings_ = make(tr("Project Settings…"), QStringLiteral("settings"));
+    hostSession_ = make(tr("Host Session…"), QStringLiteral("users"));
+    joinSession_ = make(tr("Join Session…"), QString());
+    leaveSession_ = make(tr("Leave Session"), QString());
+    connect(hostSession_, &QAction::triggered, this, &EditorWindow::hostSession);
+    connect(joinSession_, &QAction::triggered, this, [this] {
+        if (prepareToClose()) emit joinSessionRequested();
+    });
+    connect(leaveSession_, &QAction::triggered, this, [this] {
+        if (collabServer_ && collabServer_->clientCount() > 1 &&
+            QMessageBox::question(this, tr("End Session"),
+                                  tr("You are hosting. Leaving ends the session for everyone. Continue?")) !=
+                QMessageBox::Yes) {
+            return;
+        }
+        leaveSession(tr("You left the session."));
+    });
     closeProject_ = make(tr("Close Project"), QStringLiteral("back"));
     exit_ = make(tr("Exit"), QString(), QKeySequence::Quit);
     undo_ = ctx_.undoStack().createUndoAction(this, tr("Undo"));
@@ -307,6 +335,20 @@ void EditorWindow::buildDocks() {
     resizeDocks({hierarchy, inspector}, {280, 360}, Qt::Horizontal);
     resizeDocks({contentDock}, {230}, Qt::Vertical);
 
+    collabPanel_ = new collab::CollabPanel;
+    collabPanel_->entityName = [this](const QString& uuid) -> QString {
+        const auto id = Uuid::parse(uuid.toStdString());
+        const entt::entity e = id && editScene_ ? editScene_->findByUuid(*id) : entt::entity{entt::null};
+        return e == entt::null ? QString() : QString::fromStdString(editScene_->nameOf(e));
+    };
+    collabDock_ = makeDock(this, tr("Session"), QStringLiteral("dock.session"), QStringLiteral("users"), collabPanel_);
+    addDockWidget(Qt::RightDockWidgetArea, collabDock_);
+    tabifyDockWidget(inspector, collabDock_);
+    inspector->raise();
+    connect(collabPanel_, &collab::CollabPanel::hostRequested, this, &EditorWindow::hostSession);
+    connect(collabPanel_, &collab::CollabPanel::joinRequested, joinSession_, &QAction::trigger);
+    connect(collabPanel_, &collab::CollabPanel::leaveRequested, leaveSession_, &QAction::trigger);
+
     connect(content, &ContentBrowserPanel::openSceneRequested, this, [this](const QString& path) { openScene(path); });
     connect(content, &ContentBrowserPanel::addModelRequested, this, [this](const QString& path) { addModelToScene(path); });
     connect(content, &ContentBrowserPanel::importRequested, this, &EditorWindow::importModels);
@@ -345,6 +387,13 @@ void EditorWindow::buildMenus() {
     playMenu->addActions({play_, pause_, stop_});
     playMenu->addSeparator();
     playMenu->addAction(pilot_);
+
+    QMenu* collaborate = menuBar()->addMenu(tr("&Collaborate"));
+    collaborate->addActions({hostSession_, joinSession_});
+    collaborate->addSeparator();
+    collaborate->addAction(leaveSession_);
+    collaborate->addSeparator();
+    collaborate->addAction(collabDock_->toggleViewAction());
 
     QMenu* help = menuBar()->addMenu(tr("&Help"));
     help->addAction(tr("Viewport Controls"), this, &EditorWindow::showControls);
@@ -438,6 +487,11 @@ void EditorWindow::buildStatusBar() {
                                         "padding: 1px 8px; color: #9aa1ad; margin: 2px 3px;"));
         statusBar()->addPermanentWidget(l);
     }
+    statusCollab_ = new QLabel;
+    statusCollab_->setStyleSheet(QStringLiteral("background: #16301f; border: 1px solid #2b5a3a; border-radius: 4px;"
+                                                "padding: 1px 8px; color: #7be0a0; margin: 2px 3px; font-weight: 600;"));
+    statusCollab_->hide();
+    statusBar()->insertPermanentWidget(0, statusCollab_);
     statusScene_->setContentsMargins(6, 0, 0, 0);
     statusBar()->addWidget(statusScene_);
     if (render::RenderContext* rc = app_.renderContext()) {
@@ -493,6 +547,10 @@ void EditorWindow::setEditScene(std::unique_ptr<Scene> scene, const QString& pat
 }
 
 bool EditorWindow::openScene(const QString& path, bool prompt) {
+    if (inSession()) {
+        QMessageBox::information(this, tr("Live Session"), tr("Leave the live session to open another scene."));
+        return false;
+    }
     if (prompt && !maybeSave()) return false;
     auto scene = SceneSerializer::load(app::toPath(path));
     if (!scene) {
@@ -505,7 +563,7 @@ bool EditorWindow::openScene(const QString& path, bool prompt) {
 }
 
 void EditorWindow::newScene() {
-    if (!maybeSave()) return;
+    if (inSession() || !maybeSave()) return;
     setEditScene(createTemplateScene(ProjectTemplate::Empty), QString());
     editScene_->setName("Untitled");
     updateTitle();
@@ -825,14 +883,179 @@ void EditorWindow::showControls() {
                                 "</table>"));
 }
 
+bool EditorWindow::prepareToClose() {
+    if (!maybeSave()) return false;
+    stop();
+    return true;
+}
+
 void EditorWindow::closeEvent(QCloseEvent* event) {
+    if (collabServer_ && collabServer_->clientCount() > 1 &&
+        QMessageBox::question(this, tr("End Session"),
+                              tr("You are hosting a live session. Closing ends it for everyone. Continue?")) !=
+            QMessageBox::Yes) {
+        event->ignore();
+        return;
+    }
     if (!maybeSave()) {
         event->ignore();
         return;
     }
+    leaveSession();
     stop();
     saveLayout();
     event->accept();
+}
+
+// ---- Live collaboration -------------------------------------------------------------------
+
+void EditorWindow::hostSession() {
+    if (collabClient_ || editScene_ == nullptr) return;
+    collab::HostSessionDialog dialog(QString::fromStdString(project_.name()), this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    if (auto started = startHosting({dialog.port(), dialog.displayName(), dialog.password(), dialog.publicAddress()});
+        !started) {
+        QMessageBox::warning(this, tr("Cannot Host Session"),
+                             tr("%1\n\nIs another program (or another Lumora) using port %2? Pick a different port.")
+                                 .arg(QString::fromStdString(started.error().message))
+                                 .arg(dialog.port()));
+    }
+}
+
+Result<> EditorWindow::startHosting(const HostOptions& host) {
+    if (collabClient_ || editScene_ == nullptr) return makeError("already in a session");
+    stop();
+    const QString projectName = QString::fromStdString(project_.name());
+    collab::CollabServer::Options options;
+    options.port = host.port;
+    options.password = host.password;
+    options.projectName = projectName;
+    options.sessionName = QStringLiteral("%1 · %2").arg(projectName, QString::fromStdString(editScene_->name()));
+    options.projectRoot = app::toQString(project_.rootDir());
+    auto server = std::make_unique<collab::CollabServer>();
+    if (auto started = server->start(options, SceneSerializer::toJson(*editScene_)); !started) return started;
+    collabServer_ = std::move(server);
+    collabClient_ = std::make_unique<collab::CollabClient>();
+    collabClient_->setProjectRoot(options.projectRoot);
+    const QString publicAddress = host.publicAddress;
+    connect(collabClient_.get(), &collab::CollabClient::joined, this,
+            [this, publicAddress](const nlohmann::json& scene, quint64 seq) { beginSession(true, publicAddress, scene, seq); });
+    connect(collabClient_.get(), &collab::CollabClient::joinFailed, this, [this](const QString& reason) {
+        retireClient();
+        collabServer_.reset();
+        updateSessionUi();
+        QTimer::singleShot(0, this, [this, reason] { QMessageBox::warning(this, tr("Cannot Host Session"), reason); });
+    });
+    collabClient_->connectTo({QStringLiteral("127.0.0.1"), collabServer_->port()}, host.name, host.password);
+    updateSessionUi();
+    return {};
+}
+
+void EditorWindow::attachSession(std::unique_ptr<collab::CollabClient> client, const nlohmann::json& scene, quint64 seq) {
+    leaveSession();
+    collabClient_ = std::move(client);
+    collabClient_->setProjectRoot(app::toQString(project_.rootDir()));
+    beginSession(false, QString(), scene, seq);
+}
+
+void EditorWindow::beginSession(bool hosting, const QString& publicAddress, const nlohmann::json& scene, quint64 seq) {
+    stop();
+    collab::CollabClient* client = collabClient_.get();
+    client->disconnect(this);
+    auto applier = [this](const ScenePatch& patch) {
+        if (simulation_) {
+            (void)patch.applyTo(*editScene_);  // play mode shows a copy; the edit scene still follows
+        } else {
+            ctx_.applyPatch(patch);
+        }
+    };
+    collabSession_ = std::make_unique<collab::CollabSession>(*client, *editScene_, applier,
+                                                             app::toQString(project_.rootDir()));
+    collabSession_->poseSource = [this] {
+        const glm::mat4 inv = glm::inverse(client_->camera().view(1.0f).view);
+        const Uuid selected = ctx_.selectedUuid();
+        return collab::CollabSession::Pose{glm::vec3(inv[3]), -glm::normalize(glm::vec3(inv[2])),
+                                           selected.isValid() ? QString::fromStdString(selected.toString()) : QString()};
+    };
+    connect(collabSession_.get(), &collab::CollabSession::remoteChange, this, [this] {
+        ctx_.setDirty(true);
+        updateRemoteMarkers();
+    });
+    connect(collabSession_.get(), &collab::CollabSession::assetsArrived, this, [this] {
+        assets_.forgetFailures();
+        if (render::RenderContext* rc = app_.renderContext()) {
+            rc->meshes().forgetFailures();
+            rc->textures().forgetFailures();
+        }
+    });
+    connect(collabSession_.get(), &collab::CollabSession::resyncing, this,
+            [this] { statusBar()->showMessage(tr("Re-syncing the scene with the host…"), 3000); });
+    connect(client, &collab::CollabClient::participantsChanged, this, &EditorWindow::updateRemoteMarkers);
+    connect(client, &collab::CollabClient::participantsChanged, this, &EditorWindow::updateSessionUi);
+    connect(client, &collab::CollabClient::presenceChanged, this, &EditorWindow::updateRemoteMarkers);
+    connect(client, &collab::CollabClient::left, this, [this](const QString& reason) { leaveSession(reason); });
+
+    collabSession_->begin(scene, seq);
+    std::optional<collab::CollabPanel::HostInfo> host;
+    if (hosting && collabServer_) host = collab::CollabPanel::HostInfo{collabServer_->port(), publicAddress};
+    collabPanel_->attach(client, host);
+    collabDock_->show();
+    collabDock_->raise();
+    updateSessionUi();
+    updateTitle();
+    statusBar()->showMessage(hosting ? tr("Hosting a live session.") : tr("Joined the live session."), 4000);
+}
+
+void EditorWindow::retireClient() {
+    if (!collabClient_) return;
+    collabClient_->disconnect(this);
+    collabClient_->disconnectFromHost();
+    collabClient_.release()->deleteLater();  // we may be inside one of its signals
+}
+
+void EditorWindow::leaveSession(const QString& note) {
+    if (!collabClient_ && !collabServer_) return;
+    collabSession_.reset();
+    retireClient();
+    collabServer_.reset();
+    client_->remoteMarkers.clear();
+    if (collabPanel_) collabPanel_->detach(note);
+    if (!note.isEmpty()) statusBar()->showMessage(note, 6000);
+    updateSessionUi();
+}
+
+void EditorWindow::updateSessionUi() {
+    const bool busy = collabClient_ != nullptr;  // connecting or in a session
+    const bool live = inSession();
+    hostSession_->setEnabled(!busy);
+    joinSession_->setEnabled(!busy);
+    leaveSession_->setEnabled(busy);
+    newScene_->setEnabled(!live);
+    openScene_->setEnabled(!live);
+    if (live && collabClient_) {
+        const int people = static_cast<int>(collabClient_->participants().size());
+        statusCollab_->setText(collabServer_ ? tr("● HOSTING · %n person(s)", nullptr, people)
+                                             : tr("● LIVE · %n person(s)", nullptr, people));
+        statusCollab_->show();
+    } else {
+        statusCollab_->hide();
+    }
+}
+
+void EditorWindow::updateRemoteMarkers() {
+    client_->remoteMarkers.clear();
+    if (!collabClient_) return;
+    for (const auto& [id, p] : collabClient_->participants()) {
+        if (id == collabClient_->id()) continue;
+        EditorViewportClient::RemoteMarker marker;
+        marker.position = p.position;
+        marker.forward = p.forward;
+        marker.hasPose = p.hasPose;
+        marker.color = glm::vec4(static_cast<float>(p.color.redF()), static_cast<float>(p.color.greenF()),
+                                 static_cast<float>(p.color.blueF()), 1.0f);
+        if (auto uuid = Uuid::parse(p.selection.toStdString())) marker.selection = *uuid;
+        client_->remoteMarkers.push_back(marker);
+    }
 }
 
 } // namespace lumora::editor

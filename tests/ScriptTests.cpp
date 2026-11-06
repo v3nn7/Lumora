@@ -431,3 +431,67 @@ LUMORA_BEHAVIOUR(Clock);
     EXPECT_NEAR(p.x, 0.0f, 1e-6f) << "started at time 0";
     EXPECT_NEAR(p.y, 1.0f, 1e-3f) << "ran for a second";
 }
+
+#include "input/InputState.hpp"
+
+TEST_F(ScriptTest, MenusReactToClicksAndKeys) {
+    const std::filesystem::path project = dir.path();
+    writeScript(project, "Menu.cpp", R"cpp(#include <lumora/Script.hpp>
+using namespace lumora::script;
+// A pause menu: Escape opens it, "Resume" closes it, the slider sets the height.
+class Menu : public Behaviour {
+public:
+    void update(float) override {
+        if (keyPressed(Key::Escape)) open_ = !open_;
+        if (!open_) return;
+        panel(80, 80, 360, 260);
+        if (button("Resume", 100, 100, 200, 50)) open_ = false;
+        slider("Height", height_, 0.0f, 10.0f, 100, 200, 200, 40);
+        setPosition(Vec3{static_cast<float>(clicks_), height_, open_ ? 1.0f : 0.0f});
+        if (mousePressed(MouseButton::Left)) ++clicks_;
+    }
+private:
+    bool open_ = false;
+    float height_ = 0.0f;
+    int clicks_ = 0;
+};
+LUMORA_BEHAVIOUR(Menu);
+)cpp");
+    app::ScriptBuilder builder(QString::fromStdString(project.string()));
+    QString log;
+    ASSERT_TRUE(builder.buildBlocking(&log)) << log.toStdString();
+    auto module = ScriptModule::load(builder.libraryPath().toStdString(), builder.loadDir().toStdString());
+    ASSERT_TRUE(module.has_value()) << module.error().message;
+
+    Scene scene("Menu");
+    const entt::entity e = scene.createEntity("UI");
+    scene.registry().emplace<ScriptComponent>(e).behaviour = "Menu";
+    InputState input;
+    Simulation sim(scene);
+    sim.setScripts(*module, &input);
+    auto position = [&] { return scene.registry().get<TransformComponent>(e).position; };
+    sim.step();
+    EXPECT_TRUE(sim.hud().empty()) << "closed";
+
+    input.setKey(Key::Escape, true);
+    sim.step();
+    EXPECT_FALSE(sim.hud().empty()) << "Escape opened the menu";
+    EXPECT_FLOAT_EQ(position().z, 1.0f);
+
+    // Drag the slider to 3/4: height 7.5.
+    input.setMousePosition({250.0f, 220.0f});
+    input.setMouseButton(MouseButton::Left, true);
+    sim.step();
+    input.setMouseButton(MouseButton::Left, false);
+    sim.step();
+    EXPECT_NEAR(position().y, 7.5f, 1e-4f);
+    EXPECT_FLOAT_EQ(position().x, 1.0f) << "one press";
+
+    // Click Resume (a click shorter than a step): the menu closes.
+    input.setMousePosition({200.0f, 125.0f});
+    input.setMouseButton(MouseButton::Left, true);
+    input.setMouseButton(MouseButton::Left, false);
+    sim.step();
+    sim.step();
+    EXPECT_TRUE(sim.hud().empty()) << "Resume closed it";
+}

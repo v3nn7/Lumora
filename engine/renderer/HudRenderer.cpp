@@ -82,17 +82,21 @@ void HudFont::layout(const HudCanvas& canvas, std::vector<HudVertex>& out) const
             d{{p0.x, p1.y}, {uv0.x, uv1.y}, color};
         out.insert(out.end(), {a, b, c, a, c, d});
     };
-    for (const HudCanvas::Rect& r : canvas.rects) {
-        quad(r.position, r.position + r.size, {-1.0f, -1.0f}, {-1.0f, -1.0f}, r.color);
-    }
     const glm::vec2 texel(1.0f / static_cast<float>(kAtlasWidth), 1.0f / static_cast<float>(kAtlasHeight));
-    for (const HudCanvas::Text& t : canvas.texts) {
+    auto text = [&](const HudCanvas::Text& t) {
         const float scale = t.size / kBakeSize;
-        glm::vec2 pen(t.position.x, t.position.y + ascent_ * scale);
+        // Each line starts where its alignment within the box puts it.
+        auto lineStart = [&](std::size_t from) {
+            if (t.align == HudCanvas::Align::Left) return t.position.x;
+            const std::size_t end = t.utf8.find('\n', from);
+            const float width = measure(std::string_view(t.utf8).substr(from, end == std::string::npos ? end : end - from), t.size);
+            return t.position.x + (t.boxWidth - width) * (t.align == HudCanvas::Align::Center ? 0.5f : 1.0f);
+        };
+        glm::vec2 pen(lineStart(0), t.position.y + ascent_ * scale);
         for (std::size_t i = 0; i < t.utf8.size();) {
             const char32_t cp = nextCodepoint(t.utf8, i);
             if (cp == '\n') {
-                pen = {t.position.x, pen.y + t.size * 1.2f};
+                pen = {lineStart(i), pen.y + t.size * 1.2f};
                 continue;
             }
             const Glyph& g = *glyph(cp);
@@ -102,6 +106,16 @@ void HudFont::layout(const HudCanvas& canvas, std::vector<HudVertex>& out) const
                      glm::vec2(g.x0, g.y0) * texel, glm::vec2(g.x1, g.y1) * texel, t.color);
             }
             pen.x += g.advance * scale;
+        }
+    };
+    // Rectangles and texts in the order they were added.
+    std::size_t r = 0, t = 0;
+    while (r < canvas.rects.size() || t < canvas.texts.size()) {
+        if (t >= canvas.texts.size() || (r < canvas.rects.size() && canvas.rects[r].order <= canvas.texts[t].order)) {
+            const HudCanvas::Rect& rect = canvas.rects[r++];
+            quad(rect.position, rect.position + rect.size, {-1.0f, -1.0f}, {-1.0f, -1.0f}, rect.color);
+        } else {
+            text(canvas.texts[t++]);
         }
     }
 }

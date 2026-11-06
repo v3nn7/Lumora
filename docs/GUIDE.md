@@ -138,7 +138,7 @@ Hover over the viewport or click it, then:
   in the Hierarchy (*Create Child* puts the new entity under the clicked one). The menu has
   primitives (cube, sphere, cylinder, plane), lights (directional, point, spot), a camera, an empty
   entity, and ready-made physics objects (dynamic cube and sphere, static floor).
-- **Select** with a left click in the viewport or the Hierarchy. <kbd>Esc</kbd> clears the
+- **Select** with a left click in the viewport (while playing, clicks go to the game: select in the Hierarchy) or the Hierarchy. <kbd>Esc</kbd> clears the
   selection.
 - **Transform** with the gizmo: <kbd>1</kbd> move, <kbd>2</kbd> rotate, <kbd>3</kbd> scale.
   Hold <kbd>Ctrl</kbd> while dragging to snap (0.25 m, 15°, 0.1×). Gizmos work in the parent's
@@ -327,6 +327,9 @@ What a behaviour can do:
 | `raycast(origin, direction, maxDistance, hit)` | Closest collider along a ray: `hit.entity`, `hit.point`, `hit.normal`, `hit.distance` |
 | `onCollision(Entity other)` | Override: this entity's collider (or character) started touching another, triggers included |
 | `spawn("Content/Prefabs/X.lprefab", position)` | Add a copy of a prefab |
+| `button(text, x, y, w, h)`, `checkbox(text, value, x, y)`, `slider(text, value, min, max, x, y)`, `panel(x, y, w, h)`, `uiStyle(accent)` | Game UI: menus and settings drawn over the game; a button returns true when clicked |
+| `mousePosition()`, `mousePressed(b)`, `mouseReleased(b)`, `keyPressed(key)` | Mouse in HUD pixels; presses since the last step (once each) |
+| `drawTextCentered(text, x, y)`, `drawTextRight(text, x, y)` | Aligned HUD text |
 | `setMaterial("Content/Materials/Glow.lmat")`, `setMaterialOf(e, path)`, `setColor(v)` | Change how a Mesh Renderer looks |
 | `loadScene("Content/Scenes/Level2.lscene")` | Switch to another scene at the end of the step (menus, levels); `time()` starts again from 0. In the editor, Stop returns to the scene you were editing |
 | `move(velocity)`, `jump(speed)`, `grounded()` | Character Controller: walk, jump, stand |
@@ -387,7 +390,7 @@ To run a project on its own, without the editor UI:
 lumora-editor --project ~/LumoraProjects/MyGame --play
 ```
 
-<kbd>Esc</kbd> quits, <kbd>F11</kbd> toggles fullscreen, <kbd>F8</kbd> toggles a free camera.
+<kbd>Esc</kbd> quits (a game with behaviours gets <kbd>Esc</kbd> for its own menus; close the window to quit), <kbd>F11</kbd> toggles fullscreen, <kbd>F8</kbd> toggles a free camera.
 
 ### Export the game
 

@@ -3,6 +3,7 @@ add_library(lumora_runtime ${LUMORA_MODULE_TYPE}
     Simulation.cpp
     PhysicsWorld.cpp
     Scripting.cpp
+    GameUi.cpp
     AudioWorld.cpp
     AnimationSystem.cpp)
 lumora_module_setup(lumora_runtime)

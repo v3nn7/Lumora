@@ -780,10 +780,47 @@ TEST(HudFont, MeasuresTextFromTheEmbeddedFont) {
     EXPECT_NEAR(font.measure("ab\nabcd", 24.0f), font.measure("abcd", 24.0f), 0.01f) << "widest line";
     std::vector<HudVertex> vertices;
     HudCanvas canvas;
-    canvas.rects.push_back({{0, 0}, {10, 10}, {1, 1, 1, 1}});
-    canvas.texts.push_back({{0, 0}, 20.0f, {1, 1, 1, 1}, "A b"});
+    canvas.addRect({0, 0}, {10, 10}, {1, 1, 1, 1});
+    canvas.addText({0, 0}, 20.0f, {1, 1, 1, 1}, "A b");
     font.layout(canvas, vertices);
     EXPECT_EQ(vertices.size(), 6u * 3u) << "one quad for the rectangle, one per visible glyph (A, b)";
+}
+
+TEST_F(RendererTest, HudAlignsTextAndKeepsDrawingOrder) {
+    // White text centred in the right half; a black rectangle added after the left text covers
+    // it (later items on top), while the right text, added after its own rectangle, shows.
+    auto scene = sceneWithSun();
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 1.0f, 5.0f});
+    HudCanvas hud;
+    hud.screenSize = {200.0f, 100.0f};
+    hud.addText({0.0f, 30.0f}, 40.0f, {1.0f, 1.0f, 1.0f, 1.0f}, "MM");
+    hud.addRect({0.0f, 0.0f}, {100.0f, 100.0f}, {0.0f, 0.0f, 0.0f, 1.0f});
+    hud.addRect({100.0f, 0.0f}, {100.0f, 100.0f}, {0.0f, 0.0f, 0.0f, 1.0f});
+    hud.addText({100.0f, 30.0f}, 40.0f, {1.0f, 1.0f, 1.0f, 1.0f}, "MM", HudCanvas::Align::Center, 100.0f);
+    RenderSettings settings;
+    settings.bloom = false;
+    settings.hud = &hud;
+    auto image = renderer_->capture(*scene, cam.view(2.0f), {200, 100}, settings);
+    ASSERT_TRUE(image.has_value());
+    int left = 0, rightNear = 0, rightFar = 0;
+    float sumX = 0.0f;
+    for (std::uint32_t y = 0; y < 100; ++y) {
+        for (std::uint32_t x = 0; x < 200; ++x) {
+            if (luminance(pixel(*image, x, y)) < 128.0f) continue;
+            if (x < 100) {
+                ++left;
+            } else {
+                ++((x >= 115 && x < 185) ? rightNear : rightFar);
+                sumX += static_cast<float>(x);
+            }
+        }
+    }
+    EXPECT_EQ(left, 0) << "the rectangle added later hides the left text";
+    ASSERT_GT(rightNear, 40);
+    EXPECT_EQ(rightFar, 0) << "centred text stays clear of the box edges";
+    EXPECT_NEAR(sumX / static_cast<float>(rightNear), 150.0f, 6.0f) << "centred on the box";
 }
 
 TEST_F(RendererTest, HudDrawsRectanglesAndTextOnTop) {
@@ -793,8 +830,8 @@ TEST_F(RendererTest, HudDrawsRectanglesAndTextOnTop) {
     cam.setPosition({0.0f, 1.0f, 5.0f});
     HudCanvas hud;
     hud.screenSize = {200.0f, 100.0f};
-    hud.rects.push_back({{10.0f, 10.0f}, {40.0f, 20.0f}, {1.0f, 0.0f, 0.0f, 1.0f}});
-    hud.texts.push_back({{80.0f, 40.0f}, 40.0f, {1.0f, 1.0f, 1.0f, 1.0f}, "HUD"});
+    hud.addRect({10.0f, 10.0f}, {40.0f, 20.0f}, {1.0f, 0.0f, 0.0f, 1.0f});
+    hud.addText({80.0f, 40.0f}, 40.0f, {1.0f, 1.0f, 1.0f, 1.0f}, "HUD");
     RenderSettings off;
     off.bloom = false;
     RenderSettings on = off;

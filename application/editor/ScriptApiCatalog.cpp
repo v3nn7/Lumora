@@ -48,6 +48,18 @@ constexpr ScriptApiEntry kApi[] = {
     {S::Behaviour, "setMaterial", "bool setMaterial(path)", "Use a .lmat material (\"\" = own settings)"},
     {S::Behaviour, "setMaterialOf", "bool setMaterialOf(Entity e, path)", "Another entity's material"},
     {S::Behaviour, "setColor", "bool setColor(Vec3 rgb)", "Mesh Renderer base colour (0..1)"},
+    // Game UI and input edges
+    {S::Behaviour, "button", "bool button(text, x, y, w, h)", "Game UI button: true when clicked"},
+    {S::Behaviour, "checkbox", "bool checkbox(text, bool& value, x, y, w = 260, h = 40)", "Flips value when clicked"},
+    {S::Behaviour, "slider", "bool slider(text, float& value, min, max, x, y, w = 320, h = 40)", "Drag to change value"},
+    {S::Behaviour, "panel", "void panel(x, y, w, h)", "Dark menu background"},
+    {S::Behaviour, "uiStyle", "void uiStyle(Vec3 accent, float fontSize = 22)", "Look of the game UI"},
+    {S::Behaviour, "drawTextCentered", "void drawTextCentered(text, centerX, y, size = 24, color, alpha)", "HUD text centred on x"},
+    {S::Behaviour, "drawTextRight", "void drawTextRight(text, rightX, y, size = 24, color, alpha)", "HUD text ending at x"},
+    {S::Behaviour, "mousePosition", "Vec3 mousePosition()", "Mouse in HUD pixels"},
+    {S::Behaviour, "mousePressed", "bool mousePressed(MouseButton b)", "Went down since the last step"},
+    {S::Behaviour, "mouseReleased", "bool mouseReleased(MouseButton b)", "Came up since the last step"},
+    {S::Behaviour, "keyPressed", "bool keyPressed(Key key)", "Pressed since the last step (once)"},
     // Animation and sound
     {S::Behaviour, "playAnimation", "bool playAnimation(clip = \"\")", "Start an Animator clip"},
     {S::Behaviour, "stopAnimation", "void stopAnimation()", "Stop the Animator"},

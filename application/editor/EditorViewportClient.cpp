@@ -174,7 +174,8 @@ Ray EditorViewportClient::rayAt(glm::vec2 ndc) const { return rayFromNdc(viewpor
 
 void EditorViewportClient::viewportClicked(glm::vec2 ndc) {
     const Scene* scene = ctx_.scene();
-    if (scene == nullptr) return;
+    // While playing, clicks belong to the game (its buttons); select in the Hierarchy instead.
+    if (scene == nullptr || ctx_.isPlaying()) return;
     const Ray ray = rayFromNdc(viewportCamera(lastAspect_), ndc);
     const entt::entity hit = pickEntity(*scene, ray, assets);
     ctx_.select(hit == entt::null ? Uuid{} : scene->uuidOf(hit));

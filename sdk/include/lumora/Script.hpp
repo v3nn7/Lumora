@@ -109,6 +109,12 @@ struct EngineApi {
     int (*loadScene)(void* context, const char* path);  // queued for the end of the step; 0 if invalid
     int (*setMaterial)(void* context, Entity entity, const char* path);  // "" = own settings; 0 if no mesh
     int (*setColor)(void* context, Entity entity, const float* rgb);       // Mesh Renderer base colour
+    void (*mousePosition)(void* context, float* xy);                        // HUD pixels
+    int (*inputEdge)(void* context, int kind, int code);  // this step: 0 mouse pressed, 1 released, 2 key pressed
+    // kind 0 button, 1 checkbox, 2 slider (value in/out, range = min, max), 3 panel, 4 label (value = align)
+    int (*ui)(void* context, int kind, const char* label, const float* rect, float* value, const float* range);
+    void (*uiStyle)(void* context, const float* accentRgb, float fontSize);
+    void (*drawTextAligned)(void* context, const char* utf8, const float* xyWidthSize, int align, const float* rgba);
 };
 
 class Behaviour;
@@ -216,6 +222,64 @@ protected:
         const float c[4] = {color.x, color.y, color.z, alpha};
         api_->drawText(api_->context, std::string(text).c_str(), p, c);
     }
+    /// Text aligned in a box: centred (align 1) or right-aligned (align 2) within [x, x + width].
+    void drawTextCentered(std::string_view text, float centerX, float y, float size = 24.0f, Vec3 color = Vec3{1, 1, 1},
+                          float alpha = 1.0f) const {
+        drawAligned(text, centerX, y, 0.0f, size, 1, color, alpha);
+    }
+    void drawTextRight(std::string_view text, float rightX, float y, float size = 24.0f, Vec3 color = Vec3{1, 1, 1},
+                       float alpha = 1.0f) const {
+        drawAligned(text, rightX, y, 0.0f, size, 2, color, alpha);
+    }
+
+    // Game UI: menus and settings. Call the widgets every update() you want them shown; each
+    // draws itself and says whether it was used. Pixels from the top-left, like the HUD.
+    /// True when clicked.
+    bool button(std::string_view text, float x, float y, float w, float h) const {
+        const float r[4] = {x, y, w, h};
+        return api_->ui(api_->context, 0, std::string(text).c_str(), r, nullptr, nullptr) != 0;
+    }
+    /// Flips `value` when clicked; true then.
+    bool checkbox(std::string_view text, bool& value, float x, float y, float w = 260.0f, float h = 40.0f) const {
+        const float r[4] = {x, y, w, h};
+        float v = value ? 1.0f : 0.0f;
+        const bool clicked = api_->ui(api_->context, 1, std::string(text).c_str(), r, &v, nullptr) != 0;
+        if (clicked) value = !value;
+        return clicked;
+    }
+    /// Drag to change `value` within [min, max]; true while it changes.
+    bool slider(std::string_view text, float& value, float min, float max, float x, float y, float w = 320.0f,
+                float h = 40.0f) const {
+        const float r[4] = {x, y, w, h};
+        const float range[2] = {min, max};
+        return api_->ui(api_->context, 2, std::string(text).c_str(), r, &value, range) != 0;
+    }
+    /// A dark background behind a menu.
+    void panel(float x, float y, float w, float h) const {
+        const float r[4] = {x, y, w, h};
+        api_->ui(api_->context, 3, "", r, nullptr, nullptr);
+    }
+    /// Accent colour of buttons, checkboxes and sliders, and their text size.
+    void uiStyle(Vec3 accent, float fontSize = 22.0f) const {
+        const float c[3] = {accent.x, accent.y, accent.z};
+        api_->uiStyle(api_->context, c, fontSize);
+    }
+    /// Mouse position in HUD pixels (x, y).
+    [[nodiscard]] Vec3 mousePosition() const {
+        float xy[2] = {0.0f, 0.0f};
+        api_->mousePosition(api_->context, xy);
+        return {xy[0], xy[1], 0.0f};
+    }
+    /// Went down / came up since the previous step (once per click).
+    [[nodiscard]] bool mousePressed(MouseButton button) const {
+        return api_->inputEdge(api_->context, 0, static_cast<int>(button)) != 0;
+    }
+    [[nodiscard]] bool mouseReleased(MouseButton button) const {
+        return api_->inputEdge(api_->context, 1, static_cast<int>(button)) != 0;
+    }
+    /// Pressed since the previous step (once per press, unlike keyDown).
+    [[nodiscard]] bool keyPressed(Key key) const { return api_->inputEdge(api_->context, 2, static_cast<int>(key)) != 0; }
+
     /// Size of the game's view in pixels (x = width, y = height).
     [[nodiscard]] Vec3 screenSize() const {
         float wh[2] = {0.0f, 0.0f};
@@ -297,6 +361,12 @@ private:
     void push(Vec3 f, int impulse) const {
         const float xyz[3] = {f.x, f.y, f.z};
         api_->addForce(api_->context, entity_, xyz, impulse);
+    }
+    void drawAligned(std::string_view text, float x, float y, float w, float size, int align, Vec3 color,
+                     float alpha) const {
+        const float box[4] = {x, y, w, size};
+        const float c[4] = {color.x, color.y, color.z, alpha};
+        api_->drawTextAligned(api_->context, std::string(text).c_str(), box, align, c);
     }
     void set(Entity e, int which, Vec3 value) const {
         const float v[3] = {value.x, value.y, value.z};

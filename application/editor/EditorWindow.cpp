@@ -139,6 +139,7 @@ EditorWindow::EditorWindow(app::AppContext& app, Project project, QWidget* paren
             // The HUD is laid out in the viewport's pixels.
             const qreal dpr = viewport_->devicePixelRatio();
             simulation_->hud().screenSize = glm::vec2(viewport_->width() * dpr, viewport_->height() * dpr);
+            simulation_->hud().pixelRatio = static_cast<float>(dpr);
         }
         if (simulation_ && simulation_->audio() != nullptr) {
             simulation_->audio()->setListenerFromView(client_->viewportCamera(1.0f).view);  // hear from the camera

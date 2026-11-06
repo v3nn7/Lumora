@@ -288,13 +288,13 @@ int apiCharacter(void* c, script::Entity entity, int command, const float* xyz) 
 void apiDrawRect(void* c, const float* rect, const float* rgba) {
     HudCanvas* hud = context(c).hud;
     if (hud == nullptr || rect == nullptr || rgba == nullptr) return;
-    hud->rects.push_back({{rect[0], rect[1]}, {rect[2], rect[3]}, {rgba[0], rgba[1], rgba[2], rgba[3]}});
+    hud->addRect({rect[0], rect[1]}, {rect[2], rect[3]}, {rgba[0], rgba[1], rgba[2], rgba[3]});
 }
 
 void apiDrawText(void* c, const char* text, const float* xysize, const float* rgba) {
     HudCanvas* hud = context(c).hud;
     if (hud == nullptr || text == nullptr || xysize == nullptr || rgba == nullptr) return;
-    hud->texts.push_back({{xysize[0], xysize[1]}, xysize[2], {rgba[0], rgba[1], rgba[2], rgba[3]}, text});
+    hud->addText({xysize[0], xysize[1]}, xysize[2], {rgba[0], rgba[1], rgba[2], rgba[3]}, text);
 }
 
 void apiScreenSize(void* c, float* wh) {
@@ -353,6 +353,56 @@ int apiSetColor(void* c, script::Entity entity, const float* rgb) {
     if (mesh == nullptr) return 0;
     mesh->baseColor = glm::vec3(rgb[0], rgb[1], rgb[2]);
     return 1;
+}
+
+void apiMousePosition(void* c, float* xy) {
+    if (xy == nullptr) return;
+    const glm::vec2 m = context(c).ui.mouse();
+    xy[0] = m.x;
+    xy[1] = m.y;
+}
+
+int apiInputEdge(void* c, int kind, int code) {
+    const GameUi& ui = context(c).ui;
+    if (kind == 2) return code >= 0 && code < static_cast<int>(Key::Count) && ui.keyPressed(static_cast<Key>(code)) ? 1 : 0;
+    if (code < 0 || code >= static_cast<int>(MouseButton::Count)) return 0;
+    const auto button = static_cast<MouseButton>(code);
+    return (kind == 0 ? ui.pressed(button) : ui.released(button)) ? 1 : 0;
+}
+
+int apiUi(void* c, int kind, const char* label, const float* rect, float* value, const float* range) {
+    if (rect == nullptr) return 0;
+    GameUi& ui = context(c).ui;
+    const glm::vec4 r(rect[0], rect[1], rect[2], rect[3]);
+    const std::string_view text = label != nullptr ? label : "";
+    switch (kind) {
+        case 0: return ui.button(text, r) ? 1 : 0;
+        case 1: return ui.checkbox(text, value != nullptr && *value != 0.0f, r) ? 1 : 0;
+        case 2: {
+            if (value == nullptr || range == nullptr) return 0;
+            return ui.slider(text, *value, range[0], range[1], r) ? 1 : 0;
+        }
+        case 3: ui.panel(r); return 1;
+        case 4: {
+            const int align = value != nullptr ? std::clamp(static_cast<int>(*value), 0, 2) : 0;
+            ui.label(text, r, static_cast<HudCanvas::Align>(align), {1.0f, 1.0f, 1.0f, 1.0f});
+            return 1;
+        }
+        default: return 0;
+    }
+}
+
+void apiUiStyle(void* c, const float* accent, float fontSize) {
+    GameUi::Style& style = context(c).ui.style();
+    if (accent != nullptr) style.accent = glm::vec3(accent[0], accent[1], accent[2]);
+    if (fontSize > 4.0f) style.fontSize = fontSize;
+}
+
+void apiDrawTextAligned(void* c, const char* text, const float* box, int align, const float* rgba) {
+    HudCanvas* hud = context(c).hud;
+    if (hud == nullptr || text == nullptr || box == nullptr || rgba == nullptr) return;
+    const auto a = static_cast<HudCanvas::Align>(std::clamp(align, 0, 2));
+    hud->addText({box[0], box[1]}, box[3], {rgba[0], rgba[1], rgba[2], rgba[3]}, text, a, box[2]);
 }
 
 /// "speed=4, jump = 6.5; name=2" -> the number for `key`, or `fallback`.
@@ -483,6 +533,11 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.loadScene = apiLoadScene;
     api_.setMaterial = apiSetMaterial;
     api_.setColor = apiSetColor;
+    api_.mousePosition = apiMousePosition;
+    api_.inputEdge = apiInputEdge;
+    api_.ui = apiUi;
+    api_.uiStyle = apiUiStyle;
+    api_.drawTextAligned = apiDrawTextAligned;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }
@@ -601,6 +656,7 @@ void ScriptRunner::destroyInstances() {
 
 void ScriptRunner::update(float dt, double simulatedSeconds) {
     context_.time = simulatedSeconds;
+    context_.ui.beginStep(context_.input, context_.hud);
     if (!created_) createInstances();
     // Index loop: behaviours may clone entities (appending instances only in finishStep).
     for (std::size_t i = 0; i < instances_.size();) {

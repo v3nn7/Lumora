@@ -71,6 +71,7 @@ bool PlayerWindow::eventFilter(QObject* watched, QEvent* event) {
 void PlayerWindow::viewportTick(float dt, const InputState& input, bool) {
     const qreal dpr = window_->devicePixelRatio();
     simulation_->hud().screenSize = glm::vec2(window_->width() * dpr, window_->height() * dpr);
+    simulation_->hud().pixelRatio = static_cast<float>(dpr);
     const std::uint64_t loads = simulation_->sceneLoads();
     simulation_->advance(dt);
     if (simulation_->sceneLoads() != loads) freeCam_ = scene_->primaryCamera() == entt::null;  // the new level's camera
@@ -94,6 +95,8 @@ render::RenderSettings PlayerWindow::viewportSettings() const {
 bool PlayerWindow::viewportKeyPressed(int key, Qt::KeyboardModifiers) {
     switch (key) {
         case Qt::Key_Escape:
+            // A game with behaviours gets Escape (pause menus); one without quits with it.
+            if (simulation_->scriptInstances() > 0) return false;
             window_->close();
             return true;
         case Qt::Key_F11:

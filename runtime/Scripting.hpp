@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Error.hpp"
+#include "runtime/GameUi.hpp"
 
 #include <lumora/Script.hpp>
 
@@ -106,6 +107,7 @@ public:
         std::unordered_map<std::string, std::shared_ptr<const nlohmann::json>> prefabs;  // loaded once
         std::vector<entt::entity> pendingDestroy;
         std::string pendingScene;  // loadScene() request, handled by the Simulation
+        GameUi ui;
         double time = 0.0;
         std::string nameScratch;
     };

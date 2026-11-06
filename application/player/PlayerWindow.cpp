@@ -142,6 +142,7 @@ CameraView PlayerWindow::viewportCamera(float aspect) const {
 render::RenderSettings PlayerWindow::viewportSettings() const {
     render::RenderSettings s;
     s.temporalAntiAliasing = true;
+    s.screenSpaceReflections = true;
     s.assets = &assets_;
     s.hud = menu_.isOpen() ? &overlay_ : &simulation_->hud();
     // Graphics quality from the game's settings.

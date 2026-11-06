@@ -1650,3 +1650,49 @@ TEST_F(RendererTest, TransparentSurfacesBlendBackToFrontAndHideBehindGeometry) {
     EXPECT_GT(top.r, 200);
     EXPECT_GT(top.g, 200) << "the box above the plate is not tinted by it";
 }
+
+TEST_F(RendererTest, ScreenSpaceReflectionsShowTheSceneInGlossyFloors) {
+    auto scene = sceneWithSun();
+    scene->environment().fogDensity = 0.0f;
+    const auto floor = scene->createEntity("Floor");
+    auto& fm = scene->registry().emplace<MeshRendererComponent>(floor);
+    fm.mesh = MeshPrimitive::Plane;
+    fm.baseColor = glm::vec3(0.95f);
+    fm.metallic = 1.0f;  // a mirror: all of its colour is reflection
+    fm.roughness = 0.05f;
+    scene->registry().get<TransformComponent>(floor).scale = {40.0f, 1.0f, 40.0f};
+    const auto box = scene->createEntity("Box");
+    auto& bm = scene->registry().emplace<MeshRendererComponent>(box);
+    bm.baseColor = glm::vec3(0.0f);
+    bm.emissive = {1.0f, 0.0f, 0.0f};
+    bm.emissiveStrength = 2.0f;
+    scene->registry().get<TransformComponent>(box).position = {0.0f, 0.5f, 0.0f};
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 2.0f, 8.0f});
+    cam.lookAt({0.0f, 0.5f, 0.0f});
+    const glm::uvec2 size(128, 96);
+    const CameraView view = cam.view(static_cast<float>(size.x) / static_cast<float>(size.y));
+    RenderSettings settings;
+    settings.bloom = false;
+    settings.shadows = false;
+    settings.ambientOcclusion = false;
+    auto plain = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(plain.has_value());
+    EXPECT_FALSE(renderer_->stats().scene.screenSpaceReflections);
+    settings.screenSpaceReflections = true;
+    auto reflective = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(reflective.has_value());
+    EXPECT_TRUE(renderer_->stats().scene.screenSpaceReflections);
+    // The box's mirror image: its centre reflected below the floor.
+    const glm::ivec2 mirrored = toPixel(view, {0.0f, -0.5f, 0.0f}, size);
+    const glm::ivec2 open = toPixel(view, {3.0f, -0.5f, 0.0f}, size);  // beside it: sky in the floor
+    const auto without = pixel(*plain, mirrored.x, mirrored.y);
+    const auto with = pixel(*reflective, mirrored.x, mirrored.y);
+    EXPECT_LT(int(without.r), int(without.b) + 20) << "without SSR the floor reflects only the sky";
+    EXPECT_GT(int(with.r), int(with.b) + 60) << "with SSR the red box shows in the floor";
+    const auto beside = pixel(*reflective, open.x, open.y);
+    const auto besidePlain = pixel(*plain, open.x, open.y);
+    EXPECT_NEAR(int(beside.r), int(besidePlain.r), 12) << "where the ray misses, the environment stays";
+    EXPECT_NEAR(int(beside.b), int(besidePlain.b), 12);
+}

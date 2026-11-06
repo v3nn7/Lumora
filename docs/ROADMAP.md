@@ -62,6 +62,8 @@ Warunek dla kompresji tekstur (1.7).
   dwie płyty w złej kolejności w scenie dają poprawny wynik po sortowaniu.
 
 ### 1.3 Odbicia: SSR i sondy (L), zależy od 0.1
+- **Stan SSR: zrobione.** Marsz liniowy w przestrzeni ekranu (40 kroków + 6 bisekcji) zamiast hi-Z,
+  promienie GGX z TAA, przestrzenny resolve między sąsiadami. Hi-Z zostaje jako optymalizacja.
 - **SSR:** hi-Z z głębi (compute), marsz promienia w przestrzeni ekranu, mieszanie z IBL po szorstkości.
 - **Sondy odbić:** komponent `ReflectionProbe` (pudełko wpływu, paralaksa), przechwycenie
   6 widoków sceny w edytorze, prefiltracja istniejącym `EnvironmentMap.cpp::prefilterEnvironment`,

@@ -113,6 +113,8 @@ std::array<float, kShadowCascades> cascadeSplits(float nearPlane, float distance
 namespace {
 constexpr nvrhi::Format kAoFormat = nvrhi::Format::R8_UNORM;
 constexpr nvrhi::Format kMotionFormat = nvrhi::Format::RG16_FLOAT;
+// Per-pixel surface data for screen-space reflections (normal + roughness, specular weight).
+constexpr nvrhi::Format kSurfaceFormat = nvrhi::Format::RGBA16_FLOAT;
 
 /// Halton(2, 3) point i (1-based) in [-0.5, 0.5]^2: the sub-pixel jitter sequence of TAA.
 glm::vec2 halton23(std::uint64_t i) {
@@ -222,6 +224,20 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     opaque.vertexShader = "mesh.skinned.vert";
     opaque.input = VertexInput::MeshSkinned;
     opaqueSkinned_ = make(opaque);
+    {
+        PipelineDesc reflections = opaque;  // skinned at this point
+        reflections.name = "OpaquePBRReflectionsSkinned";
+        reflections.pixelShader = "mesh.reflections.frag";
+        reflections.colorFormats = {hdr, kSurfaceFormat, kSurfaceFormat};
+        opaqueReflectionsSkinned_ = make(reflections);
+        reflections.name = "OpaquePBRReflections";
+        reflections.vertexShader = "mesh.vert";
+        reflections.input = VertexInput::Mesh;
+        opaqueReflections_ = make(reflections);
+        reflections.name = "OpaquePBRReflectionsTwoSided";
+        reflections.cull = nvrhi::RasterCullMode::None;
+        opaqueReflectionsTwoSided_ = make(reflections);
+    }
     PipelineDesc transparent = opaque;  // depth tested against the opaque scene, never written
     transparent.name = "TransparentPBRSkinned";
     transparent.blend = BlendMode::Alpha;
@@ -290,6 +306,8 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     clear.depthFormat = depth;
     vsmClear_ = make(clear);
     taa_ = ctx_.createComputePipeline("taa.comp");
+    ssrTrace_ = ctx_.createComputePipeline("ssr.trace.comp", "CSTrace");
+    ssrResolve_ = ctx_.createComputePipeline("ssr.resolve.comp", "CSResolve");
 
     PipelineDesc prepass;
     prepass.name = "DepthPrepass";
@@ -648,7 +666,12 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             default: return depthPrepass_;
         }
     };
-    auto opaquePipeline = [this](const Draw& d) -> nvrhi::IGraphicsPipeline* {
+    const bool reflections = settings.screenSpaceReflections && ssrTrace_ && ssrResolve_ && extent.width >= 8 && extent.height >= 8;
+    auto opaquePipeline = [this, reflections](const Draw& d) -> nvrhi::IGraphicsPipeline* {
+        if (reflections) {
+            if (d.mesh->skinned()) return opaqueReflectionsSkinned_;
+            return (d.variant & kTwoSided) != 0 ? opaqueReflectionsTwoSided_ : opaqueReflections_;
+        }
         if (d.mesh->skinned()) return opaqueSkinned_;
         return (d.variant & kTwoSided) != 0 ? opaqueTwoSided_ : opaque_;
     };
@@ -952,7 +975,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                           "FrameConstants");
 
     // ---- Render graph ----------------------------------------------------------------------
-    const RGImage hdr = graph.createImage("SceneColorHDR", {ctx_.hdrFormat(), extent.width, extent.height});
+    RGImage hdr = graph.createImage("SceneColorHDR", {ctx_.hdrFormat(), extent.width, extent.height});
     const RGImage depth = graph.createImage("SceneDepth", {ctx_.depthFormat(), extent.width, extent.height});
     nvrhi::IBindingSet* frameSet = frame.bindingSet(gpu, ctx_.frameLayout(), ctx_.samplers());
     nvrhi::IDescriptorTable* bindless = ctx_.bindless().table();
@@ -1261,10 +1284,19 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
 
     const bool parallelOpaque = draws.size() >= settings.parallelRecordingMinDraws;
     stats.parallelRecording = stats.parallelRecording || parallelOpaque;
+    RGImage surfaceNormal{}, surfaceSpecular{};
+    if (reflections) {
+        surfaceNormal = graph.createImage("SurfaceNormalRoughness", {kSurfaceFormat, extent.width, extent.height});
+        surfaceSpecular = graph.createImage("SurfaceSpecular", {kSurfaceFormat, extent.width, extent.height});
+    }
     graph.addRasterPass(
         "Opaque",
         [&](PassBuilder& b) {
             b.writeColor(hdr, LoadOp::Load);
+            if (reflections) {
+                b.writeColor(surfaceNormal, LoadOp::Clear);
+                b.writeColor(surfaceSpecular, LoadOp::Clear);
+            }
             b.readDepth(depth);  // from the prepass; the opaque pass only tests against it
             if (shadows && !virtualShadows) b.sample(shadowMap);
             if (virtualShadows) {
@@ -1335,6 +1367,59 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 }
             });
         stats.drawCalls += static_cast<std::uint32_t>(decals.size());
+    }
+
+    if (reflections) {
+        // Screen-space reflections: one ray per pixel, then shared between neighbours and put
+        // into a new colour image, which the later passes draw over.
+        const RGImage rays = graph.createImage("ReflectionRays", {kSurfaceFormat, extent.width, extent.height, true});
+        const RGImage reflected = graph.createImage("SceneColorReflections", {ctx_.hdrFormat(), extent.width, extent.height, true});
+        nvrhi::IDescriptorTable* bindlessTable = ctx_.bindless().table();
+        PushConstants pc;
+        pc.param1 = std::max(settings.reflectionDistance, 0.1f);
+        pc.param2 = std::clamp(settings.reflectionRoughness, 0.05f, 1.0f);
+        pc.param3 = static_cast<float>(taaFrame_ % 1024u);
+        pc.flags = temporal ? 1u : 0u;  // jittered rays only when TAA blends them
+        graph.addComputePass(
+            "SSRTrace",
+            [&](PassBuilder& b) {
+                b.writeStorage(rays);
+                b.sample(hdr);
+                b.sample(depth);
+                b.sample(surfaceNormal);
+            },
+            [this, hdr, depth, surfaceNormal, bindlessTable, extent, pc](PassContext& ctx) mutable {
+                ctx.cmd->setComputeState(nvrhi::ComputeState().setPipeline(ssrTrace_).addBindingSet(ctx.frameBindings())
+                                             .addBindingSet(bindlessTable).addBindingSet(ctx.storageBindings()));
+                pc.index0 = ctx.bindlessIndex(hdr);
+                pc.index1 = ctx.bindlessIndex(depth);
+                pc.index2 = ctx.bindlessIndex(surfaceNormal);
+                push(ctx.cmd, pc);
+                ctx.cmd->dispatch((extent.width + 7) / 8, (extent.height + 7) / 8, 1);
+            });
+        graph.addComputePass(
+            "SSRResolve",
+            [&](PassBuilder& b) {
+                b.writeStorage(reflected);
+                b.sample(hdr);
+                b.sample(depth);
+                b.sample(surfaceNormal);
+                b.sample(surfaceSpecular);
+                b.sample(rays);
+            },
+            [this, hdr, depth, surfaceNormal, surfaceSpecular, rays, bindlessTable, extent, pc](PassContext& ctx) mutable {
+                ctx.cmd->setComputeState(nvrhi::ComputeState().setPipeline(ssrResolve_).addBindingSet(ctx.frameBindings())
+                                             .addBindingSet(bindlessTable).addBindingSet(ctx.storageBindings()));
+                pc.index0 = ctx.bindlessIndex(hdr);
+                pc.index1 = ctx.bindlessIndex(depth);
+                pc.index2 = ctx.bindlessIndex(surfaceNormal);
+                pc.param0 = std::bit_cast<float>(ctx.bindlessIndex(rays));
+                pc.param1 = std::bit_cast<float>(ctx.bindlessIndex(surfaceSpecular));
+                push(ctx.cmd, pc);
+                ctx.cmd->dispatch((extent.width + 7) / 8, (extent.height + 7) / 8, 1);
+            });
+        hdr = reflected;
+        stats.screenSpaceReflections = true;
     }
 
     if (!waters.empty()) {

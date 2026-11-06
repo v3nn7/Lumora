@@ -124,43 +124,59 @@ float3 skyAverage(float3 dir, float spread) {
     return sum / 6.0;
 }
 
-/// Ambient light from the procedural sky (stand-in until prefiltered environment maps):
-/// irradiance from a wide average around the normal, specular from the sky along the
-/// reflection's dominant direction, blending into that average as the lobe widens.
-float3 evaluateAmbient(Surface s) {
+/// Direction the reflection lobe mostly gathers from: rough lobes lean towards the normal
+/// (Frostbite's dominant direction).
+float3 dominantReflection(float3 normal, float3 view, float roughness) {
+    float alpha = roughness * roughness;
+    float3 R = reflect(-view, normal);
+    float lean = (1.0 - alpha) * (sqrt(1.0 - alpha) + alpha);
+    return normalize(lerp(normal, R, lean));
+}
+
+/// Radiance the environment (HDR map or procedural sky) reflects into a lobe of this roughness,
+/// before the ambient intensity. Screen-space reflections replace it where they find the scene.
+float3 environmentSpecular(float3 normal, float3 view, float roughness) {
+    float3 dominant = dominantReflection(normal, view, roughness);
+#if defined(LUMORA_STAGE_FRAG) || defined(LUMORA_STAGE_COMP)
+    if (environmentEnabled()) {
+        return environmentRadiance(dominant, roughness * gFrame.environmentParams.w);
+    }
+#endif
+    // Sharp lobes see the sky in one direction; wide ones approach the average around the normal.
+    float alpha = roughness * roughness;
+    return lerp(skyGradient(dominant), skyAverage(normal, 0.8), saturate(alpha * 1.6));
+}
+
+/// Ambient light from the environment: irradiance around the normal, specular from the
+/// reflection's dominant direction. `specularWeight` is what multiplies the environment's
+/// specular radiance (Fresnel, the split-sum BRDF, energy compensation, horizon occlusion).
+float3 evaluateAmbient(Surface s, out float3 specularWeight) {
     float NdotV = max(dot(s.normal, s.view), 1e-4);
     float3 F0 = lerp(0.04.xxx, s.albedo, s.metallic);
     float3 F = fresnelSchlickRoughness(NdotV, F0, s.roughness);
     float2 envBrdf = environmentBrdf(NdotV, s.roughness);
-
-    float alpha = s.roughness * s.roughness;
     float3 R = reflect(-s.view, s.normal);
-    // Rough lobes lean towards the normal (Frostbite's dominant direction).
-    float lean = (1.0 - alpha) * (sqrt(1.0 - alpha) + alpha);
-    float3 dominant = normalize(lerp(s.normal, R, lean));
 
     float3 diffuseLight;
-    float3 envSpecular;
 #if defined(LUMORA_STAGE_FRAG)
     if (environmentEnabled()) {
-        // HDR environment: SH9 irradiance and the GGX-prefiltered mip for this roughness.
-        diffuseLight = environmentIrradiance(s.normal);
-        envSpecular = environmentRadiance(dominant, s.roughness * gFrame.environmentParams.w);
+        diffuseLight = environmentIrradiance(s.normal);  // SH9
     } else
 #endif
     {
         // Procedural sky. The 0.5 stands in for ambient occlusion: nothing else darkens ambient
         // light yet, and full sky light would flatten every shadow.
-        float3 skyAroundNormal = skyAverage(s.normal, 0.8);
-        diffuseLight = skyAroundNormal * 0.5;
-        // Sharp lobes see the sky in one direction; wide ones approach the average around the
-        // normal, which is already computed (one extra sky evaluation instead of a second average).
-        envSpecular = lerp(skyGradient(dominant), skyAroundNormal, saturate(alpha * 1.6));
+        diffuseLight = skyAverage(s.normal, 0.8) * 0.5;
     }
+    float3 envSpecular = environmentSpecular(s.normal, s.view, s.roughness);
     float3 diffuse = (1.0 - F) * (1.0 - s.metallic) * s.albedo * diffuseLight;
-    float3 specular = envSpecular * (F0 * envBrdf.x + envBrdf.y) * energyCompensation(envBrdf, F0);
-    specular *= horizonOcclusion(R, s.geometricNormal);
-    return (diffuse + specular) * gFrame.skyZenith.w;
+    specularWeight = (F0 * envBrdf.x + envBrdf.y) * energyCompensation(envBrdf, F0) * horizonOcclusion(R, s.geometricNormal);
+    return (diffuse + envSpecular * specularWeight) * gFrame.skyZenith.w;
+}
+
+float3 evaluateAmbient(Surface s) {
+    float3 specularWeight;
+    return evaluateAmbient(s, specularWeight);
 }
 
 #endif

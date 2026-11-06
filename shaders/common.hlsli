@@ -151,7 +151,7 @@ float3 skyGradient(float3 dir) {
 
 bool environmentEnabled() { return gFrame.environmentParams.x > 0.5; }
 
-#if defined(LUMORA_STAGE_FRAG)
+#if defined(LUMORA_STAGE_FRAG) || defined(LUMORA_STAGE_COMP)
 /// Equirectangular uv of a world direction, turned by the environment rotation.
 float2 environmentUv(float3 dir) {
     float s = sin(gFrame.environmentParams.z);
@@ -189,7 +189,7 @@ float3 environmentIrradiance(float3 n) {
     return max(e, 0.0.xxx) * gFrame.environmentParams.y;
 }
 
-#endif  // LUMORA_STAGE_FRAG
+#endif  // LUMORA_STAGE_FRAG || LUMORA_STAGE_COMP
 
 /// Exponential height fog (aerial perspective) between the camera and a world-space point,
 /// coloured by the sky in that direction so distant geometry dissolves into the horizon.

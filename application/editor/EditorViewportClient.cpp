@@ -264,7 +264,8 @@ CameraView EditorViewportClient::viewportCamera(float aspect) const {
 
 render::RenderSettings EditorViewportClient::viewportSettings() const {
     render::RenderSettings s;
-    s.temporalAntiAliasing = true;  // a live view: consecutive frames
+    s.temporalAntiAliasing = true;
+    s.screenSpaceReflections = true;
     s.showGrid = showGrid && !viewingThroughSceneCamera();
     s.selected = ctx_.isPlaying() ? entt::entity{entt::null} : ctx_.selectedEntity();
     if (!ctx_.isPlaying() && ctx_.scene() != nullptr && ctx_.selection().size() > 1) {

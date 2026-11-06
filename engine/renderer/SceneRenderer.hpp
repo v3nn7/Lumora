@@ -64,6 +64,11 @@ struct RenderSettings {
     /// image. Needs consecutive frames of one view, so viewports turn it on; single captures
     /// (thumbnails, headless renders) leave it off.
     bool temporalAntiAliasing = false;
+    /// Screen-space reflections on glossy opaque surfaces (the scene on screen replaces the
+    /// environment where the reflected ray finds it). Glossy rather than mirror-only with TAA.
+    bool screenSpaceReflections = false;
+    float reflectionDistance = 60.0f;  // metres a reflected ray travels at most
+    float reflectionRoughness = 0.7f;  // roughness where screen-space reflections have faded out
     /// Levels of detail: imported meshes switch to simpler versions as they get smaller on
     /// screen. Larger values keep detail longer; 0 always draws full detail.
     float lodBias = 1.0f;
@@ -82,6 +87,7 @@ struct SceneDrawStats {
     bool shadowsRendered = false;
     bool virtualShadows = false;              // the sun used the virtual shadow map
     bool temporalAntiAliasing = false;        // TAA resolved the frame (with history when valid)
+    bool screenSpaceReflections = false;
     std::uint32_t virtualPagesRequested = 0;  // pages the view needed
     std::uint32_t virtualPagesCached = 0;     // of those, kept from earlier frames
     std::uint32_t virtualPagesRendered = 0;   // drawn this frame
@@ -155,6 +161,12 @@ private:
     // Temporal anti-aliasing: the jitter sequence, last frame's matrices (camera and per object,
     // by entity) and two history images that swap every frame.
     nvrhi::ComputePipelineHandle taa_;
+    nvrhi::ComputePipelineHandle ssrTrace_;
+    nvrhi::ComputePipelineHandle ssrResolve_;
+    // The opaque pipelines writing normal + roughness and the specular weight too (for SSR).
+    nvrhi::GraphicsPipelineHandle opaqueReflections_;
+    nvrhi::GraphicsPipelineHandle opaqueReflectionsTwoSided_;
+    nvrhi::GraphicsPipelineHandle opaqueReflectionsSkinned_;
     std::uint64_t taaFrame_ = 0;
     bool taaHistoryValid_ = false;
     glm::mat4 previousViewProjection_{1.0f};

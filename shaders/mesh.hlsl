@@ -311,7 +311,17 @@ float4 sampleMaterial(uint textureIndex, float2 uv) {
     return gTextures[textureIndex].Sample(gSamplers[gFrame.counts.z], uv);
 }
 
+#if defined(LUMORA_REFLECTIONS)
+// The opaque pass for screen-space reflections also writes what they need per pixel.
+struct PSOutput {
+    float4 color : SV_Target0;
+    float4 normalRoughness : SV_Target1;  // world shading normal, perceptual roughness
+    float4 specular : SV_Target2;         // weight of the environment's specular (see evaluateAmbient)
+};
+PSOutput PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) {
+#else
 float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
+#endif
     GpuObject object = gObjects[input.objectIndex];
     // Screen-space derivatives must be taken in uniform control flow (used by shadow filtering).
     float3 dpdx = ddx(input.worldPosition);
@@ -362,14 +372,17 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     // Derivatives in uniform control flow: the normal-map branch above depends only on the draw.
     s.roughness = antialiasedRoughness(clamp(s.roughness, 0.02, 1.0), ddx(s.normal), ddy(s.normal));
 
-    float3 color = evaluateAmbient(s);
+    float3 specularWeight;
+    float3 color = evaluateAmbient(s, specularWeight);
+    float occlusion = 1.0;
     if (asuint(object.surface.z) != NO_TEXTURE) {
-        color *= sampleMaterial(asuint(object.surface.z), input.uv).r;  // baked ambient occlusion (glTF: red)
+        occlusion *= sampleMaterial(asuint(object.surface.z), input.uv).r;  // baked ambient occlusion (glTF: red)
     }
     if ((gPush.flags & 4u) != 0u) {
         // Screen-space ambient occlusion (index2) darkens light from the sky in creases.
-        color *= gTextures[gPush.index2].Load(int3(int2(input.position.xy), 0)).r;
+        occlusion *= gTextures[gPush.index2].Load(int3(int2(input.position.xy), 0)).r;
     }
+    color *= occlusion;
     uint lightCount = min(gFrame.counts.x, (uint)MAX_LIGHTS);
     for (uint i = 0; i < lightCount; ++i) {  // directional lights
         GpuLight light = gFrame.lights[i];
@@ -424,6 +437,14 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
         float rim = pow(1.0 - saturate(dot(s.normal, s.view)), 3.0);
         color = lerp(color, color * 0.85 + float3(1.0, 0.55, 0.1) * 0.15, 0.5) + float3(1.0, 0.45, 0.05) * rim * 2.0;
     }
+#if defined(LUMORA_REFLECTIONS)
+    PSOutput o;
+    o.color = float4(color, 1.0);
+    o.normalRoughness = float4(s.normal, s.roughness);
+    o.specular = float4(specularWeight * occlusion, 1.0);
+    return o;
+#else
     return float4(color, saturate(alpha));
+#endif
 }
 #endif

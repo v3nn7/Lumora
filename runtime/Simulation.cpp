@@ -60,6 +60,7 @@ void Simulation::setScripts(std::shared_ptr<ScriptModule> module, const InputSta
         scripts_->reload(std::move(module));
     } else if (module) {
         scripts_ = std::make_unique<ScriptRunner>(scene_, std::move(module), input);
+        scripts_->setHud(&hud_);
         scripts_->setPhysics(physics_.get());
         scripts_->setAudio(audio_.get());
         scripts_->setProjectRoot(projectRoot_);
@@ -85,8 +86,12 @@ std::size_t Simulation::scriptInstances() const noexcept { return scripts_ ? scr
 
 void Simulation::step() {
     const auto dt = static_cast<float>(fixedStep_);
-    // Behaviours first, so physics and rendering see what they did this step.
-    if (scripts_) scripts_->update(dt, simulatedSeconds());
+    // Behaviours first, so physics and rendering see what they did this step. They redraw the
+    // HUD every step.
+    if (scripts_) {
+        hud_.clear();
+        scripts_->update(dt, simulatedSeconds());
+    }
     runRotatorSystem(scene_, dt);
     if (animation_) animation_->update(dt);
     scene_.updateWorldTransforms();

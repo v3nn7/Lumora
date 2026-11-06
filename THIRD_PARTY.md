@@ -13,6 +13,8 @@ licences compatible with it. Versions are pinned (and hash-verified) in `cmake/`
 | nlohmann/json | JSON | MIT |
 | cgltf | glTF import | MIT |
 | stb_image / stb_image_write | image decoding | MIT or public domain |
+| DejaVu Sans (Latin subset, `engine/renderer/fonts`) | HUD text | Bitstream Vera license (see fonts/LICENSE-DejaVu.txt) |
+| stb_truetype | HUD font rasterisation | MIT or public domain |
 | miniaudio 0.11.25 | audio playback, decoding, 3D sound | public domain or MIT-0 |
 | Jolt Physics | rigid-body physics | MIT |
 | miniz | ZIP extraction (editor installer) | MIT |

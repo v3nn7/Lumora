@@ -100,6 +100,9 @@ struct EngineApi {
     Entity (*spawn)(void* context, const char* prefab, const float* position);  // kNoEntity on failure
     int (*animation)(void* context, Entity entity, const char* clip, int command);  // 0 stop, 1 play, 2 playing
     int (*character)(void* context, Entity entity, int command, const float* xyz);  // 0 move, 1 jump, 2 grounded
+    void (*drawRect)(void* context, const float* xywh, const float* rgba);
+    void (*drawText)(void* context, const char* utf8, const float* xySize, const float* rgba);
+    void (*screenSize)(void* context, float* wh);
 };
 
 class Behaviour;
@@ -180,6 +183,26 @@ protected:
         return api_->character(api_->context, entity_, 1, xyz) != 0;
     }
     [[nodiscard]] bool grounded() const { return api_->character(api_->context, entity_, 2, nullptr) != 0; }
+
+    // HUD: 2D drawing on top of the game, in pixels from the top-left corner. Draw it again
+    // in every update(); it is cleared before each step. Colours are sRGB, alpha 0..1.
+    void drawRect(float x, float y, float w, float h, Vec3 color, float alpha = 1.0f) const {
+        const float r[4] = {x, y, w, h};
+        const float c[4] = {color.x, color.y, color.z, alpha};
+        api_->drawRect(api_->context, r, c);
+    }
+    void drawText(std::string_view text, float x, float y, float size = 24.0f, Vec3 color = Vec3{1, 1, 1},
+                  float alpha = 1.0f) const {
+        const float p[3] = {x, y, size};
+        const float c[4] = {color.x, color.y, color.z, alpha};
+        api_->drawText(api_->context, std::string(text).c_str(), p, c);
+    }
+    /// Size of the game's view in pixels (x = width, y = height).
+    [[nodiscard]] Vec3 screenSize() const {
+        float wh[2] = {0.0f, 0.0f};
+        api_->screenSize(api_->context, wh);
+        return {wh[0], wh[1], 0.0f};
+    }
 
     // Entities
     /// Copies an entity (with its children and components, including scripts) into the scene.

@@ -78,9 +78,28 @@ lumora_engine_module(renderer
         renderer/EnvironmentMap.cpp
         renderer/EnvironmentCache.cpp
         renderer/LightGrid.cpp
+        renderer/HudRenderer.cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/generated/HudFont.cpp
         renderer/RenderContext.cpp
         renderer/Renderer.cpp
         renderer/SceneRenderer.cpp
         renderer/ParallelCommandPools.cpp
         renderer/Overlay.cpp
     DEPS lumora_scene Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
+
+# The HUD font (DejaVu Sans, Latin subset) compiled into the renderer as a byte array.
+set(LUMORA_HUD_FONT ${CMAKE_CURRENT_SOURCE_DIR}/renderer/fonts/DejaVuSans-Subset.ttf)
+file(READ ${LUMORA_HUD_FONT} lumora_font_hex HEX)
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," lumora_font_bytes "${lumora_font_hex}")
+file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/HudFont.cpp CONTENT
+"// Generated from renderer/fonts/DejaVuSans-Subset.ttf (see fonts/LICENSE-DejaVu.txt).
+#include <cstddef>
+namespace lumora::render {
+extern const unsigned char kHudFont[];
+extern const std::size_t kHudFontSize;
+const unsigned char kHudFont[] = {${lumora_font_bytes}};
+const std::size_t kHudFontSize = sizeof(kHudFont);
+}
+")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LUMORA_HUD_FONT})
+target_link_libraries(lumora_renderer PRIVATE stb)

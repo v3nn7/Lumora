@@ -26,6 +26,7 @@ struct FrameResources {
     rhi::Buffer lightGrid;           // uint[]: (first, count) per tile, then light indices
     std::uint32_t lightGridCapacity = 0;
     rhi::Buffer overlayVertices;     // render::OverlayVertex[] (host-visible vertex buffer)
+    rhi::Buffer hudVertices;         // render::HudVertex[]
     VkDescriptorSet set = VK_NULL_HANDLE;
     std::unique_ptr<TransientImagePool> transients;
     std::unique_ptr<GpuProfiler> profiler;

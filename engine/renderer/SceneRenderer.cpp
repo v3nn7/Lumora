@@ -262,6 +262,10 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     }
 }
 
+SceneRenderer::~SceneRenderer() {
+    if (hudAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseImage(hudAtlasIndex_);
+}
+
 VkPipeline SceneRenderer::tonemapPipeline(VkFormat outputFormat) {
     if (auto it = tonemap_.find(outputFormat); it != tonemap_.end()) {
         return it->second.get();
@@ -273,6 +277,22 @@ VkPipeline SceneRenderer::tonemapPipeline(VkFormat outputFormat) {
     desc.layout = ctx_.pipelineLayout();
     desc.debugName = "Tonemap";
     return tonemap_.emplace(outputFormat, rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), desc))
+        .first->second.get();
+}
+
+VkPipeline SceneRenderer::hudPipeline(VkFormat outputFormat) {
+    if (auto it = hud_.find(outputFormat); it != hud_.end()) {
+        return it->second.get();
+    }
+    rhi::GraphicsPipelineDesc desc;
+    desc.vertexShader = ctx_.shaders().get("hud.vert");
+    desc.fragmentShader = ctx_.shaders().get("hud.frag");
+    desc.hudVertexInput = true;
+    desc.blend = rhi::BlendMode::Alpha;
+    desc.colorFormats = {outputFormat};
+    desc.layout = ctx_.pipelineLayout();
+    desc.debugName = "HUD";
+    return hud_.emplace(outputFormat, rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), desc))
         .first->second.get();
 }
 
@@ -916,6 +936,53 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 bindSets(ctx.cmd);
                 PushConstants pc;
                 pc.flags = rhi::isSrgbFormat(outputFormat) ? 0u : 1u;  // the overlay draws into the output itself
+                vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(pc), &pc);
+                const VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
+                vkCmdDraw(ctx.cmd, count, 1, 0, 0);
+            });
+        ++stats.drawCalls;
+    }
+    // ---- HUD: the game's text and rectangles, on top of everything.
+    if (settings.hud != nullptr && !settings.hud->empty()) {
+        if (!hudFont_) {
+            hudFont_ = std::make_unique<HudFont>();
+            const auto& atlas = hudFont_->atlas();
+            const std::span<const std::byte> bytes = std::as_bytes(std::span(atlas));
+            const VkExtent2D size{hudFont_->atlasWidth(), hudFont_->atlasHeight()};
+            hudAtlas_ = ctx_.uploads().uploadImageLevels(std::span(&bytes, 1), std::span(&size, 1), VK_FORMAT_R8_UNORM, 1,
+                                                         "HudFontAtlas");
+            hudAtlasIndex_ = ctx_.bindless().registerImage(hudAtlas_.view());
+        }
+        std::vector<HudVertex> vertices;
+        hudFont_->layout(*settings.hud, vertices);
+        // The canvas is laid out for its screen size; scale it to this target.
+        const glm::vec2 scale(static_cast<float>(extent.width) / std::max(settings.hud->screenSize.x, 1.0f),
+                              static_cast<float>(extent.height) / std::max(settings.hud->screenSize.y, 1.0f));
+        for (HudVertex& v : vertices) v.position *= scale;
+        const VkDeviceSize bytes = vertices.size() * sizeof(HudVertex);
+        if (frame.hudVertices.size() < bytes) {
+            VkDeviceSize capacity = std::max<VkDeviceSize>(64 * 1024, frame.hudVertices.size());
+            while (capacity < bytes) capacity *= 2;
+            frame.hudVertices = rhi::Buffer(ctx_.device(), {capacity, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                                            rhi::MemoryUsage::CpuToGpu, "HudVertices"});
+        }
+        frame.hudVertices.write(std::as_bytes(std::span(vertices)));
+        const VkPipeline hud = hudPipeline(outputFormat);
+        const VkBuffer vb = frame.hudVertices.handle();
+        const auto count = static_cast<std::uint32_t>(vertices.size());
+        const std::uint32_t atlas = hudAtlasIndex_;
+        const bool unorm = !rhi::isSrgbFormat(outputFormat);
+        graph.addRasterPass(
+            "HUD", [&](PassBuilder& b) { b.writeColor(output, LoadOp::Load); },
+            [=](PassContext& ctx) {
+                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, hud);
+                bindSets(ctx.cmd);
+                PushConstants pc;
+                pc.index0 = atlas;
+                pc.index1 = sampler;
+                pc.flags = unorm ? 1u : 0u;
                 vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                    sizeof(pc), &pc);
                 const VkDeviceSize offset = 0;

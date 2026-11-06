@@ -166,6 +166,7 @@ render::RenderSettings EditorViewportClient::viewportSettings() const {
     s.selected = ctx_.isPlaying() ? entt::entity{entt::null} : ctx_.selectedEntity();
     s.overlay = overlay_.empty() ? nullptr : &overlay_;
     s.assets = assets;
+    s.hud = ctx_.isPlaying() ? hud : nullptr;
     return s;
 }
 

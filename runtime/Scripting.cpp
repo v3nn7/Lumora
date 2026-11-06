@@ -5,6 +5,7 @@
 #include "runtime/AnimationSystem.hpp"
 #include "runtime/AudioWorld.hpp"
 #include "runtime/PhysicsWorld.hpp"
+#include "scene/Hud.hpp"
 #include "scene/Prefab.hpp"
 #include "scene/Scene.hpp"
 
@@ -272,6 +273,25 @@ int apiCharacter(void* c, script::Entity entity, int command, const float* xyz) 
     }
 }
 
+void apiDrawRect(void* c, const float* rect, const float* rgba) {
+    HudCanvas* hud = context(c).hud;
+    if (hud == nullptr || rect == nullptr || rgba == nullptr) return;
+    hud->rects.push_back({{rect[0], rect[1]}, {rect[2], rect[3]}, {rgba[0], rgba[1], rgba[2], rgba[3]}});
+}
+
+void apiDrawText(void* c, const char* text, const float* xysize, const float* rgba) {
+    HudCanvas* hud = context(c).hud;
+    if (hud == nullptr || text == nullptr || xysize == nullptr || rgba == nullptr) return;
+    hud->texts.push_back({{xysize[0], xysize[1]}, xysize[2], {rgba[0], rgba[1], rgba[2], rgba[3]}, text});
+}
+
+void apiScreenSize(void* c, float* wh) {
+    const HudCanvas* hud = context(c).hud;
+    if (wh == nullptr) return;
+    wh[0] = hud != nullptr ? hud->screenSize.x : 0.0f;
+    wh[1] = hud != nullptr ? hud->screenSize.y : 0.0f;
+}
+
 int apiSound(void* c, script::Entity entity, int command) {
     AudioWorld* audio = context(c).audio;
     const entt::entity e = liveEntity(c, entity);
@@ -404,6 +424,9 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.spawn = apiSpawn;
     api_.animation = apiAnimation;
     api_.character = apiCharacter;
+    api_.drawRect = apiDrawRect;
+    api_.drawText = apiDrawText;
+    api_.screenSize = apiScreenSize;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }

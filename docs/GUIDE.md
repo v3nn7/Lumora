@@ -310,7 +310,22 @@ What a behaviour can do:
 | `param("speed", 4.0f)` | A number from the Script component's **Parameters** field, e.g. `speed=6, jump=4` |
 | `playSound()`, `stopSound()`, `soundPlaying()`, `playSoundOn(e)` | The Audio Source of this (or another) entity |
 | `playAnimation("Clip")`, `stopAnimation()`, `animationPlaying()` | The Animator of this entity |
+| `drawText(text, x, y, size, color)`, `drawRect(x, y, w, h, color)`, `screenSize()` | HUD on top of the game |
 | `log("…")`, `warn("…")` | Messages in the Console |
+
+**HUD.** Behaviours draw text and rectangles on top of the game, in pixels from the top-left
+corner; draw them again in every `update()` (the HUD is cleared before each step):
+
+```cpp
+void update(float) override {
+    const Vec3 screen = screenSize();
+    drawRect(20, 20, 220 * health_, 18, Vec3{0.9f, 0.1f, 0.1f});          // health bar
+    drawText("Score: " + std::to_string(score_), 20, 46, 28);           // white by default
+    if (gameOver_) drawText("Game over", screen.x / 2 - 120, screen.y / 2, 56, Vec3{1, 0.8f, 0.2f});
+}
+```
+
+The font covers Latin letters including Polish and most European ones.
 
 An exception thrown by a behaviour is reported in the Console and disables that behaviour; the
 game keeps running. A crash in script code (for example a null pointer) takes the editor down

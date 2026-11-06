@@ -116,6 +116,18 @@ UniquePipeline createGraphicsPipeline(const Device& device, const PipelineCache&
     const VkVertexInputBindingDescription meshBindings[2] = {
         binding, {1, sizeof(SkinVertex), VK_VERTEX_INPUT_RATE_VERTEX}};
     std::vector<VkVertexInputAttributeDescription> meshAttributes;
+    const VkVertexInputBindingDescription hudBinding{0, 32, VK_VERTEX_INPUT_RATE_VERTEX};
+    const VkVertexInputAttributeDescription hudAttributes[3] = {
+        {0, 0, VK_FORMAT_R32G32_SFLOAT, 0},
+        {1, 0, VK_FORMAT_R32G32_SFLOAT, 8},
+        {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 16},
+    };
+    if (d.hudVertexInput) {
+        vertexInput.vertexBindingDescriptionCount = 1;
+        vertexInput.pVertexBindingDescriptions = &hudBinding;
+        vertexInput.vertexAttributeDescriptionCount = 3;
+        vertexInput.pVertexAttributeDescriptions = hudAttributes;
+    }
     if (d.meshVertexInput) {
         meshAttributes.assign(attributes, attributes + (d.positionOnly ? 1 : 4));
         if (d.skinVertexInput) {

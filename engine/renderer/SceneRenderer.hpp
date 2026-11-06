@@ -1,5 +1,7 @@
 #pragma once
 
+#include "renderer/HudRenderer.hpp"
+
 #include "renderer/GpuTypes.hpp"
 #include "renderer/Overlay.hpp"
 #include "renderer/RenderGraph.hpp"
@@ -35,6 +37,7 @@ struct RenderSettings {
     bool debugCascades = false;           // tint surfaces by the shadow cascade they sample
     entt::entity selected = entt::null;
     const OverlayGeometry* overlay = nullptr;  // drawn on top after tone mapping (gizmos)
+    const HudCanvas* hud = nullptr;            // the game's 2D overlay (text, rectangles), drawn last
     AssetLibrary* assets = nullptr;            // resolves MeshRenderer::meshAsset; null = primitives only
     /// Wait for assets instead of skipping/untexturing them while they load (captures, headless).
     bool blockOnAssets = false;
@@ -84,6 +87,9 @@ struct Frustum {
 class SceneRenderer {
 public:
     explicit SceneRenderer(RenderContext& context);
+    ~SceneRenderer();
+    SceneRenderer(const SceneRenderer&) = delete;
+    SceneRenderer& operator=(const SceneRenderer&) = delete;
 
     SceneDrawStats build(RenderGraph& graph, FrameResources& frame, const Scene& scene, const CameraView& camera,
                          const RenderSettings& settings, RGImage output, VkFormat outputFormat, VkExtent2D extent,
@@ -99,6 +105,7 @@ private:
     VkPipeline tonemapPipeline(VkFormat outputFormat);
     VkPipeline overlayPipeline(VkFormat outputFormat);
     VkPipeline fxaaPipeline(VkFormat outputFormat);
+    VkPipeline hudPipeline(VkFormat outputFormat);
 
     RenderContext& ctx_;
     rhi::UniquePipeline sky_;
@@ -115,6 +122,10 @@ private:
     std::unordered_map<VkFormat, rhi::UniquePipeline> tonemap_;
     std::unordered_map<VkFormat, rhi::UniquePipeline> overlay_;
     std::unordered_map<VkFormat, rhi::UniquePipeline> fxaa_;
+    std::unordered_map<VkFormat, rhi::UniquePipeline> hud_;
+    std::unique_ptr<HudFont> hudFont_;  // built on first use
+    rhi::Image hudAtlas_;
+    std::uint32_t hudAtlasIndex_ = UINT32_MAX;
 };
 
 } // namespace lumora::render

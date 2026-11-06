@@ -28,6 +28,7 @@ works today from what is planned, and nothing listed as planned exists yet.
 | Animation | glTF node animation clips (linear, step, cubic-spline; translation, rotation, scale) played by an Animator component, scriptable; GPU skinning (4 joints per vertex) in shading, depth prepass and shadows |
 | Prefabs | Entities with children saved as `.lprefab`, placed from the Content Browser (undoable) or spawned by scripts |
 | Game export | *File > Export Game*: player runtime, content, built game library and a launcher in a standalone folder |
+| HUD | Scripts draw text (embedded DejaVu Sans, Latin incl. Polish, stb_truetype atlas) and rectangles over the game |
 | Scripting | C++ behaviours in the project's `Scripts/` folder, compiled by the editor with CMake into a game library behind a C ABI and **hot-reloaded on save, also during play**; exceptions are caught per behaviour |
 | Tests | 173 test cases (GoogleTest + CTest): core, scene, serialization, scene patches, projects, CLI, editor installer (feeds, signatures, hostile archives, installs from file feeds), glTF/texture import (incl. a locale regression), render-graph barrier planning, gizmo math, undo/redo, **GPU tests that render real frames and check pixels**, Hub/Editor UI integration tests, collaboration over real loopback sockets (convergence, assets, presence, hostile input) |
 

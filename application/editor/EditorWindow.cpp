@@ -124,6 +124,11 @@ EditorWindow::EditorWindow(app::AppContext& app, Project project, QWidget* paren
 
     client_->onSimulate = [this](float dt) {
         if (simulation_ && !paused_) simulation_->advance(dt);
+        if (simulation_) {
+            // The HUD is laid out in the viewport's pixels.
+            const qreal dpr = viewport_->devicePixelRatio();
+            simulation_->hud().screenSize = glm::vec2(viewport_->width() * dpr, viewport_->height() * dpr);
+        }
         if (simulation_ && simulation_->audio() != nullptr) {
             simulation_->audio()->setListenerFromView(client_->viewportCamera(1.0f).view);  // hear from the camera
         }
@@ -892,6 +897,7 @@ void EditorWindow::play() {
         }
     }
     if (gameModule_) simulation_->setScripts(gameModule_, &viewport_->input());
+    client_->hud = &simulation_->hud();
     paused_ = false;
     ctx_.setScene(playScene_.get(), true);
     updatePlayState();
@@ -908,6 +914,7 @@ void EditorWindow::togglePause() {
 void EditorWindow::stop() {
     if (!simulation_) return;
     log::info("Editor", "play mode stopped after {:.2f} s simulated", simulation_->simulatedSeconds());
+    client_->hud = nullptr;
     simulation_.reset();
     ctx_.setScene(editScene_.get(), false);
     playScene_.reset();

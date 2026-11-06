@@ -666,3 +666,56 @@ TEST_F(RendererTest, ManyPointLightsLightTheirSurroundings) {
     EXPECT_GT(b.g, b.r + 20) << "the green lights light theirs";
     EXPECT_LT(b.r, 30);
 }
+
+// ---- HUD ------------------------------------------------------------------------------------
+
+#include "renderer/HudRenderer.hpp"
+
+TEST(HudFont, MeasuresTextFromTheEmbeddedFont) {
+    const HudFont font;
+    EXPECT_GT(font.measure("Hello", 24.0f), 40.0f);
+    EXPECT_NEAR(font.measure("Hello", 48.0f), 2.0f * font.measure("Hello", 24.0f), 0.01f) << "scales with size";
+    EXPECT_GT(font.measure("WWW", 24.0f), font.measure("iii", 24.0f));
+    EXPECT_GT(font.measure("Zażółć gęślą jaźń", 24.0f), 0.0f) << "Polish letters are in the font";
+    EXPECT_NEAR(font.measure("ab\nabcd", 24.0f), font.measure("abcd", 24.0f), 0.01f) << "widest line";
+    std::vector<HudVertex> vertices;
+    HudCanvas canvas;
+    canvas.rects.push_back({{0, 0}, {10, 10}, {1, 1, 1, 1}});
+    canvas.texts.push_back({{0, 0}, 20.0f, {1, 1, 1, 1}, "A b"});
+    font.layout(canvas, vertices);
+    EXPECT_EQ(vertices.size(), 6u * 3u) << "one quad for the rectangle, one per visible glyph (A, b)";
+}
+
+TEST_F(RendererTest, HudDrawsRectanglesAndTextOnTop) {
+    auto scene = sceneWithSun();
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 1.0f, 5.0f});
+    HudCanvas hud;
+    hud.screenSize = {200.0f, 100.0f};
+    hud.rects.push_back({{10.0f, 10.0f}, {40.0f, 20.0f}, {1.0f, 0.0f, 0.0f, 1.0f}});
+    hud.texts.push_back({{80.0f, 40.0f}, 40.0f, {1.0f, 1.0f, 1.0f, 1.0f}, "HUD"});
+    RenderSettings off;
+    off.bloom = false;
+    RenderSettings on = off;
+    on.hud = &hud;
+    auto plain = renderer_->capture(*scene, cam.view(2.0f), {200, 100}, off);
+    auto drawn = renderer_->capture(*scene, cam.view(2.0f), {200, 100}, on);
+    ASSERT_TRUE(plain.has_value() && drawn.has_value());
+    const auto rect = pixel(*drawn, 30, 20);
+    EXPECT_GT(rect.r, 200);
+    EXPECT_LT(rect.g, 30);
+    EXPECT_LT(rect.b, 30);
+    int textPixels = 0, changedElsewhere = 0;
+    for (std::uint32_t y = 0; y < 100; ++y) {
+        for (std::uint32_t x = 0; x < 200; ++x) {
+            const bool changed = glm::ivec3(pixel(*drawn, x, y)) != glm::ivec3(pixel(*plain, x, y));
+            const bool inRect = x >= 10 && x < 50 && y >= 10 && y < 30;
+            const bool inText = x >= 78 && x < 160 && y >= 38 && y < 84;
+            if (inText && changed && luminance(pixel(*drawn, x, y)) > 200.0f) ++textPixels;
+            if (!inRect && !inText && changed) ++changedElsewhere;
+        }
+    }
+    EXPECT_GT(textPixels, 60) << "white glyph pixels where the text is";
+    EXPECT_EQ(changedElsewhere, 0) << "nothing else changes";
+}

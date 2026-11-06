@@ -69,6 +69,8 @@ bool PlayerWindow::eventFilter(QObject* watched, QEvent* event) {
 }
 
 void PlayerWindow::viewportTick(float dt, const InputState& input, bool) {
+    const qreal dpr = window_->devicePixelRatio();
+    simulation_->hud().screenSize = glm::vec2(window_->width() * dpr, window_->height() * dpr);
     simulation_->advance(dt);
     if (freeCam_) freeCamera_.update(input, dt);
     if (simulation_->audio() != nullptr) simulation_->audio()->setListenerFromView(viewportCamera(1.0f).view);
@@ -83,6 +85,7 @@ CameraView PlayerWindow::viewportCamera(float aspect) const {
 render::RenderSettings PlayerWindow::viewportSettings() const {
     render::RenderSettings s;
     s.assets = &assets_;
+    s.hud = &simulation_->hud();
     return s;
 }
 

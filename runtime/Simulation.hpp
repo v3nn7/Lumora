@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <filesystem>
+
+#include "scene/Hud.hpp"
 #include <cstdint>
 #include <memory>
 
@@ -51,6 +53,8 @@ public:
     [[nodiscard]] AudioWorld* audio() noexcept { return audio_.get(); }
     /// glTF animations (created when the scene has Animator components and a project root is set).
     [[nodiscard]] AnimationSystem* animation() noexcept { return animation_.get(); }
+    /// The game's HUD as the behaviours drew it in the latest step (cleared at every step).
+    [[nodiscard]] HudCanvas& hud() noexcept { return hud_; }
     /// Behaviour instances currently running (0 before the first step).
     [[nodiscard]] std::size_t scriptInstances() const noexcept;
 
@@ -63,6 +67,7 @@ private:
     std::unique_ptr<AudioWorld> audio_;
     std::unique_ptr<AnimationSystem> animation_;
     std::filesystem::path projectRoot_;
+    HudCanvas hud_;
     std::unique_ptr<ScriptRunner> scripts_;  // last: behaviours may still reference physics and audio
 };
 

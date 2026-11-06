@@ -48,6 +48,8 @@ signals:
     /// A file was selected or opened (materials show in the Inspector).
     void assetSelected(const QString& path);
     void applyMaterialRequested(const QString& path);
+    /// A timeline (.ltimeline) should open in the Timeline panel.
+    void openTimelineRequested(const QString& path);
 
 public:
     /// Writes a default material into the open folder; returns its path (empty on failure).
@@ -65,6 +67,7 @@ private:
     void newFolder();
     void newScene();
     void newMaterial();
+    void newTimeline();
     void importFiles();
     void duplicate(const QString& path);
     void remove(const QStringList& paths);

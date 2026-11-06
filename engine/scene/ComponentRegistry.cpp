@@ -21,7 +21,7 @@ std::string categoryOf(std::string_view id) {
         {"Collider", "Physics"},       {"CharacterController", "Physics"}, {"Joint", "Physics"},
         {"Ragdoll", "Physics"},        {"Vehicle", "Physics"},       {"Animator", "Animation"},
         {"Skin", "Animation"},         {"ModelNode", "Animation"},   {"NavAgent", "Navigation"},
-        {"AudioSource", "Audio"},      {"Script", "Scripting"},
+        {"AudioSource", "Audio"},      {"Script", "Scripting"},    {"Timeline", "Animation"},
     };
     for (const auto& [component, category] : kCategories) {
         if (component == id) return std::string(category);
@@ -305,6 +305,16 @@ ComponentRegistry makeBuiltin() {
             R::field(&F::randomRotation, "randomRotation", "Random Rotation", FieldKind::Bool),
             R::field(&F::onTerrain, "onTerrain", "On Terrain", FieldKind::Bool),
             ranged(R::field(&F::maxSlope, "maxSlope", "Max Slope", FieldKind::Float), 0.0f, 90.0f, 1.0f),
+        };
+        reg.add(std::move(d));
+    }
+    {
+        auto d = R::describe<TimelineComponent>("Timeline", "Timeline");
+        d.fields = {
+            R::field(&TimelineComponent::timeline, "timeline", "Timeline", FieldKind::Asset),
+            R::field(&TimelineComponent::playOnStart, "playOnStart", "Play On Start", FieldKind::Bool),
+            R::field(&TimelineComponent::loop, "loop", "Loop", FieldKind::Bool),
+            ranged(R::field(&TimelineComponent::speed, "speed", "Speed", FieldKind::Float), 0.0f, 100.0f, 0.05f),
         };
         reg.add(std::move(d));
     }

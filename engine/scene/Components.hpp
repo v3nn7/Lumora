@@ -184,6 +184,15 @@ struct FoliageComponent {
     float maxSlope = 35.0f; // degrees; steeper ground stays bare (on a terrain)
 };
 
+/// Plays a timeline (.ltimeline: a cutscene or scripted sequence) moving and showing entities,
+/// starting animations and sounds and sending events to scripts.
+struct TimelineComponent {
+    std::string timeline;  // project-relative .ltimeline
+    bool playOnStart = true;
+    bool loop = false;
+    float speed = 1.0f;
+};
+
 /// Run-time state of an emitter (not saved): the live particles.
 struct ParticleStateComponent {
     struct Particle {

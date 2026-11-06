@@ -53,6 +53,7 @@ lumora_engine_module(scene
         scene/PhysicsHelpers.cpp
         scene/Particles.cpp
         scene/Landscape.cpp
+        scene/Timeline.cpp
     DEPS lumora_core lumora_assets lumora_input EnTT::EnTT glm::glm nlohmann_json::nlohmann_json)
 
 lumora_engine_module(project

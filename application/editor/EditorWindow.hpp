@@ -164,6 +164,8 @@ private:
     entt::entity addPrefabToScene(const std::filesystem::path& path, std::optional<glm::vec3> where = std::nullopt);
     [[nodiscard]] glm::vec3 placementSpot() const;
     std::optional<std::string> pickMaterialAsset(QWidget* parent);
+    /// A file inside the project's Content folder (project-relative), e.g. a timeline.
+    std::optional<std::string> pickContentFile(QWidget* parent, const QString& title, const QString& filter);
 
     app::AppContext& app_;
     Project project_;
@@ -184,6 +186,8 @@ private:
     QStackedWidget* viewportStack_ = nullptr;
     QLabel* viewportError_ = nullptr;
     ProfilerPanel* profiler_ = nullptr;
+    class TimelinePanel* timeline_ = nullptr;
+    QDockWidget* timelineDock_ = nullptr;
     QByteArray defaultLayout_;
 
     QAction* newScene_ = nullptr;

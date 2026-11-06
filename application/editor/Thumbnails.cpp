@@ -39,6 +39,7 @@ QColor typeColor(const QString& s) {
     if (s == QLatin1String("lscene")) return {0x2f, 0xb3, 0xb3};
     if (s == QLatin1String("lprefab")) return {0x3a, 0x9f, 0xd8};
     if (s == QLatin1String("lmat")) return {0xb5, 0x5c, 0xd6};
+    if (s == QLatin1String("ltimeline")) return {0xe2, 0x6d, 0x4a};
     if (s == QLatin1String("json") || s == QLatin1String("lumora")) return {0xc9, 0xa2, 0x27};
     if (s == QLatin1String("hlsl") || s == QLatin1String("glsl")) return {0xd6, 0x4d, 0x4d};
     return {0x6c, 0x74, 0x82};
@@ -53,6 +54,7 @@ QString ThumbnailCache::typeLabel(const QString& suffix) {
     if (s == QLatin1String("lscene")) return QStringLiteral("SCENE");
     if (s == QLatin1String("lprefab")) return QStringLiteral("PREFAB");
     if (s == QLatin1String("lmat")) return QStringLiteral("MAT");
+    if (s == QLatin1String("ltimeline")) return QStringLiteral("TIME");
     if (s == QLatin1String("lumora")) return QStringLiteral("PROJ");
     if (s.isEmpty()) return QStringLiteral("FILE");
     return s.left(5).toUpper();

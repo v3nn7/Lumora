@@ -96,6 +96,7 @@ lumora_qt_module(editor
         editor/MaterialEditor.cpp
         editor/QuickOpen.cpp
         editor/AddComponentMenu.cpp
+        editor/TimelinePanel.cpp
         editor/Thumbnails.cpp
         editor/ConsolePanel.cpp
         editor/ProfilerPanel.cpp

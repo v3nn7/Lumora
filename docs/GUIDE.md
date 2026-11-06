@@ -433,6 +433,7 @@ What a behaviour can do:
 | `moveTo(target)`, `isMoving()`, `stopMoving()`, `findPath(from, to)` | Navigation (see Navigation) |
 | `drive(throttle, steering, brake, handbrake)`, `vehicleSpeed()` | A Vehicle |
 | `setRagdoll(on)`, `isRagdoll()` | A Ragdoll |
+| `playTimeline()`, `stopTimeline()`, `timelinePlaying()`, `timelineTime()`, `timelineEvent(name)` | The entity's Timeline (cutscenes) |
 | `tr("menu.play")`, `setLanguage("pl")`, `language()`, `languages()` | Texts in the player's language (see Languages) |
 | `openGameMenu()`, `openGameSettings()`, `gameMenuOpen()` | The player's built-in pause and settings menu |
 | `crossfadeAnimation("Run", 0.25f)` | Blend from the current clip into another (no pop) |
@@ -467,6 +468,26 @@ with it, so save your scene before experimenting. Other ways to build: *Scripts 
 (<kbd>Ctrl</kbd>+<kbd>B</kbd>), or `lumora-editor --headless --project <p> --build-scripts`.
 The standalone player and `--simulate` use the library the editor built last
 (`Saved/ScriptBuild/bin/`).
+
+### Cutscenes (timelines)
+
+*Content Browser → New → Timeline* creates a `.ltimeline` and opens it in the **Timeline**
+panel (next to the Content Browser). Set its **Length**, move the playhead, select an entity in
+the scene and:
+
+- **Key Transform**: its position and rotation at the playhead (the path between keys is a
+  smooth curve, rotations ease in and out);
+- **Key Visibility**: whether its mesh shows;
+- **Animation…**: start one of its animation clips here; **Sound**: play its Audio Source;
+- **Event…**: a named event scripts react to with `timelineEvent("door")`.
+
+Tick **Preview** to see the timeline in the scene at the playhead (▶ plays it); unticking it,
+saving or pressing Play puts everything back. Keys and tracks are listed below; click one to
+jump there, **Delete** removes it.
+
+A **Timeline** component plays a timeline (**Play On Start**, **Loop**, **Speed**). Tracks act
+on entities by name. Scripts: `playTimeline()`, `stopTimeline()`, `timelinePlaying()`,
+`timelineTime()`.
 
 ### Languages and the game menu
 

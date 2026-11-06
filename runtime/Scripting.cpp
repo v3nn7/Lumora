@@ -5,6 +5,7 @@
 #include "runtime/AnimationSystem.hpp"
 #include "runtime/AudioWorld.hpp"
 #include "runtime/Localization.hpp"
+#include "runtime/TimelineSystem.hpp"
 #include "runtime/Navigation.hpp"
 #include "runtime/PhysicsWorld.hpp"
 #include "assets/Material.hpp"
@@ -351,6 +352,22 @@ int apiLocalize(void* c, int command, const char* key, char* out, int capacity) 
             for (const std::string& code : texts->languages()) all += (all.empty() ? "" : ",") + code;
             return copyOut(all, out, capacity);
         }
+    }
+}
+
+int apiTimeline(void* c, script::Entity entity, int command, const char* name, float* out) {
+    TimelineSystem* timelines = context(c).timelines;
+    if (timelines == nullptr) return 0;
+    if (command == 4) return name != nullptr && timelines->eventFired(name) ? 1 : 0;
+    const entt::entity e = liveEntity(c, entity);
+    if (e == entt::null) return 0;
+    switch (command) {
+        case 0: return timelines->play(e) ? 1 : 0;
+        case 1: timelines->stop(e); return 1;
+        case 2: return timelines->isPlaying(e) ? 1 : 0;
+        default:
+            if (out != nullptr) out[0] = timelines->time(e);
+            return 1;
     }
 }
 
@@ -724,6 +741,7 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.ragdoll = apiRagdoll;
     api_.localize = apiLocalize;
     api_.gameMenu = apiGameMenu;
+    api_.timeline = apiTimeline;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }

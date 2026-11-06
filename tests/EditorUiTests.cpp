@@ -961,3 +961,48 @@ TEST(AddComponent, GroupsComponentsIntoCategoriesAndSearches) {
     EXPECT_GE(menu.filter(QStringLiteral("phys")), 5) << "a category name lists its components";
     EXPECT_EQ(menu.filter(QStringLiteral("zzzzqx")), 0);
 }
+
+#include "editor/TimelinePanel.hpp"
+#include "scene/Timeline.hpp"
+
+TEST(TimelineEditor, KeysPreviewsRestoresAndSaves) {
+    test::TempDir dir;
+    const QString file = QString::fromStdString((dir.path() / "Intro.ltimeline").string());
+    ASSERT_TRUE(saveTimeline(TimelineAsset{}, dir.path() / "Intro.ltimeline").has_value());
+    Scene scene;
+    const entt::entity camera = scene.createEntity("Camera");
+    auto& t = scene.registry().get<TransformComponent>(camera);
+    editor::EditorContext ctx;
+    ctx.setScene(&scene, false);
+    ctx.select(scene.uuidOf(camera));
+    editor::TimelinePanel panel(ctx, QString::fromStdString(dir.path().string()));
+    ASSERT_TRUE(panel.open(file));
+
+    panel.setTime(0.0f);
+    ASSERT_TRUE(panel.keySelectedTransform());  // at the origin
+    panel.setTime(2.0f);
+    t.position = {8.0f, 0.0f, 0.0f};
+    t.rotationDeg = {0.0f, 90.0f, 0.0f};
+    ASSERT_TRUE(panel.keySelectedTransform());
+    ASSERT_TRUE(panel.addEvent(QStringLiteral("door")));
+    EXPECT_TRUE(panel.isDirty());
+    ASSERT_EQ(panel.timeline().tracks.size(), 2u);
+    EXPECT_EQ(panel.timeline().tracks[0].keys.size(), 2u);
+
+    t.position = {1.0f, 2.0f, 3.0f};  // where the user left it
+    panel.setTime(1.0f);
+    panel.setPreview(true);
+    EXPECT_NEAR(t.position.x, 4.0f, 0.3f) << "previewed halfway";
+    panel.setTime(2.0f);
+    EXPECT_NEAR(t.rotationDeg.y, 90.0f, 0.5f);
+    panel.setPreview(false);
+    EXPECT_EQ(t.position, glm::vec3(1.0f, 2.0f, 3.0f)) << "put back after the preview";
+
+    ASSERT_TRUE(panel.save());
+    EXPECT_FALSE(panel.isDirty());
+    auto loaded = loadTimeline(dir.path() / "Intro.ltimeline");
+    ASSERT_TRUE(loaded.has_value());
+    EXPECT_EQ(loaded->tracks[0].target, "Camera");
+    EXPECT_FLOAT_EQ(loaded->tracks[0].keys[1].position.x, 8.0f);
+    EXPECT_EQ(loaded->tracks[1].keys[0].text, "door");
+}

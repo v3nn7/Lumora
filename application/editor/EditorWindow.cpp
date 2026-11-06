@@ -10,6 +10,7 @@
 #include "core/Log.hpp"
 #include "core/Version.hpp"
 #include "editor/ConsolePanel.hpp"
+#include "editor/TimelinePanel.hpp"
 #include "editor/CodeEditorPanel.hpp"
 #include "editor/ContentBrowserPanel.hpp"
 #include "editor/EditorViewportClient.hpp"
@@ -422,7 +423,9 @@ void EditorWindow::buildDocks() {
                      if (field.id == "skyHdr") return pickHdrAsset(parent);
                      if (field.id == "audioClip") return pickAudioAsset(parent);
                      if (field.id == "material") return pickMaterialAsset(parent);
-                     return field.id.ends_with("Texture") ? pickTextureAsset(parent) : pickMeshAsset(parent);
+                     if (field.id == "timeline") return pickContentFile(parent, tr("Choose Timeline"), tr("Timelines (*.ltimeline)"));
+                     const bool image = field.id.ends_with("Texture") || field.id == "texture" || field.id == "heightmap";
+                     return image ? pickTextureAsset(parent) : pickMeshAsset(parent);
                  });
     inspector_->setProject(&assets_, app::toQString(project_.rootDir()));
     auto* inspector = makeDock(this, tr("Inspector"), QStringLiteral("dock.inspector"), QStringLiteral("settings"), inspector_);
@@ -453,6 +456,10 @@ void EditorWindow::buildDocks() {
     tabifyDockWidget(contentDock, console);
     addDockWidget(Qt::BottomDockWidgetArea, codeDock_);
     tabifyDockWidget(contentDock, codeDock_);
+    timeline_ = new TimelinePanel(ctx_, app::toQString(project_.rootDir()));
+    timelineDock_ = makeDock(this, tr("Timeline"), QStringLiteral("dock.timeline"), QStringLiteral("animation"), timeline_);
+    addDockWidget(Qt::BottomDockWidgetArea, timelineDock_);
+    tabifyDockWidget(contentDock, timelineDock_);
     contentDock->raise();
     resizeDocks({hierarchy, inspector}, {280, 360}, Qt::Horizontal);
     resizeDocks({contentDock}, {230}, Qt::Vertical);
@@ -475,6 +482,16 @@ void EditorWindow::buildDocks() {
     connect(content, &ContentBrowserPanel::addModelRequested, this, [this](const QString& path) { addModelToScene(path); });
     connect(content, &ContentBrowserPanel::importRequested, this, &EditorWindow::importModels);
     connect(content, &ContentBrowserPanel::openCodeRequested, this, [this](const QString& path) { openCode(path); });
+    connect(content, &ContentBrowserPanel::openTimelineRequested, this, [this](const QString& path) {
+        if (timeline_->isDirty() && QMessageBox::question(this, tr("Timeline"), tr("Save the changes to %1?").arg(QFileInfo(timeline_->file()).fileName())) ==
+                                        QMessageBox::Yes) {
+            timeline_->save();
+        }
+        if (timeline_->open(path)) {
+            timelineDock_->show();
+            timelineDock_->raise();
+        }
+    });
     connect(content, &ContentBrowserPanel::assetSelected, inspector_, &InspectorPanel::showAsset);
     connect(content, &ContentBrowserPanel::applyMaterialRequested, this, [this](const QString& path) {
         if (!assignMaterial(ctx_.selectedUuid(), path)) statusBar()->showMessage(tr("Select an object first"), 4000);
@@ -933,6 +950,17 @@ std::optional<std::string> EditorWindow::pickMaterialAsset(QWidget* parent) {
     return project_.relativePath(path);
 }
 
+std::optional<std::string> EditorWindow::pickContentFile(QWidget* parent, const QString& title, const QString& filter) {
+    const QString file = QFileDialog::getOpenFileName(parent, title, app::toQString(project_.contentDir()), filter);
+    if (file.isEmpty()) return std::nullopt;
+    const std::string relative = project_.relativePath(std::filesystem::absolute(app::toPath(file)));
+    if (relative.starts_with("..")) {
+        QMessageBox::warning(parent, title, tr("Choose a file inside the project."));
+        return std::nullopt;
+    }
+    return relative;
+}
+
 QImage EditorWindow::renderPreview(const QString& path) {
     render::Renderer* renderer = app_.renderer();
     if (renderer == nullptr) return {};
@@ -1258,6 +1286,8 @@ void EditorWindow::openSceneDialog() {
 }
 
 bool EditorWindow::saveScene() {
+    timeline_->setPreview(false);  // save the scene as it is, not posed by a timeline preview
+    if (timeline_->isDirty()) timeline_->save();
     if (scenePath_.isEmpty()) return saveSceneAs();
     if (auto saved = SceneSerializer::save(*editScene_, app::toPath(scenePath_)); !saved) {
         QMessageBox::critical(this, tr("Save failed"), QString::fromStdString(saved.error().message));
@@ -1284,6 +1314,13 @@ bool EditorWindow::saveSceneAs() {
 }
 
 bool EditorWindow::maybeSave() {
+    if (timeline_ != nullptr && timeline_->isDirty()) {
+        const auto answer = QMessageBox::warning(
+            this, tr("Unsaved timeline"), tr("Save changes to '%1'?").arg(QFileInfo(timeline_->file()).fileName()),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+        if (answer == QMessageBox::Cancel) return false;
+        if (answer == QMessageBox::Save && !timeline_->save()) return false;
+    }
     if (!ctx_.isDirty()) return true;
     const auto answer = QMessageBox::warning(
         this, tr("Unsaved changes"), tr("Save changes to '%1'?").arg(QString::fromStdString(editScene_->name())),
@@ -1331,6 +1368,7 @@ void EditorWindow::updateTitle() {
 // ---- Play mode ------------------------------------------------------------------------------
 
 void EditorWindow::play() {
+    timeline_->setPreview(false);  // play from the scene as edited
     showScene();  // playing happens in the viewport
     if (simulation_) {
         paused_ = false;

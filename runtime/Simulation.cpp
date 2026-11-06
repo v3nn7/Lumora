@@ -4,6 +4,7 @@
 #include "runtime/AudioWorld.hpp"
 #include "runtime/PhysicsWorld.hpp"
 #include "runtime/Localization.hpp"
+#include "runtime/TimelineSystem.hpp"
 #include "runtime/Navigation.hpp"
 #include "runtime/SaveData.hpp"
 #include "runtime/Scripting.hpp"
@@ -61,7 +62,8 @@ void Simulation::runOscillators(float dt) {
 
 Simulation::Simulation(Scene& scene, double fixedStep)
     : scene_(scene), fixedStep_(fixedStep > 0.0 ? fixedStep : kDefaultFixedStep),
-      navigation_(std::make_unique<NavigationWorld>(scene)), localization_(std::make_unique<Localization>()) {
+      navigation_(std::make_unique<NavigationWorld>(scene)), localization_(std::make_unique<Localization>()),
+      timelines_(std::make_unique<TimelineSystem>(scene, std::filesystem::path())) {
     if (PhysicsWorld::sceneHasColliders(scene_)) physics_ = std::make_unique<PhysicsWorld>(scene_);
 }
 
@@ -94,6 +96,7 @@ void Simulation::setScripts(std::shared_ptr<ScriptModule> module, const InputSta
         scripts_->setSaveData(save_.get());
         scripts_->setNavigation(navigation_.get());
         scripts_->setLocalization(localization_.get());
+        scripts_->setTimelines(timelines_.get());
     }
 }
 
@@ -114,6 +117,8 @@ void Simulation::setProjectRoot(std::filesystem::path root) {
     if (physics_) physics_->setProjectRoot(projectRoot_);
     navigation_->setProjectRoot(projectRoot_);
     localization_->load(projectRoot_);
+    timelines_ = std::make_unique<TimelineSystem>(scene_, projectRoot_);
+    if (scripts_) scripts_->setTimelines(timelines_.get());
     if (AnimationSystem::sceneHasAnimators(scene_)) {
         animation_ = std::make_unique<AnimationSystem>(scene_, projectRoot_);
         if (scripts_) scripts_->setAnimation(animation_.get());
@@ -139,6 +144,7 @@ void Simulation::step() {
     }
     runRotatorSystem(scene_, dt);
     runOscillators(dt);
+    timelines_->update(dt, animation_.get(), audio_.get());
     if (animation_) animation_->update(dt);
     scene_.updateWorldTransforms();
     if (!physics_ && PhysicsWorld::sceneHasColliders(scene_)) {
@@ -182,6 +188,8 @@ Result<> Simulation::loadScene(const std::filesystem::path& relativePath) {
     debug_.clear();
     navigation_ = std::make_unique<NavigationWorld>(scene_);
     navigation_->setProjectRoot(projectRoot_);
+    timelines_ = std::make_unique<TimelineSystem>(scene_, projectRoot_);
+    if (scripts_) scripts_->setTimelines(timelines_.get());
     if (auto replaced = SceneSerializer::loadInto(scene_, SceneSerializer::toJson(**loaded)); !replaced) {
         return makeError("loadScene {}: {}", relative.generic_string(), replaced.error().message);
     }

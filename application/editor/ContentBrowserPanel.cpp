@@ -2,6 +2,7 @@
 
 #include "common/Theme.hpp"
 #include "assets/Material.hpp"
+#include "scene/Timeline.hpp"
 #include "common/ProjectUi.hpp"
 #include "editor/Thumbnails.hpp"
 
@@ -265,6 +266,8 @@ void ContentBrowserPanel::activate(const QString& path) {
         emit importRequested({path}, current_);
     } else if (isMaterial(info)) {
         emit assetSelected(path);
+    } else if (info.suffix() == QLatin1String("ltimeline")) {
+        emit openTimelineRequested(path);
     } else if (isCode(info)) {
         emit openCodeRequested(path);
     } else {
@@ -276,6 +279,7 @@ void ContentBrowserPanel::populateNewMenu(QMenu& menu) {
     menu.addAction(app::theme::icon(QStringLiteral("folder")), tr("Folder…"), this, &ContentBrowserPanel::newFolder);
     menu.addAction(app::theme::icon(QStringLiteral("scene")), tr("Scene…"), this, &ContentBrowserPanel::newScene);
     menu.addAction(app::theme::icon(QStringLiteral("sphere")), tr("Material…"), this, &ContentBrowserPanel::newMaterial);
+    menu.addAction(app::theme::icon(QStringLiteral("animation")), tr("Timeline…"), this, &ContentBrowserPanel::newTimeline);
     menu.addAction(app::theme::icon(QStringLiteral("console")), tr("C++ Behaviour…"), this,
                    [this] { emit newBehaviourRequested(); });
     menu.addAction(app::theme::icon(QStringLiteral("entity")), tr("Prefab from Selection"), this,
@@ -315,6 +319,20 @@ void ContentBrowserPanel::newMaterial() {
     if (path.isEmpty()) {
         QMessageBox::warning(this, tr("New Material"), tr("Could not create %1 (does it exist already?).").arg(name));
     }
+}
+
+void ContentBrowserPanel::newTimeline() {
+    bool ok = false;
+    QString name = QInputDialog::getText(this, tr("New Timeline"), tr("Timeline name"), QLineEdit::Normal, tr("Cutscene"), &ok)
+                       .trimmed();
+    if (!ok || name.isEmpty()) return;
+    if (!name.endsWith(QLatin1String(".ltimeline"))) name += QStringLiteral(".ltimeline");
+    const QString path = QDir(current_).filePath(name);
+    if (QFileInfo::exists(path) || !saveTimeline(TimelineAsset{}, app::toPath(path))) {
+        QMessageBox::warning(this, tr("New Timeline"), tr("Could not create %1 (does it exist already?).").arg(name));
+        return;
+    }
+    emit openTimelineRequested(path);
 }
 
 QString ContentBrowserPanel::createMaterial(QString name) {

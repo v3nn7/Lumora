@@ -96,6 +96,7 @@ public:
     void setSaveData(SaveData* save) noexcept { context_.save = save; }
     void setNavigation(class NavigationWorld* navigation) noexcept { context_.navigation = navigation; }
     void setLocalization(class Localization* localization) noexcept { context_.localization = localization; }
+    void setTimelines(class TimelineSystem* timelines) noexcept { context_.timelines = timelines; }
     /// 1 if a behaviour asked for the game menu since the last call, 2 for its settings page, else 0.
     [[nodiscard]] int takeMenuRequest() noexcept { return std::exchange(context_.menuRequested, 0); }
     void setMenuOpen(bool open) noexcept { context_.menuOpen = open; }
@@ -124,6 +125,7 @@ public:
         SaveData* save = nullptr;
         class NavigationWorld* navigation = nullptr;
         class Localization* localization = nullptr;
+        class TimelineSystem* timelines = nullptr;
         int menuRequested = 0;  // 1 openGameMenu(), 2 openGameSettings(); handled by the host
         bool menuOpen = false;       // set by the host
         double time = 0.0;

@@ -148,6 +148,9 @@ struct EngineApi {
     int (*localize)(void* context, int command, const char* key, char* out, int capacity);
     // command: 0 open the built-in game menu (pause, settings), 1 is it open, 2 open on settings
     int (*gameMenu)(void* context, int command);
+    // command: 0 play the entity's Timeline from the start, 1 stop, 2 playing?, 3 time (out[0]),
+    // 4 did any timeline pass the event `name` in the latest step
+    int (*timeline)(void* context, Entity entity, int command, const char* name, float* out);
 };
 
 class Behaviour;
@@ -475,6 +478,21 @@ protected:
     /// The same menu, straight on its settings page (for a main menu's "Options").
     void openGameSettings() const { api_->gameMenu(api_->context, 2); }
     [[nodiscard]] bool gameMenuOpen() const { return api_->gameMenu(api_->context, 1) != 0; }
+
+    // Timelines (the entity's Timeline component: cutscenes, scripted sequences).
+    /// Plays the timeline from the start; false if the entity has none.
+    bool playTimeline() const { return api_->timeline(api_->context, entity_, 0, nullptr, nullptr) != 0; }
+    void stopTimeline() const { api_->timeline(api_->context, entity_, 1, nullptr, nullptr); }
+    [[nodiscard]] bool timelinePlaying() const { return api_->timeline(api_->context, entity_, 2, nullptr, nullptr) != 0; }
+    [[nodiscard]] float timelineTime() const {
+        float t = 0.0f;
+        api_->timeline(api_->context, entity_, 3, nullptr, &t);
+        return t;
+    }
+    /// True in the step after any timeline passed an event key with this name.
+    [[nodiscard]] bool timelineEvent(std::string_view name) const {
+        return api_->timeline(api_->context, entity_, 4, std::string(name).c_str(), nullptr) != 0;
+    }
 
     // Vehicles (the entity's Vehicle component) and ragdolls.
     /// throttle -1..1 (negative = reverse), steering -1..1 (positive = right), brakes 0..1.

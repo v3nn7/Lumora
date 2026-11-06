@@ -10,7 +10,8 @@ add_library(lumora_runtime ${LUMORA_MODULE_TYPE}
     AnimationSystem.cpp
     Navigation.cpp
     Localization.cpp
-    GameMenu.cpp)
+    GameMenu.cpp
+    TimelineSystem.cpp)
 lumora_module_setup(lumora_runtime)
 add_library(Lumora::runtime ALIAS lumora_runtime)
 # The scripting ABI lives in the SDK header that game libraries compile against.

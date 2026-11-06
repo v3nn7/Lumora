@@ -76,6 +76,12 @@ constexpr ScriptApiEntry kApi[] = {
     {S::Behaviour, "moveTo", "bool moveTo(Vec3 target)", "Nav Agent: walk there"},
     {S::Behaviour, "stopMoving", "void stopMoving()", "Nav Agent: stop"},
     {S::Behaviour, "isMoving", "bool isMoving()", "Nav Agent: still on its way"},
+    // Timelines
+    {S::Behaviour, "playTimeline", "bool playTimeline()", "Timeline: play from the start"},
+    {S::Behaviour, "stopTimeline", "void stopTimeline()", "Timeline: stop"},
+    {S::Behaviour, "timelinePlaying", "bool timelinePlaying()", "Timeline: still playing"},
+    {S::Behaviour, "timelineTime", "float timelineTime()", "Timeline: seconds in"},
+    {S::Behaviour, "timelineEvent", "bool timelineEvent(std::string_view name)", "A timeline passed this event"},
     // Languages and the game menu
     {S::Behaviour, "tr", "std::string tr(std::string_view key)", "Text in the player's language"},
     {S::Behaviour, "setLanguage", "bool setLanguage(std::string_view code)", "Switch language (\"pl\", \"en\")"},

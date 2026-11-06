@@ -501,15 +501,15 @@ TEST(ContentBrowser, ShowsTheWholeProjectAndOpensFiles) {
     auto* view = browser.findChild<QListView*>();
     ASSERT_NE(view, nullptr);
     QModelIndex script;
-    for (int i = 0; i < 50 && !script.isValid(); ++i) {  // the file model fills in asynchronously
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    const bool listed = waitFor([&] {  // the file model fills in on a worker thread
         const QModelIndex rootIndex = view->rootIndex();
         for (int r = 0; r < view->model()->rowCount(rootIndex); ++r) {
             const QModelIndex idx = view->model()->index(r, 0, rootIndex);
             if (idx.data().toString() == QStringLiteral("Game.cpp")) script = idx;
         }
-    }
-    ASSERT_TRUE(script.isValid());
+        return script.isValid();
+    });
+    ASSERT_TRUE(listed);
     emit view->activated(script);
     ASSERT_EQ(code.size(), 1);
     EXPECT_TRUE(code.front().endsWith(QStringLiteral("Scripts/Game.cpp")));
@@ -517,12 +517,14 @@ TEST(ContentBrowser, ShowsTheWholeProjectAndOpensFiles) {
     // The folder tree hides the editor's Saved/ folder.
     auto* tree = browser.findChild<QTreeView*>();
     ASSERT_NE(tree, nullptr);
-    bool sawSaved = false;
-    for (int i = 0; i < 50; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-    for (int r = 0; r < tree->model()->rowCount(tree->rootIndex()); ++r) {
-        if (tree->model()->index(r, 0, tree->rootIndex()).data().toString() == QStringLiteral("Saved")) sawSaved = true;
-    }
-    EXPECT_FALSE(sawSaved);
+    const auto topFolders = [&] {
+        QStringList names;
+        for (int r = 0; r < tree->model()->rowCount(tree->rootIndex()); ++r)
+            names << tree->model()->index(r, 0, tree->rootIndex()).data().toString();
+        return names;
+    };
+    ASSERT_TRUE(waitFor([&] { return topFolders().contains(QStringLiteral("Scripts")); })) << "the tree fills in";
+    EXPECT_FALSE(topFolders().contains(QStringLiteral("Saved")));
 }
 
 TEST(CodeEditor, EditsSavesAndJumpsToCompilerErrors) {

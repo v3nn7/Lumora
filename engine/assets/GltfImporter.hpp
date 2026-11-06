@@ -25,6 +25,8 @@ struct ImportedMaterial {
     int metallicRoughnessTexture = -1;
     int emissiveTexture = -1;
     int normalTexture = -1;
+    int occlusionTexture = -1;  // ambient occlusion (red channel)
+    float normalScale = 1.0f;   // normalTexture.scale: how strongly the map bends the normal
     /// glTF alphaMode: MASK cuts holes where the base colour's alpha is below alphaCutoff;
     /// BLEND (leaf cards, decals) is drawn cut out at 0.5 too, the closest an opaque pass gets.
     enum class AlphaMode { Opaque, Mask, Blend };

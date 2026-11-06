@@ -88,6 +88,8 @@ ComponentRegistry makeBuiltin() {
             R::field(&MeshRendererComponent::metallicRoughnessTexture, "metallicRoughnessTexture", "Metal/Rough Map", FieldKind::Asset),
             R::field(&MeshRendererComponent::normalTexture, "normalTexture", "Normal Map", FieldKind::Asset),
             R::field(&MeshRendererComponent::emissiveTexture, "emissiveTexture", "Emissive Map", FieldKind::Asset),
+            R::field(&MeshRendererComponent::occlusionTexture, "occlusionTexture", "Occlusion Map", FieldKind::Asset),
+            ranged(R::field(&MeshRendererComponent::normalStrength, "normalStrength", "Normal Strength", FieldKind::Float), 0.0f, 4.0f, 0.05f),
             R::field(&MeshRendererComponent::visible, "visible", "Visible", FieldKind::Bool),
             ranged(R::field(&MeshRendererComponent::alphaCutoff, "alphaCutoff", "Alpha Cutoff (-1 = model)", FieldKind::Float), -1.0f, 1.0f, 0.01f),
             R::field(&MeshRendererComponent::doubleSided, "doubleSided", "Two-Sided", FieldKind::Bool),

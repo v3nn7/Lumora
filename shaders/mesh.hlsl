@@ -255,18 +255,21 @@ float vsmShadow(float3 worldPosition, float3 normal, float3 toLight) {
         if (entry.w < 0.5 || entry.y != page.x || entry.z != page.y) {
             continue;  // not resident (yet): a coarser level
         }
-        // Stay inside the page: its neighbours in the pool hold other places.
-        float2 inPage = clamp(pageCoords - page, 1.5 / texels, 1.0 - 1.5 / texels);
+        // Stay inside the page (the filter reaches 1.5 texels out): its neighbours in the pool
+        // hold other places.
+        float2 inPage = clamp(pageCoords - page, 2.0 / texels, 1.0 - 2.0 / texels);
         float2 physical = float2(fmod(entry.x, pool), floor(entry.x / pool));
         float2 uv = (physical + inPage) / pool;
-        float depth = (ls.z - gFrame.vsmDepth.x) * gFrame.vsmDepth.y - texelWorld * 1.5 * gFrame.vsmDepth.y;
+        float depth = (ls.z - gFrame.vsmDepth.x) * gFrame.vsmDepth.y - texelWorld * 2.0 * gFrame.vsmDepth.y;
+        // 3 x 3 tent of bilinear comparisons (weights 1 2 1): a smooth 4 x 4 texel penumbra.
         float sum = 0.0;
-        [unroll] for (int j = 0; j < 2; ++j) {
-            [unroll] for (int i = 0; i < 2; ++i) {
-                sum += gTextures[gPush.index1].SampleCmpLevelZero(gShadowSamplers[smp], uv + (float2(i, j) - 0.5) * inv, depth);
+        [unroll] for (int j = -1; j <= 1; ++j) {
+            [unroll] for (int i = -1; i <= 1; ++i) {
+                float weight = (i == 0 ? 2.0 : 1.0) * (j == 0 ? 2.0 : 1.0);
+                sum += weight * gTextures[gPush.index1].SampleCmpLevelZero(gShadowSamplers[smp], uv + float2(i, j) * inv, depth);
             }
         }
-        return sum * 0.25;
+        return sum / 16.0;
     }
     return 1.0;
 }
@@ -326,6 +329,7 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
             t = normalize(t);
             float3 b = cross(n, t) * input.tangent.w * faceSign;
             float3 m = sampleMaterial(object.textures.w, input.uv).xyz * 2.0 - 1.0;
+            m.xy *= object.surface.w;  // glTF normalTexture.scale
             s.normal = normalize(t * m.x + b * m.y + n * m.z);
         }
     }
@@ -354,6 +358,9 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     s.roughness = antialiasedRoughness(clamp(s.roughness, 0.02, 1.0), ddx(s.normal), ddy(s.normal));
 
     float3 color = evaluateAmbient(s);
+    if (asuint(object.surface.z) != NO_TEXTURE) {
+        color *= sampleMaterial(asuint(object.surface.z), input.uv).r;  // baked ambient occlusion (glTF: red)
+    }
     if ((gPush.flags & 4u) != 0u) {
         // Screen-space ambient occlusion (index2) darkens light from the sky in creases.
         color *= gTextures[gPush.index2].Load(int3(int2(input.position.xy), 0)).r;

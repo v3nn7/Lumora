@@ -779,7 +779,11 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             twoSided = twoSided || surface.twoSided;
         }
         const bool masked = cutoff > 0.0f && obj.textures.x != kNoTexture;
-        obj.surface = glm::vec4(masked ? cutoff : 0.0f, twoSided ? 1.0f : 0.0f, 0.0f, 0.0f);
+        std::uint32_t occlusion = kNoTexture;
+        if (p.visible && settings.assets != nullptr && !look.occlusionTexture.empty()) {
+            occlusion = ctx_.textures().index(*settings.assets, look.occlusionTexture, TextureColorSpace::Linear, settings.blockOnAssets);
+        }
+        obj.surface = glm::vec4(masked ? cutoff : 0.0f, twoSided ? 1.0f : 0.0f, std::bit_cast<float>(occlusion), look.normalStrength);
         const auto variant = static_cast<std::uint8_t>((masked ? kMasked : 0) | (twoSided ? kTwoSided : 0));
         const Draw draw{drawn,
                         static_cast<std::uint32_t>(objects.size()),

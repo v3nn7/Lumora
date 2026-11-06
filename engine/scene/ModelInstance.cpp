@@ -30,6 +30,8 @@ void addMeshRenderer(Scene& scene, entt::entity e, const ImportedModel& model, s
     renderer.metallicRoughnessTexture = texture(m.metallicRoughnessTexture);
     renderer.normalTexture = texture(m.normalTexture);
     renderer.emissiveTexture = texture(m.emissiveTexture);
+    renderer.occlusionTexture = texture(m.occlusionTexture);
+    renderer.normalStrength = m.normalScale;
     // Alpha cutoff and two-sidedness stay "from the model" (see MeshRendererComponent).
     // Emissive maps multiply the factor; make sure a map alone still shows up.
     if (m.emissiveTexture >= 0 && renderer.emissiveStrength == 0.0f) renderer.emissiveStrength = 1.0f;

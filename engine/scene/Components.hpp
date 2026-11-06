@@ -60,6 +60,8 @@ struct MeshRendererComponent {
     std::string metallicRoughnessTexture;  // glTF packing: G = roughness, B = metallic
     std::string normalTexture;
     std::string emissiveTexture;
+    std::string occlusionTexture;  // ambient occlusion (red channel): darkens light from the sky in creases
+    float normalStrength = 1.0f;   // how strongly the normal map bends the surface
     /// Material asset (.lmat, project-relative). When set it replaces the settings above, and
     /// every entity using it changes when the file does.
     std::string material;

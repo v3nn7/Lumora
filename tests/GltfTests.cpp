@@ -500,3 +500,26 @@ TEST(GltfMaterials, LeafMapsWithoutAlphaAreCutOut) {
     ASSERT_TRUE(plain.has_value());
     EXPECT_EQ((*plain)->rgba[3], 255);
 }
+
+TEST(GltfMaterials, OcclusionNormalStrengthAndAlphaFactor) {
+    test::TempDir dir;
+    const auto file = editedCube(dir.path(), "detailed.gltf", [](nlohmann::json& doc) {
+        auto& m = doc["materials"][0];
+        m["normalTexture"] = {{"index", 0}, {"scale", 0.4}};
+        m["occlusionTexture"] = {{"index", 0}};
+        m["alphaMode"] = "MASK";
+        m["alphaCutoff"] = 0.25;
+        m["pbrMetallicRoughness"]["baseColorFactor"] = {1.0, 1.0, 1.0, 0.5};
+    });
+    auto model = importGltf(file);
+    ASSERT_TRUE(model.has_value()) << model.error().message;
+    const ImportedMaterial& m = model->materials[0];
+    EXPECT_EQ(m.occlusionTexture, 0);
+    EXPECT_FLOAT_EQ(m.normalScale, 0.4f);
+    EXPECT_FLOAT_EQ(importedAlphaCutoff(m), 0.5f) << "map alpha x 0.5 < 0.25 means map alpha < 0.5";
+    Scene scene;
+    const entt::entity root = instantiateModel(scene, *model, "Content/Models/detailed.gltf", "D");
+    const auto& mesh = scene.registry().get<MeshRendererComponent>(scene.childrenOf(scene.childrenOf(root)[0])[0]);
+    EXPECT_EQ(mesh.occlusionTexture, "Content/Models/detailed.gltf#tex0");
+    EXPECT_FLOAT_EQ(mesh.normalStrength, 0.4f);
+}

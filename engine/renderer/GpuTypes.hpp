@@ -4,6 +4,7 @@
 #include <glm/vec4.hpp>
 
 #include <cstddef>
+#include <bit>
 #include <cstdint>
 
 // CPU mirrors of the structures declared in shaders/common.hlsli.
@@ -77,7 +78,7 @@ struct GpuObject {
     glm::vec4 emissiveRoughness{0.0f};
     glm::vec4 flags{0.0f};
     glm::uvec4 textures{kNoTexture};  // bindless: base colour, metallic-roughness, emissive, normal
-    glm::vec4 surface{0.0f};          // x alpha cutoff (0 = opaque), y two-sided
+    glm::vec4 surface{0.0f, 0.0f, std::bit_cast<float>(kNoTexture), 1.0f};  // x alpha cutoff (0 = opaque), y two-sided, z occlusion map, w normal strength
 };
 
 struct PushConstants {

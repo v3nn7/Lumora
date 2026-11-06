@@ -308,9 +308,12 @@ void cutOutPaddedBackground(ImageData& image) {
 
 float importedAlphaCutoff(const ImportedMaterial& m) {
     if (m.baseColorTexture < 0) return 0.0f;
-    if (m.alphaMode == ImportedMaterial::AlphaMode::Mask) return std::clamp(m.alphaCutoff, 0.01f, 1.0f);
-    if (m.alphaMode == ImportedMaterial::AlphaMode::Blend || m.baseColorHasAlpha) return 0.5f;
-    return 0.0f;
+    float cutoff = 0.0f;
+    if (m.alphaMode == ImportedMaterial::AlphaMode::Mask) cutoff = std::clamp(m.alphaCutoff, 0.01f, 1.0f);
+    else if (m.alphaMode == ImportedMaterial::AlphaMode::Blend || m.baseColorHasAlpha) cutoff = 0.5f;
+    // The factor's alpha scales the map's: map alpha x factor < cutoff, i.e. map alpha < cutoff / factor.
+    if (cutoff > 0.0f && m.baseColor.a > 0.0f && m.baseColor.a < 1.0f) cutoff = std::min(cutoff / m.baseColor.a, 1.0f);
+    return cutoff;
 }
 
 Result<ImportedModel> importGltf(const std::filesystem::path& file) {
@@ -336,6 +339,8 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
         if (src.has_emissive_strength) mat.emissive *= src.emissive_strength.emissive_strength;
         mat.emissiveTexture = imageIndexOf(data, src.emissive_texture, model.warnings, mat.name);
         mat.normalTexture = imageIndexOf(data, src.normal_texture, model.warnings, mat.name);
+        mat.normalScale = src.normal_texture.texture != nullptr ? src.normal_texture.scale : 1.0f;
+        mat.occlusionTexture = imageIndexOf(data, src.occlusion_texture, model.warnings, mat.name);
         mat.alphaMode = src.alpha_mode == cgltf_alpha_mode_mask    ? ImportedMaterial::AlphaMode::Mask
                         : src.alpha_mode == cgltf_alpha_mode_blend ? ImportedMaterial::AlphaMode::Blend
                                                                    : ImportedMaterial::AlphaMode::Opaque;

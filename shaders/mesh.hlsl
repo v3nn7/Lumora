@@ -33,7 +33,7 @@ VSOutput VSMain(VSInput input) {
 #endif
     float4 world = mul(object.world, float4(position, 1.0));
     VSOutput o;
-    o.position = mul(gFrame.viewProjection, world);
+    o.position = toTarget(mul(gFrame.viewProjection, world));
     o.worldPosition = world.xyz;
     o.normal = mul((float3x3)object.normalMatrix, normal);
     o.uv = input.uv;

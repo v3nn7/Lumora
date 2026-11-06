@@ -74,6 +74,8 @@ public:
     [[nodiscard]] VkInstance instance() const noexcept { return instance_; }
     [[nodiscard]] VmaAllocator allocator() const noexcept { return allocator_; }
     [[nodiscard]] VkQueue graphicsQueue() const noexcept { return graphicsQueue_; }
+    /// Device extensions enabled at creation (NVRHI needs to know them).
+    [[nodiscard]] const std::vector<std::string>& enabledExtensions() const noexcept { return enabledExtensions_; }
     [[nodiscard]] std::uint32_t graphicsFamily() const noexcept { return graphicsFamily_; }
     [[nodiscard]] const DeviceCapabilities& caps() const noexcept { return caps_; }
 
@@ -106,6 +108,7 @@ private:
     VkDevice device_ = VK_NULL_HANDLE;
     VmaAllocator allocator_ = VK_NULL_HANDLE;
     VkQueue graphicsQueue_ = VK_NULL_HANDLE;
+    std::vector<std::string> enabledExtensions_;
     std::uint32_t graphicsFamily_ = 0;
     DeviceCapabilities caps_;
     std::mutex queueMutex_;

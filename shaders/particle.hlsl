@@ -17,7 +17,7 @@ struct VSOutput {
 
 VSOutput VSMain(VSInput input) {
     VSOutput o;
-    o.position = mul(gFrame.viewProjection, float4(input.position, 1.0));
+    o.position = toTarget(mul(gFrame.viewProjection, float4(input.position, 1.0)));
     o.corner = input.corner;
     o.color = input.color;
     return o;

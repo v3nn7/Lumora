@@ -1,45 +1,42 @@
 #pragma once
 
-#include "renderer/vulkan/Resources.hpp"
+#include "renderer/Gpu.hpp"
 
 #include <memory>
 #include <vector>
 
-namespace lumora::rhi {
-class Device;
-class BindlessTable;
-}
-
 namespace lumora::render {
 
+class BindlessTable;
+
 struct PooledImage {
-    rhi::Image image;
+    nvrhi::TextureHandle texture;
     std::uint32_t bindlessIndex = UINT32_MAX;
-    VkImageUsageFlags usage = 0;
     std::uint32_t idleFrames = 0;
     bool inUse = false;
 };
 
-/// Recycles render-graph transient images. One pool per frame-in-flight slot: an image is
-/// only reused after the slot's fence has signalled, so no cross-frame hazards exist.
+/// Recycles render-graph transient textures (render targets, depth). One pool per
+/// frame-in-flight slot: a texture is only reused after that slot's frame finished on the GPU.
+/// Every texture is registered in the bindless table once, so passes can sample it.
 class TransientImagePool {
 public:
     static constexpr std::uint32_t kMaxIdleFrames = 8;
 
-    TransientImagePool(const rhi::Device& device, rhi::BindlessTable& bindless);
+    TransientImagePool(nvrhi::IDevice* device, BindlessTable& bindless);
     ~TransientImagePool();
     TransientImagePool(const TransientImagePool&) = delete;
     TransientImagePool& operator=(const TransientImagePool&) = delete;
 
-    /// Start of a frame (after the slot fence wait): frees images idle for too long.
+    /// Start of a frame (after the slot's frame completed): frees textures idle for too long.
     void beginFrame();
-    const PooledImage& acquire(VkFormat format, VkExtent2D extent, VkImageUsageFlags usage, const char* name);
+    const PooledImage& acquire(nvrhi::Format format, std::uint32_t width, std::uint32_t height, const char* name);
     void clear();
     [[nodiscard]] std::size_t size() const noexcept { return images_.size(); }
 
 private:
-    const rhi::Device& device_;
-    rhi::BindlessTable& bindless_;
+    nvrhi::IDevice* device_;
+    BindlessTable& bindless_;
     std::vector<std::unique_ptr<PooledImage>> images_;
 };
 

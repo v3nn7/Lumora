@@ -2,7 +2,7 @@
 
 #include "assets/MeshData.hpp"
 #include "assets/Primitives.hpp"
-#include "renderer/vulkan/Resources.hpp"
+#include "renderer/Gpu.hpp"
 
 #include <array>
 #include <string>
@@ -13,27 +13,26 @@ namespace lumora {
 class AssetLibrary;
 }
 
-namespace lumora::rhi {
-class UploadQueue;
-}
 
 namespace lumora::render {
 
 struct GpuMesh {
-    rhi::Buffer vertices;
-    rhi::Buffer indices;
+    nvrhi::BufferHandle vertices;
+    nvrhi::BufferHandle indices;
     std::uint32_t indexCount = 0;
     Aabb bounds;
-    rhi::Buffer skin;  // lumora::SkinVertex per vertex, when the mesh is skinned
-    [[nodiscard]] bool skinned() const noexcept { return static_cast<bool>(skin); }
+    nvrhi::BufferHandle skin;  // lumora::SkinVertex per vertex, when the mesh is skinned
+    [[nodiscard]] bool skinned() const noexcept { return skin != nullptr; }
 };
+
+class RenderContext;
 
 /// GPU meshes: built-in primitives (uploaded at startup) and imported mesh assets (uploaded
 /// on first use, non-blocking). Asset meshes are keyed by absolute path so projects never
 /// collide; entries live until the RenderContext is destroyed.
 class MeshCache {
 public:
-    explicit MeshCache(rhi::UploadQueue& uploads);
+    explicit MeshCache(RenderContext& context);
     [[nodiscard]] const GpuMesh& primitive(MeshPrimitive p) const;
     /// nullptr if the reference cannot be resolved/loaded (reported once by the library) or,
     /// when not blocking, while it is still loading in the background.
@@ -45,7 +44,7 @@ public:
     std::size_t invalidateFile(const std::string& file);
 
 private:
-    rhi::UploadQueue& uploads_;
+    RenderContext& ctx_;
     std::array<GpuMesh, static_cast<std::size_t>(MeshPrimitive::Count)> primitives_;
     std::unordered_map<std::string, GpuMesh> assets_;
     std::unordered_set<std::string> failed_;

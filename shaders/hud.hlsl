@@ -17,7 +17,7 @@ struct VSOutput {
 
 VSOutput VSMain(VSInput input) {
     VSOutput o;
-    o.position = float4(input.position * gFrame.viewportSize.zw * 2.0 - 1.0, 0.0, 1.0);
+    o.position = toTarget(float4(input.position * gFrame.viewportSize.zw * 2.0 - 1.0, 0.0, 1.0));
     o.uv = input.uv;
     o.color = input.color;
     return o;

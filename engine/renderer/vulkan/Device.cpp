@@ -248,6 +248,7 @@ Device::Device(const Instance& instance, const DeviceSelection& selection) : ins
     info.enabledExtensionCount = static_cast<std::uint32_t>(extensions.size());
     info.ppEnabledExtensionNames = extensions.data();
     LUMORA_VK_CHECK(vkCreateDevice(physical_, &info, nullptr, &device_));
+    for (const char* e : extensions) enabledExtensions_.emplace_back(e);
     vkGetDeviceQueue(device_, graphicsFamily_, 0, &graphicsQueue_);
 
     if (instance.debugUtilsEnabled()) {

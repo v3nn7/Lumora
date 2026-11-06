@@ -7,6 +7,8 @@
 #include "renderer/RenderContext.hpp"
 #include "scene/Scene.hpp"
 
+#include <nvrhi/vulkan.h>
+
 #include <algorithm>
 #include <cstring>
 #include <format>
@@ -14,14 +16,56 @@
 namespace lumora::render {
 
 namespace {
-/// More threads than this rarely pay off for one pass, and each costs a pool per frame.
+
+/// More threads than this rarely pay off for one pass.
 constexpr std::uint32_t kMaxRecordingThreads = 8;
+
+nvrhi::Format fromVulkan(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_B8G8R8A8_SRGB: return nvrhi::Format::SBGRA8_UNORM;
+        case VK_FORMAT_B8G8R8A8_UNORM: return nvrhi::Format::BGRA8_UNORM;
+        case VK_FORMAT_R8G8B8A8_SRGB: return nvrhi::Format::SRGBA8_UNORM;
+        case VK_FORMAT_R8G8B8A8_UNORM: return nvrhi::Format::RGBA8_UNORM;
+        case VK_FORMAT_A2B10G10R10_UNORM_PACK32: return nvrhi::Format::R10G10B10A2_UNORM;
+        case VK_FORMAT_R16G16B16A16_SFLOAT: return nvrhi::Format::RGBA16_FLOAT;
+        default: return nvrhi::Format::UNKNOWN;
+    }
+}
+
 } // namespace
 
 PresentTarget::PresentTarget(RenderContext& context, VkSurfaceKHR surface, VkExtent2D extent, rhi::PresentPolicy policy)
-    : swapchain_(std::make_unique<rhi::Swapchain>(context.device(), surface, extent, policy)), desired_(extent) {}
+    : ctx_(context), swapchain_(std::make_unique<rhi::Swapchain>(context.device(), surface, extent, policy)),
+      desired_(extent) {}
 
-PresentTarget::~PresentTarget() = default;
+PresentTarget::~PresentTarget() {
+    // NVRHI's views of the swapchain images go before the swapchain does.
+    ctx_.gpu()->waitForIdle();
+    releaseImages();
+}
+
+void PresentTarget::releaseImages() {
+    images_.clear();
+    ctx_.gpu()->runGarbageCollection();
+}
+
+nvrhi::ITexture* PresentTarget::image(std::uint32_t index) {
+    if (images_.size() != swapchain_->imageCount()) images_.assign(swapchain_->imageCount(), nullptr);
+    nvrhi::TextureHandle& texture = images_[index];
+    if (!texture) {
+        nvrhi::TextureDesc desc;
+        desc.width = swapchain_->extent().width;
+        desc.height = swapchain_->extent().height;
+        desc.format = fromVulkan(swapchain_->format());
+        desc.debugName = std::format("Swapchain{}", index);
+        desc.isRenderTarget = true;
+        desc.initialState = nvrhi::ResourceStates::Present;
+        desc.keepInitialState = true;
+        texture = ctx_.gpu()->createHandleForNativeTexture(nvrhi::ObjectTypes::VK_Image,
+                                                           nvrhi::Object(swapchain_->image(index)), desc);
+    }
+    return texture;
+}
 
 void PresentTarget::resize(VkExtent2D extent) noexcept {
     if (extent.width != desired_.width || extent.height != desired_.height) {
@@ -39,59 +83,12 @@ void PresentTarget::setPolicy(rhi::PresentPolicy policy) noexcept {
 
 Renderer::Renderer(RenderContext& context)
     : ctx_(context), sceneRenderer_(context), start_(std::chrono::steady_clock::now()) {
-    rhi::Device& device = ctx_.device();
-
-    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight},
-                                           {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 * kFramesInFlight}};
-    VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    poolInfo.maxSets = kFramesInFlight;
-    poolInfo.poolSizeCount = 2;
-    poolInfo.pPoolSizes = sizes;
-    VkDescriptorPool pool = VK_NULL_HANDLE;
-    LUMORA_VK_CHECK(vkCreateDescriptorPool(device.handle(), &poolInfo, nullptr, &pool));
-    descriptorPool_ = rhi::UniqueDescriptorPool(device.handle(), pool);
-
-    for (std::uint32_t i = 0; i < kFramesInFlight; ++i) {
-        FrameResources& f = frames_[i];
-        VkCommandPoolCreateInfo cpInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-        cpInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-        cpInfo.queueFamilyIndex = device.graphicsFamily();
-        VkCommandPool cp = VK_NULL_HANDLE;
-        LUMORA_VK_CHECK(vkCreateCommandPool(device.handle(), &cpInfo, nullptr, &cp));
-        f.commandPool = rhi::UniqueCommandPool(device.handle(), cp);
-        VkCommandBufferAllocateInfo alloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        alloc.commandPool = cp;
-        alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        alloc.commandBufferCount = 1;
-        LUMORA_VK_CHECK(vkAllocateCommandBuffers(device.handle(), &alloc, &f.cmd));
-        // One secondary-buffer pool per recording thread (the caller plus the job workers).
-        f.secondaryPools = std::make_unique<ParallelCommandPools>(
-            device, std::min(JobSystem::global().workerCount() + 1, kMaxRecordingThreads));
-        const std::string name = std::format("Frame{}", i);
-        device.setName(VK_OBJECT_TYPE_COMMAND_BUFFER, f.cmd, name.c_str());
-
-        f.fence = rhi::createFence(device, false, "FrameFence");
-        f.acquired = rhi::createBinarySemaphore(device, "ImageAcquired");
-        f.constants = rhi::Buffer(device, {sizeof(FrameConstants), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                           rhi::MemoryUsage::CpuToGpu, "FrameConstants"});
-
-        const VkDescriptorSetLayout layout = ctx_.frameSetLayout();
-        VkDescriptorSetAllocateInfo setAlloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-        setAlloc.descriptorPool = pool;
-        setAlloc.descriptorSetCount = 1;
-        setAlloc.pSetLayouts = &layout;
-        LUMORA_VK_CHECK(vkAllocateDescriptorSets(device.handle(), &setAlloc, &f.set));
-        const VkDescriptorBufferInfo ubo{f.constants.handle(), 0, VK_WHOLE_SIZE};
-        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        write.dstSet = f.set;
-        write.dstBinding = 0;
-        write.descriptorCount = 1;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        write.pBufferInfo = &ubo;
-        vkUpdateDescriptorSets(device.handle(), 1, &write, 0, nullptr);
-
-        f.transients = std::make_unique<TransientImagePool>(device, ctx_.bindless());
-        f.profiler = std::make_unique<GpuProfiler>(device);
+    nvrhi::IDevice* gpu = ctx_.gpu();
+    for (FrameResources& f : frames_) {
+        f.done = gpu->createEventQuery();
+        f.acquired = rhi::createBinarySemaphore(ctx_.device(), "ImageAcquired");
+        f.transients = std::make_unique<TransientImagePool>(gpu, ctx_.bindless());
+        f.profiler = std::make_unique<GpuProfiler>(gpu, ctx_.caps().timestamps);
     }
 }
 
@@ -101,6 +98,12 @@ Renderer::~Renderer() {
     } catch (const std::exception& e) {
         log::error("Renderer", "shutdown wait failed: {}", e.what());
     }
+    framebuffers_.clear();
+    for (FrameResources& f : frames_) {
+        f.transients.reset();
+        f.lists.clear();
+    }
+    ctx_.gpu()->runGarbageCollection();
 }
 
 void Renderer::invalidateAssetFile(const std::filesystem::path& absoluteFile) {
@@ -108,98 +111,76 @@ void Renderer::invalidateAssetFile(const std::filesystem::path& absoluteFile) {
     const std::string file = absoluteFile.lexically_normal().generic_string();
     const std::size_t meshes = ctx_.meshes().invalidateFile(file);
     const std::size_t textures = ctx_.textures().invalidateFile(file);
+    ctx_.gpu()->runGarbageCollection();
     if (meshes + textures > 0) log::info("Renderer", "reloading {} ({} meshes, {} textures)", file, meshes, textures);
 }
 
 void Renderer::waitIdle() {
-    std::vector<VkFence> fences;
-    for (auto& f : frames_) {
-        if (f.pending) fences.push_back(f.fence.get());
+    for (FrameResources& f : frames_) {
+        if (f.pending) finish(f);
     }
-    if (!fences.empty()) {
-        LUMORA_VK_CHECK(vkWaitForFences(ctx_.device().handle(), static_cast<std::uint32_t>(fences.size()),
-                                        fences.data(), VK_TRUE, UINT64_MAX));
-        for (auto& f : frames_) f.pending = false;
-    }
+    ctx_.gpu()->waitForIdle();
+}
+
+void Renderer::finish(FrameResources& frame) {
+    ctx_.gpu()->waitEventQuery(frame.done);
+    frame.pending = false;
+    frame.profiler->resolve();
+    stats_.gpuFrameMs = frame.profiler->frameMilliseconds();
+    stats_.gpuPasses = frame.profiler->results();
 }
 
 FrameResources& Renderer::beginFrame() {
     FrameResources& frame = frames_[slot_];
-    VkDevice device = ctx_.device().handle();
-    if (frame.pending) {
-        const VkFence fence = frame.fence.get();
-        LUMORA_VK_CHECK(vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX));
-        frame.pending = false;
-        frame.profiler->resolve();
-        stats_.gpuFrameMs = frame.profiler->frameMilliseconds();
-        stats_.gpuPasses = frame.profiler->results();
-    }
+    if (frame.pending) finish(frame);
+    frame.usedLists = 0;
     frame.transients->beginFrame();
-    ctx_.uploads().collect();
+    framebuffers_.prune(frameNumber_);
+    ctx_.gpu()->runGarbageCollection();
     return frame;
 }
 
 void Renderer::advance() noexcept { slot_ = (slot_ + 1) % kFramesInFlight; }
 
-SceneDrawStats Renderer::record(FrameResources& frame, const Scene& scene, const CameraView& camera,
-                                const RenderSettings& settings, const ImportedImage& output,
-                                const std::function<void(RenderGraph&, RGImage)>& extraPasses) {
-    VkDevice device = ctx_.device().handle();
-    LUMORA_VK_CHECK(vkResetCommandPool(device, frame.commandPool.get(), 0));
-    frame.secondaryPools->reset();
-    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    LUMORA_VK_CHECK(vkBeginCommandBuffer(frame.cmd, &begin));
-    frame.profiler->beginFrame(frame.cmd);
-
+std::vector<nvrhi::CommandListHandle> Renderer::record(FrameResources& frame, const Scene& scene, const CameraView& camera,
+                                                       const RenderSettings& settings, const ImportedImage& output,
+                                                       const std::function<void(RenderGraph&, RGImage)>& extraPasses) {
+    nvrhi::IDevice* gpu = ctx_.gpu();
+    nvrhi::CommandListHandle first = frame.nextList(gpu);
+    frame.profiler->beginFrame(first);
+    const nvrhi::TextureDesc& outDesc = output.texture->getDesc();
     // Re-derive the projection from the real target size so resizes never stretch the image.
     CameraView view = camera;
-    view.aspect = static_cast<float>(output.extent.width) / static_cast<float>(std::max(output.extent.height, 1u));
+    view.aspect = static_cast<float>(outDesc.width) / static_cast<float>(std::max(outDesc.height, 1u));
     view.projection = perspectiveReverseZ(view.fovYRadians, view.aspect, view.nearPlane);
 
     RenderGraph graph;
     const RGImage out = graph.importImage("Output", output);
     const double time = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
-    const SceneDrawStats drawStats =
-        sceneRenderer_.build(graph, frame, scene, view, settings, out, output.format, output.extent, time);
+    stats_.scene = sceneRenderer_.build(graph, frame, scene, view, settings, out, outDesc.format,
+                                        {outDesc.width, outDesc.height}, time);
     if (extraPasses) extraPasses(graph, out);
-    graph.execute(frame.cmd, ctx_.device(), *frame.transients, frame.profiler.get(), frame.secondaryPools.get());
-
-    frame.profiler->endFrame(frame.cmd);
-    LUMORA_VK_CHECK(vkEndCommandBuffer(frame.cmd));
-    return drawStats;
+    GraphRuntime runtime;
+    runtime.device = gpu;
+    runtime.pool = frame.transients.get();
+    runtime.profiler = frame.profiler.get();
+    runtime.framebuffers = &framebuffers_;
+    runtime.frame = frameNumber_;
+    runtime.newList = [&frame, gpu] { return frame.nextList(gpu); };
+    runtime.maxThreads = std::min(JobSystem::global().workerCount() + 1, kMaxRecordingThreads);
+    std::vector<nvrhi::CommandListHandle> lists = graph.execute(first, runtime);
+    frame.profiler->endFrame(lists.back());
+    lists.back()->close();
+    return lists;
 }
 
-void Renderer::submit(FrameResources& frame, VkSemaphore waitAcquired, VkSemaphore signalPresent) {
-    std::vector<VkSemaphoreSubmitInfo> waits;
-    if (waitAcquired != VK_NULL_HANDLE) {
-        VkSemaphoreSubmitInfo w{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
-        w.semaphore = waitAcquired;
-        w.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-        waits.push_back(w);
-    }
-    if (const std::uint64_t uploadValue = ctx_.uploads().lastSubmittedValue(); uploadValue > 0) {
-        VkSemaphoreSubmitInfo w{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
-        w.semaphore = ctx_.uploads().timeline();
-        w.value = uploadValue;
-        w.stageMask = VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-        waits.push_back(w);
-    }
-    VkSemaphoreSubmitInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
-    signal.semaphore = signalPresent;
-    signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    VkCommandBufferSubmitInfo cmdInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
-    cmdInfo.commandBuffer = frame.cmd;
-    VkSubmitInfo2 info{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
-    info.waitSemaphoreInfoCount = static_cast<std::uint32_t>(waits.size());
-    info.pWaitSemaphoreInfos = waits.data();
-    info.commandBufferInfoCount = 1;
-    info.pCommandBufferInfos = &cmdInfo;
-    info.signalSemaphoreInfoCount = signalPresent != VK_NULL_HANDLE ? 1u : 0u;
-    info.pSignalSemaphoreInfos = &signal;
-    const VkFence fence = frame.fence.get();
-    LUMORA_VK_CHECK(vkResetFences(ctx_.device().handle(), 1, &fence));
-    ctx_.device().submit(info, fence);
+void Renderer::submit(FrameResources& frame, std::vector<nvrhi::CommandListHandle>& lists) {
+    std::vector<nvrhi::ICommandList*> raw;
+    raw.reserve(lists.size());
+    for (const auto& l : lists) raw.push_back(l);
+    ctx_.gpu()->executeCommandLists(raw.data(), raw.size());
+    ctx_.gpu()->resetEventQuery(frame.done);
+    ctx_.gpu()->setEventQuery(frame.done, nvrhi::CommandQueue::Graphics);
     frame.pending = true;
 }
 
@@ -208,12 +189,13 @@ FrameResult Renderer::render(PresentTarget& target, const Scene& scene, const Ca
     rhi::Swapchain& swapchain = *target.swapchain_;
     if (target.dirty_ || !swapchain.valid()) {
         waitIdle();
+        framebuffers_.clear();
+        target.releaseImages();
         if (!swapchain.recreate(target.desired_)) {
             return FrameResult::Skipped;  // zero-sized (minimized) or surface temporarily unavailable
         }
         target.dirty_ = false;
     }
-
     FrameResources& frame = beginFrame();
     std::uint32_t imageIndex = 0;
     const rhi::SwapchainStatus acquired = swapchain.acquire(frame.acquired.get(), imageIndex);
@@ -221,29 +203,19 @@ FrameResult Renderer::render(PresentTarget& target, const Scene& scene, const Ca
         target.dirty_ = true;
         return FrameResult::Skipped;
     }
-    if (acquired == rhi::SwapchainStatus::SurfaceLost) {
-        return FrameResult::SurfaceLost;
-    }
-    if (acquired == rhi::SwapchainStatus::Timeout) {
-        return FrameResult::Skipped;  // no image available yet; the acquire semaphore was not signalled
-    }
-    if (acquired == rhi::SwapchainStatus::Suboptimal) {
-        target.dirty_ = true;  // still render this image, rebuild next frame
-    }
+    if (acquired == rhi::SwapchainStatus::SurfaceLost) return FrameResult::SurfaceLost;
+    if (acquired == rhi::SwapchainStatus::Timeout) return FrameResult::Skipped;  // the semaphore was not signalled
+    if (acquired == rhi::SwapchainStatus::Suboptimal) target.dirty_ = true;  // still render this image
 
     Stopwatch cpu;
     ImportedImage output;
-    output.image = swapchain.image(imageIndex);
-    output.view = swapchain.view(imageIndex);
-    output.format = swapchain.format();
-    output.extent = swapchain.extent();
-    // Chains with the acquire semaphore wait at COLOR_ATTACHMENT_OUTPUT.
-    output.initialState = {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_NONE};
-    output.finalUsage = ImageUsage::Present;
-    stats_.scene = record(frame, scene, camera, settings, output, {});
-    submit(frame, frame.acquired.get(), swapchain.presentSemaphore(imageIndex));
+    output.texture = target.image(imageIndex);
+    std::vector<nvrhi::CommandListHandle> lists = record(frame, scene, camera, settings, output, {});
+    ctx_.vulkanGpu()->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, frame.acquired.get(), 0);
+    ctx_.vulkanGpu()->queueSignalSemaphore(nvrhi::CommandQueue::Graphics, swapchain.presentSemaphore(imageIndex), 0);
+    submit(frame, lists);
     stats_.cpuRecordMs = cpu.elapsedMs();
-    stats_.extent = output.extent;
+    stats_.extent = swapchain.extent();
     stats_.frameNumber = ++frameNumber_;
     stats_.vram = ctx_.device().deviceLocalMemoryUsage();
 
@@ -262,59 +234,46 @@ Result<CapturedImage> Renderer::capture(const Scene& scene, const CameraView& ca
     if (extent.width == 0 || extent.height == 0 || extent.width > 16384 || extent.height > 16384) {
         return makeError("invalid capture size {}x{}", extent.width, extent.height);
     }
-    rhi::Device& device = ctx_.device();
-    constexpr VkFormat kFormat = VK_FORMAT_R8G8B8A8_SRGB;
-    rhi::Image target(device, {kFormat, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-                               1, "CaptureTarget"});
-    const VkDeviceSize bytes = static_cast<VkDeviceSize>(extent.width) * extent.height * 4;
-    rhi::Buffer readback(device, {bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, rhi::MemoryUsage::GpuToCpu, "CaptureReadback"});
+    nvrhi::IDevice* gpu = ctx_.gpu();
+    nvrhi::TextureDesc desc;
+    desc.width = extent.width;
+    desc.height = extent.height;
+    desc.format = nvrhi::Format::SRGBA8_UNORM;
+    desc.debugName = "CaptureTarget";
+    desc.isRenderTarget = true;
+    desc.initialState = nvrhi::ResourceStates::RenderTarget;
+    desc.keepInitialState = true;
+    nvrhi::TextureHandle target = gpu->createTexture(desc);
+    nvrhi::StagingTextureHandle readback = gpu->createStagingTexture(desc, nvrhi::CpuAccessMode::Read);
+    if (!target || !readback) return makeError("could not create a {}x{} capture target", extent.width, extent.height);
 
     FrameResources& frame = beginFrame();
     ImportedImage output;
-    output.image = target.handle();
-    output.view = target.view();
-    output.format = kFormat;
-    output.extent = extent;
-    const VkBuffer dst = readback.handle();
-    stats_.scene = record(frame, scene, camera, settings, output, [&](RenderGraph& graph, RGImage out) {
-        graph.addPass(
-            "Readback", [&](PassBuilder& b) { b.copyFrom(out); },
-            [dst, extent, out](PassContext& ctx) {
-                VkBufferImageCopy region{};
-                region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-                region.imageExtent = {extent.width, extent.height, 1};
-                vkCmdCopyImageToBuffer(ctx.cmd, ctx.image(out), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst, 1, &region);
-                // Make the copy visible to host reads after the fence wait.
-                VkBufferMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2};
-                barrier.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
-                barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-                barrier.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
-                barrier.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
-                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                barrier.buffer = dst;
-                barrier.size = VK_WHOLE_SIZE;
-                VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-                dep.bufferMemoryBarrierCount = 1;
-                dep.pBufferMemoryBarriers = &barrier;
-                vkCmdPipelineBarrier2(ctx.cmd, &dep);
-            });
-    });
-    submit(frame, VK_NULL_HANDLE, VK_NULL_HANDLE);
-    const VkFence fence = frame.fence.get();
-    LUMORA_VK_CHECK(vkWaitForFences(device.handle(), 1, &fence, VK_TRUE, UINT64_MAX));
-    frame.pending = false;
-    frame.profiler->resolve();
-    stats_.gpuFrameMs = frame.profiler->frameMilliseconds();
-    stats_.gpuPasses = frame.profiler->results();
+    output.texture = target;
+    std::vector<nvrhi::CommandListHandle> lists =
+        record(frame, scene, camera, settings, output, [&](RenderGraph& graph, RGImage out) {
+            graph.addPass(
+                "Readback", [&](PassBuilder& b) { b.copyFrom(out); },
+                [&readback, out](PassContext& ctx) {  // `out` by value: this runs after the setup returned
+                    ctx.cmd->copyTexture(readback, nvrhi::TextureSlice(), ctx.texture(out), nvrhi::TextureSlice());
+                });
+        });
+    submit(frame, lists);
+    finish(frame);
     advance();
+    ++frameNumber_;
 
-    readback.invalidate();
+    std::size_t pitch = 0;
+    const auto* mapped = static_cast<const std::uint8_t*>(
+        gpu->mapStagingTexture(readback, nvrhi::TextureSlice(), nvrhi::CpuAccessMode::Read, &pitch));
+    if (mapped == nullptr) return makeError("could not read the capture back");
     CapturedImage image;
     image.width = extent.width;
     image.height = extent.height;
-    image.rgba.resize(static_cast<std::size_t>(bytes));
-    std::memcpy(image.rgba.data(), readback.mapped(), image.rgba.size());
+    const std::size_t row = static_cast<std::size_t>(extent.width) * 4;
+    image.rgba.resize(row * extent.height);
+    for (std::uint32_t y = 0; y < extent.height; ++y) std::memcpy(image.rgba.data() + y * row, mapped + y * pitch, row);
+    gpu->unmapStagingTexture(readback);
     return image;
 }
 

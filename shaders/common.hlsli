@@ -74,9 +74,9 @@ float4x4 skinMatrix(uint4 joints, float4 weights, uint first) {
 }
 
 [[vk::binding(0, 1)]] Texture2D gTextures[];
-[[vk::binding(1, 1)]] SamplerState gSamplers[];
+[[vk::binding(5, 0)]] SamplerState gSamplers[4];
 // Same descriptors viewed as comparison samplers (descriptor aliasing of VK_DESCRIPTOR_TYPE_SAMPLER).
-[[vk::binding(1, 1)]] SamplerComparisonState gShadowSamplers[];
+[[vk::binding(5, 0)]] SamplerComparisonState gShadowSamplers[4];
 
 struct PushConstants {
     uint index0;
@@ -91,6 +91,14 @@ struct PushConstants {
 // Note: glslang only honours vk::push_constant on ConstantBuffer<T>/cbuffer declarations; a
 // plain struct global silently lands in the $Global uniform block instead.
 [[vk::push_constant]] ConstantBuffer<PushConstants> gPush;
+
+// Clip-space position for the rasterizer. Lumora's matrices use Vulkan's clip space (+Y down);
+// the GPU layer (NVRHI) presents D3D's (+Y up) on every API, flipping Vulkan's viewport, so
+// vertex shaders flip Y back. The image comes out the same on Vulkan and D3D12.
+float4 toTarget(float4 clip) {
+    clip.y = -clip.y;
+    return clip;
+}
 
 /// World-space direction through a screen uv (0..1, top-left origin).
 float3 viewRay(float2 uv) {

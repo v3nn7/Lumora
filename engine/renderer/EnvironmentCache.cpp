@@ -6,8 +6,7 @@
 #include "core/Log.hpp"
 #include "core/Timer.hpp"
 #include "renderer/EnvironmentMap.hpp"
-#include "renderer/vulkan/BindlessTable.hpp"
-#include "renderer/vulkan/UploadQueue.hpp"
+#include "renderer/RenderContext.hpp"
 
 #include <glm/gtc/packing.hpp>
 
@@ -23,7 +22,7 @@ struct EnvironmentCache::Prepared {
     std::uint32_t height = 0;
     std::vector<std::uint16_t> sky;  // RGBA16F
     std::vector<std::vector<std::uint16_t>> specular;
-    std::vector<VkExtent2D> specularExtents;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> specularExtents;
     std::array<glm::vec3, 9> irradiance{};
 };
 
@@ -44,15 +43,14 @@ std::vector<std::uint16_t> toHalfRgba(const std::vector<float>& rgb, std::size_t
 
 } // namespace
 
-EnvironmentCache::EnvironmentCache(rhi::UploadQueue& uploads, rhi::BindlessTable& bindless)
-    : uploads_(uploads), bindless_(bindless) {}
+EnvironmentCache::EnvironmentCache(RenderContext& context) : ctx_(context) {}
 
 EnvironmentCache::~EnvironmentCache() {
     for (auto& [key, entry] : entries_) {
         if (entry.loading.valid()) entry.loading.wait();  // jobs reference nothing of ours, but finish cleanly
         if (entry.gpu) {
-            bindless_.releaseImage(entry.gpu->skyIndex);
-            bindless_.releaseImage(entry.gpu->specularIndex);
+            ctx_.bindless().releaseTexture(entry.gpu->skyIndex);
+            ctx_.bindless().releaseTexture(entry.gpu->specularIndex);
         }
     }
 }
@@ -103,16 +101,15 @@ const EnvironmentCache::Gpu* EnvironmentCache::get(AssetLibrary& library, const 
         return nullptr;
     }
     auto gpu = std::make_unique<Gpu>();
-    const VkFormat format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    const nvrhi::Format format = nvrhi::Format::RGBA16_FLOAT;
     const std::span<const std::byte> skyBytes = std::as_bytes(std::span(prepared->sky));
-    const VkExtent2D skyExtent{prepared->width, prepared->height};
-    gpu->sky = uploads_.uploadImageLevels(std::span(&skyBytes, 1), std::span(&skyExtent, 1), format, 8,
-                                          "EnvironmentSky");
+    gpu->sky = ctx_.createTexture(std::span(&skyBytes, 1), prepared->width, prepared->height, format, "EnvironmentSky");
     std::vector<std::span<const std::byte>> levels;
     for (const auto& level : prepared->specular) levels.push_back(std::as_bytes(std::span(level)));
-    gpu->specular = uploads_.uploadImageLevels(levels, prepared->specularExtents, format, 8, "EnvironmentSpecular");
-    gpu->skyIndex = bindless_.registerImage(gpu->sky.view());
-    gpu->specularIndex = bindless_.registerImage(gpu->specular.view());
+    gpu->specular = ctx_.createTexture(levels, prepared->specularExtents.front().first,
+                                       prepared->specularExtents.front().second, format, "EnvironmentSpecular");
+    gpu->skyIndex = ctx_.bindless().registerTexture(gpu->sky);
+    gpu->specularIndex = ctx_.bindless().registerTexture(gpu->specular);
     gpu->specularLevels = static_cast<std::uint32_t>(levels.size());
     gpu->irradiance = prepared->irradiance;
     entry.gpu = std::move(gpu);

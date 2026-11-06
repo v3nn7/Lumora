@@ -1,51 +1,30 @@
 #pragma once
 
-#include "renderer/vulkan/VulkanCommon.hpp"
+#include "renderer/Gpu.hpp"
 
 #include <glm/vec4.hpp>
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
 
-namespace lumora::rhi {
-class Device;
-}
-
 namespace lumora::render {
 
 class GpuProfiler;
-class ParallelCommandPools;
 class TransientImagePool;
 
-/// How a pass touches an image. Each usage maps to one (layout, stages, access) state.
+/// How a pass touches an image.
 enum class ImageUsage : std::uint8_t {
     ColorAttachment,
-    DepthAttachment,      // depth test + write
-    DepthReadOnly,        // depth test, no write
-    FragmentSampled,
-    TransferSrc,
-    TransferDst,
-    Present,
+    DepthAttachment,  // depth test + write
+    DepthReadOnly,    // depth test, no write
+    Sampled,          // read in shaders through its bindless index
+    CopySource,
+    CopyDestination,
 };
-
-struct ImageState {
-    VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
-    VkPipelineStageFlags2 stages = VK_PIPELINE_STAGE_2_NONE;
-    VkAccessFlags2 access = VK_ACCESS_2_NONE;
-    bool operator==(const ImageState&) const = default;
-};
-
-[[nodiscard]] ImageState stateForUsage(ImageUsage usage) noexcept;
-[[nodiscard]] VkImageUsageFlags imageUsageFlags(ImageUsage usage) noexcept;
-[[nodiscard]] bool hasWriteAccess(VkAccessFlags2 access) noexcept;
-/// Barrier required between two states, or nullopt when the transition is a no-op
-/// (read-after-read in the same layout). `discard` means the old contents are not needed.
-[[nodiscard]] std::optional<VkImageMemoryBarrier2> makeImageBarrier(const ImageState& from, const ImageState& to,
-                                                                    VkImage image, VkImageAspectFlags aspect,
-                                                                    bool discard);
 
 struct RGImage {
     std::uint32_t id = UINT32_MAX;
@@ -56,23 +35,20 @@ struct RGImage {
 enum class LoadOp : std::uint8_t { Load, Clear, DontCare };
 
 struct ImportedImage {
-    VkImage image = VK_NULL_HANDLE;
-    VkImageView view = VK_NULL_HANDLE;
-    VkFormat format = VK_FORMAT_UNDEFINED;
-    VkExtent2D extent{};
-    ImageState initialState{};                    // state the image is in when the frame starts
-    std::optional<ImageUsage> finalUsage;         // transition applied after the last pass
+    nvrhi::TextureHandle texture;
     std::uint32_t bindlessIndex = UINT32_MAX;
 };
 
 struct TransientImageDesc {
-    VkFormat format = VK_FORMAT_UNDEFINED;
-    VkExtent2D extent{};
+    nvrhi::Format format = nvrhi::Format::UNKNOWN;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
 };
 
 class RenderGraph;
 
-/// Declares the resources a pass reads/writes; the graph derives barriers from this.
+/// Declares the resources a pass reads/writes: the graph clears attachments, builds the
+/// framebuffer and moves sampled images into shader-readable state from this.
 class PassBuilder {
 public:
     void writeColor(RGImage image, LoadOp load, glm::vec4 clear = glm::vec4(0.0f));
@@ -81,8 +57,8 @@ public:
     void sample(RGImage image);
     void copyFrom(RGImage image);
     void copyTo(RGImage image);
-    /// The pass records its commands with PassContext::recordParallel (secondary command
-    /// buffers, possibly on several threads) instead of directly into the primary buffer.
+    /// The pass records its draws with PassContext::recordParallel, possibly into several
+    /// command lists on the job system's threads.
     void recordInParallel(bool parallel = true);
 
 private:
@@ -92,42 +68,68 @@ private:
     std::uint32_t pass_;
 };
 
+/// Framebuffers for attachment sets, kept across frames (dropped when unused for a while).
+class FramebufferCache {
+public:
+    nvrhi::IFramebuffer* get(nvrhi::IDevice* device, const nvrhi::FramebufferDesc& desc, std::uint64_t frame);
+    void prune(std::uint64_t frame);
+    void clear() { entries_.clear(); }
+
+private:
+    struct Entry {
+        nvrhi::FramebufferHandle framebuffer;
+        std::uint64_t lastUsed = 0;
+    };
+    std::map<std::vector<const void*>, Entry> entries_;
+};
+
+/// What the graph needs from the renderer to run.
+struct GraphRuntime {
+    nvrhi::IDevice* device = nullptr;
+    TransientImagePool* pool = nullptr;
+    GpuProfiler* profiler = nullptr;
+    FramebufferCache* framebuffers = nullptr;
+    std::uint64_t frame = 0;
+    /// An open command list for work recorded after a parallel pass or on worker threads.
+    std::function<nvrhi::CommandListHandle()> newList;
+    bool allowParallel = true;
+    std::uint32_t maxThreads = 8;
+};
+
 /// Passed to pass callbacks during execution.
 class PassContext {
 public:
-    using ChunkFn = std::function<void(VkCommandBuffer cmd, std::size_t begin, std::size_t end)>;
+    using ChunkFn = std::function<void(nvrhi::ICommandList* cmd, std::size_t begin, std::size_t end)>;
 
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    [[nodiscard]] VkImage image(RGImage h) const;
-    [[nodiscard]] VkImageView view(RGImage h) const;
-    [[nodiscard]] VkExtent2D extent(RGImage h) const;
+    nvrhi::ICommandList* cmd = nullptr;
+    nvrhi::IFramebuffer* framebuffer = nullptr;  // raster passes
+
+    [[nodiscard]] nvrhi::ITexture* texture(RGImage h) const;
     [[nodiscard]] std::uint32_t bindlessIndex(RGImage h) const;
-
+    /// Viewport and scissor covering the framebuffer.
+    [[nodiscard]] nvrhi::ViewportState viewport() const;
     /// Records items [0, count) of a raster pass. In a pass declared with recordInParallel(),
-    /// chunks of at least `grain` items are recorded into secondary command buffers on the job
+    /// chunks of at least `grain` items are recorded into separate command lists on the job
     /// system's threads and executed in order; otherwise fn(cmd, 0, count) records inline.
-    /// fn must bind its pipeline and descriptor sets: secondaries inherit no state. Viewport and
-    /// scissor start out covering the attachments. fn must only read shared data.
+    /// fn must set its whole graphics state (each list starts empty) and only read shared data.
     void recordParallel(std::size_t count, std::size_t grain, const ChunkFn& fn);
-    /// Number of secondary command buffers the last recordParallel used (0 = inline).
+    /// Number of command lists the last recordParallel used (0 = inline).
     [[nodiscard]] std::uint32_t lastChunkCount() const noexcept { return lastChunks_; }
 
 private:
     friend class RenderGraph;
-    explicit PassContext(const RenderGraph& graph) : graph_(graph) {}
-    const RenderGraph& graph_;
-    // Set while a parallel raster pass runs: what its secondaries inherit.
-    ParallelCommandPools* pools_ = nullptr;
-    bool secondaryContents_ = false;
-    std::vector<VkFormat> colorFormats_;
-    VkFormat depthFormat_ = VK_FORMAT_UNDEFINED;
-    VkExtent2D renderExtent_{};
+    PassContext(RenderGraph& graph, GraphRuntime& runtime, std::uint32_t pass)
+        : graph_(graph), runtime_(runtime), pass_(pass) {}
+    void prepareSampled(nvrhi::ICommandList* list) const;
+    RenderGraph& graph_;
+    GraphRuntime& runtime_;
+    std::uint32_t pass_;
     std::uint32_t lastChunks_ = 0;
 };
 
-/// Frame render graph: passes are declared each frame in execution order; the graph
-/// realises transient images from a pool, computes synchronization2 barriers from the
-/// declared usages, wraps raster passes in dynamic rendering and records GPU timings.
+/// Frame render graph: passes are declared each frame in execution order; the graph realises
+/// transient images from a pool, clears attachments, builds framebuffers, puts sampled images
+/// into shader-readable state, times each pass and splits parallel passes over command lists.
 class RenderGraph {
 public:
     using ExecuteFn = std::function<void(PassContext&)>;
@@ -137,32 +139,21 @@ public:
 
     RGImage importImage(std::string name, const ImportedImage& image);
     RGImage createImage(std::string name, const TransientImageDesc& desc);
-    /// Raster passes run inside vkCmdBeginRendering over their declared attachments.
+
+    /// Raster passes draw into the framebuffer of their declared attachments.
     void addRasterPass(std::string name, const SetupFn& setup, ExecuteFn execute);
-    /// Transfer/compute passes run outside a rendering scope.
+    /// Transfer passes (copies) record outside a framebuffer.
     void addPass(std::string name, const SetupFn& setup, ExecuteFn execute);
 
-    struct PlannedBarrier {
-        std::uint32_t pass;  // UINT32_MAX = after the last pass
-        RGImage image;
-        ImageState from;
-        ImageState to;
-        bool discard;
-    };
-    /// Pure barrier planning (no Vulkan calls) - exposed for testing and debugging.
-    [[nodiscard]] std::vector<PlannedBarrier> planBarriers() const;
-    /// Union of usage flags each transient image needs.
-    [[nodiscard]] VkImageUsageFlags requiredUsage(RGImage image) const;
+    /// Records every pass, starting in `first` (open). Returns the command lists in execution
+    /// order: all closed except the last one, which stays open for the caller.
+    std::vector<nvrhi::CommandListHandle> execute(nvrhi::CommandListHandle first, GraphRuntime& runtime);
 
-    /// Allocates transients, records all passes into `cmd`. With `parallel`, passes declared
-    /// with recordInParallel() record on several threads; without, they record inline.
-    void execute(VkCommandBuffer cmd, const rhi::Device& device, TransientImagePool& pool, GpuProfiler* profiler,
-                 ParallelCommandPools* parallel = nullptr);
-    /// Secondary command buffers recorded by parallel passes in the last execute().
+    /// Command lists recorded by parallel passes in the last execute().
     [[nodiscard]] std::uint32_t parallelChunksRecorded() const noexcept { return parallelChunks_; }
-
     [[nodiscard]] std::size_t passCount() const noexcept { return passes_.size(); }
     [[nodiscard]] const std::string& passName(std::size_t i) const { return passes_[i].name; }
+    [[nodiscard]] std::size_t imageCount() const noexcept { return resources_.size(); }
 
 private:
     friend class PassBuilder;
@@ -172,7 +163,7 @@ private:
         RGImage image;
         ImageUsage usage;
         LoadOp load = LoadOp::Load;
-        VkClearValue clear{};
+        glm::vec4 clear{0.0f};
     };
     struct Pass {
         std::string name;
@@ -189,9 +180,12 @@ private:
     };
 
     void addAccess(std::uint32_t pass, const Access& access);
+    [[nodiscard]] const Resource& resource(RGImage h) const;
 
     std::vector<Pass> passes_;
     std::vector<Resource> resources_;
+    std::vector<nvrhi::CommandListHandle> lists_;  // during execute
+    std::vector<nvrhi::FramebufferHandle> ownedFramebuffers_;
     std::uint32_t parallelChunks_ = 0;
 };
 

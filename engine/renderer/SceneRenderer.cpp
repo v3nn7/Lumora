@@ -104,7 +104,7 @@ std::array<float, kShadowCascades> cascadeSplits(float nearPlane, float distance
 }
 
 namespace {
-constexpr VkFormat kAoFormat = VK_FORMAT_R8_UNORM;
+constexpr nvrhi::Format kAoFormat = nvrhi::Format::R8_UNORM;
 
 /// Joint matrices of a skinned mesh entity: inverse(mesh world) * joint world * inverse bind, for
 /// every joint of its skin, appended to `out`. The joints are the entities that mirror the skin's
@@ -149,198 +149,146 @@ bool appendSkinPalette(const Scene& scene, entt::entity entity, const MeshRender
     return true;
 }
 
-/// Binds a mesh's vertex (and, when skinned, skin) stream and its index buffer.
-void bindMeshBuffers(VkCommandBuffer cmd, const GpuMesh& mesh) {
-    const VkBuffer buffers[2] = {mesh.vertices.handle(), mesh.skinned() ? mesh.skin.handle() : VK_NULL_HANDLE};
-    const VkDeviceSize offsets[2] = {0, 0};
-    vkCmdBindVertexBuffers(cmd, 0, mesh.skinned() ? 2u : 1u, buffers, offsets);
-    vkCmdBindIndexBuffer(cmd, mesh.indices.handle(), 0, VK_INDEX_TYPE_UINT32);
+/// A mesh's vertex (and, when skinned, skin) stream and its index buffer.
+void bindMesh(nvrhi::GraphicsState& state, const GpuMesh& mesh) {
+    state.vertexBuffers.resize(0);
+    state.vertexBuffers.push_back(nvrhi::VertexBufferBinding().setBuffer(mesh.vertices).setSlot(0));
+    if (mesh.skinned()) state.vertexBuffers.push_back(nvrhi::VertexBufferBinding().setBuffer(mesh.skin).setSlot(1));
+    state.indexBuffer = nvrhi::IndexBufferBinding().setBuffer(mesh.indices).setFormat(nvrhi::Format::R32_UINT);
+}
+
+/// Draws `vertexCount` vertices (or indices) with these push constants.
+void push(nvrhi::ICommandList* cmd, const PushConstants& pc) { cmd->setPushConstants(&pc, sizeof(pc)); }
+
+/// A full-screen triangle with one pipeline and its push constants.
+void fullscreen(nvrhi::ICommandList* cmd, nvrhi::GraphicsState state, const PushConstants& pc) {
+    cmd->setGraphicsState(state);
+    push(cmd, pc);
+    cmd->draw(nvrhi::DrawArguments().setVertexCount(3));
 }
 } // namespace
 
 SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
-    auto& shaders = ctx_.shaders();
-    const VkFormat hdr = ctx_.hdrFormat();
+    const nvrhi::Format hdr = ctx_.hdrFormat();
+    const nvrhi::Format depth = ctx_.depthFormat();
+    auto make = [&](PipelineDesc d) { return ctx_.createPipeline(d); };
 
-    rhi::GraphicsPipelineDesc sky;
-    sky.vertexShader = shaders.get("sky.vert");
-    sky.fragmentShader = shaders.get("sky.frag");
+    PipelineDesc sky;
+    sky.name = "Sky";
+    sky.vertexShader = "sky.vert";
+    sky.pixelShader = "sky.frag";
     sky.colorFormats = {hdr};
-    sky.layout = ctx_.pipelineLayout();
-    sky.debugName = "Sky";
-    sky_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), sky);
+    sky_ = make(sky);
 
-    rhi::GraphicsPipelineDesc opaque;
-    opaque.vertexShader = shaders.get("mesh.vert");
-    opaque.fragmentShader = shaders.get("mesh.frag");
-    opaque.meshVertexInput = true;
-    opaque.cullMode = VK_CULL_MODE_BACK_BIT;
+    PipelineDesc opaque;
+    opaque.name = "OpaquePBR";
+    opaque.vertexShader = "mesh.vert";
+    opaque.pixelShader = "mesh.frag";
+    opaque.input = VertexInput::Mesh;
+    opaque.cull = nvrhi::RasterCullMode::Back;
     opaque.depthTest = true;
     opaque.depthWrite = false;  // the depth prepass already wrote the nearest surfaces
-    opaque.depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;
+    opaque.depthFunc = nvrhi::ComparisonFunc::GreaterOrEqual;
     opaque.colorFormats = {hdr};
-    opaque.depthFormat = ctx_.depthFormat();
-    opaque.layout = ctx_.pipelineLayout();
-    opaque.debugName = "OpaquePBR";
-    opaque_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), opaque);
-    opaque.vertexShader = shaders.get("mesh.skinned.vert");
-    opaque.skinVertexInput = true;
-    opaque.debugName = "OpaquePBRSkinned";
-    opaqueSkinned_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), opaque);
+    opaque.depthFormat = depth;
+    opaque_ = make(opaque);
+    opaque.name = "OpaquePBRSkinned";
+    opaque.vertexShader = "mesh.skinned.vert";
+    opaque.input = VertexInput::MeshSkinned;
+    opaqueSkinned_ = make(opaque);
 
-    rhi::GraphicsPipelineDesc grid;
-    grid.vertexShader = shaders.get("grid.vert");
-    grid.fragmentShader = shaders.get("grid.frag");
+    PipelineDesc grid;
+    grid.name = "EditorGrid";
+    grid.vertexShader = "grid.vert";
+    grid.pixelShader = "grid.frag";
     grid.depthTest = true;
-    grid.depthWrite = false;
-    grid.depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;
-    grid.blend = rhi::BlendMode::Alpha;
+    grid.depthFunc = nvrhi::ComparisonFunc::GreaterOrEqual;
+    grid.blend = BlendMode::Alpha;
     grid.colorFormats = {hdr};
-    grid.depthFormat = ctx_.depthFormat();
-    grid.layout = ctx_.pipelineLayout();
-    grid.debugName = "EditorGrid";
-    grid_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), grid);
+    grid.depthFormat = depth;
+    grid_ = make(grid);
 
-    rhi::GraphicsPipelineDesc particles;
-    particles.vertexShader = shaders.get("particle.vert");
-    particles.fragmentShader = shaders.get("particle.frag");
-    particles.particleVertexInput = true;
+    PipelineDesc particles;
+    particles.name = "ParticlesAlpha";
+    particles.vertexShader = "particle.vert";
+    particles.pixelShader = "particle.frag";
+    particles.input = VertexInput::Particle;
     particles.depthTest = true;
-    particles.depthWrite = false;
-    particles.depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;
-    particles.blend = rhi::BlendMode::Alpha;
+    particles.depthFunc = nvrhi::ComparisonFunc::GreaterOrEqual;
+    particles.blend = BlendMode::Alpha;
     particles.colorFormats = {hdr};
-    particles.depthFormat = ctx_.depthFormat();
-    particles.layout = ctx_.pipelineLayout();
-    particles.debugName = "ParticlesAlpha";
-    particlesAlpha_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), particles);
-    particles.blend = rhi::BlendMode::Additive;
-    particles.debugName = "ParticlesAdditive";
-    particlesAdditive_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), particles);
+    particles.depthFormat = depth;
+    particlesAlpha_ = make(particles);
+    particles.name = "ParticlesAdditive";
+    particles.blend = BlendMode::Additive;
+    particlesAdditive_ = make(particles);
 
-    rhi::GraphicsPipelineDesc shadow;
-    shadow.vertexShader = shaders.get("shadow.vert");
-    shadow.meshVertexInput = true;
-    shadow.positionOnly = true;
-    shadow.cullMode = VK_CULL_MODE_NONE;  // single-sided planes still cast shadows
+    PipelineDesc shadow;
+    shadow.name = "SunShadow";
+    shadow.vertexShader = "shadow.vert";
+    shadow.input = VertexInput::Mesh;
+    shadow.cull = nvrhi::RasterCullMode::None;  // single-sided planes still cast shadows
     shadow.depthTest = true;
     shadow.depthWrite = true;
-    shadow.depthCompare = VK_COMPARE_OP_LESS_OR_EQUAL;  // conventional (not reversed) depth
-    shadow.depthBias = true;
-    shadow.depthBiasConstant = 1.5f;
-    shadow.depthBiasSlope = 2.0f;
-    shadow.depthFormat = ctx_.depthFormat();
-    shadow.layout = ctx_.pipelineLayout();
-    shadow.debugName = "SunShadow";
-    shadow_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), shadow);
-    shadow.vertexShader = shaders.get("shadow.skinned.vert");
-    shadow.skinVertexInput = true;
-    shadow.debugName = "SunShadowSkinned";
-    shadowSkinned_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), shadow);
+    shadow.depthFunc = nvrhi::ComparisonFunc::LessOrEqual;  // conventional (not reversed) depth
+    shadow.depthBias = 2;
+    shadow.slopeScaledDepthBias = 2.0f;
+    shadow.depthFormat = depth;
+    shadow_ = make(shadow);
+    shadow.name = "SunShadowSkinned";
+    shadow.vertexShader = "shadow.skinned.vert";
+    shadow.input = VertexInput::MeshSkinnedPosition;
+    shadowSkinned_ = make(shadow);
 
-    rhi::GraphicsPipelineDesc prepass;
-    prepass.vertexShader = shaders.get("depth.vert");
-    prepass.meshVertexInput = true;
-    prepass.positionOnly = true;
-    prepass.cullMode = VK_CULL_MODE_BACK_BIT;
+    PipelineDesc prepass;
+    prepass.name = "DepthPrepass";
+    prepass.vertexShader = "depth.vert";
+    prepass.input = VertexInput::MeshPosition;
+    prepass.cull = nvrhi::RasterCullMode::Back;
     prepass.depthTest = true;
     prepass.depthWrite = true;
-    prepass.depthCompare = VK_COMPARE_OP_GREATER;
-    prepass.depthFormat = ctx_.depthFormat();
-    prepass.layout = ctx_.pipelineLayout();
-    prepass.debugName = "DepthPrepass";
-    depthPrepass_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), prepass);
-    prepass.vertexShader = shaders.get("depth.skinned.vert");
-    prepass.skinVertexInput = true;
-    prepass.debugName = "DepthPrepassSkinned";
-    depthPrepassSkinned_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), prepass);
+    prepass.depthFunc = nvrhi::ComparisonFunc::Greater;
+    prepass.depthFormat = depth;
+    depthPrepass_ = make(prepass);
+    prepass.name = "DepthPrepassSkinned";
+    prepass.vertexShader = "depth.skinned.vert";
+    prepass.input = VertexInput::MeshSkinnedPosition;
+    depthPrepassSkinned_ = make(prepass);
 
     for (int blur = 0; blur < 2; ++blur) {
-        rhi::GraphicsPipelineDesc ao;
-        ao.vertexShader = shaders.get("ssao.vert");
-        ao.fragmentShader = shaders.get(blur ? "ssao.blur.frag" : "ssao.frag");
-        ao.fragmentEntry = blur ? "PSBlur" : "PSOcclusion";
+        PipelineDesc ao;
+        ao.name = blur ? "SSAOBlur" : "SSAO";
+        ao.vertexShader = "ssao.vert";
+        ao.pixelShader = blur ? "ssao.blur.frag" : "ssao.frag";
+        ao.pixelEntry = blur ? "PSBlur" : "PSOcclusion";
         ao.colorFormats = {kAoFormat};
-        ao.layout = ctx_.pipelineLayout();
-        ao.debugName = blur ? "SSAOBlur" : "SSAO";
-        (blur ? ssaoBlur_ : ssao_) = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), ao);
+        (blur ? ssaoBlur_ : ssao_) = make(ao);
     }
-
     for (int up = 0; up < 2; ++up) {
-        rhi::GraphicsPipelineDesc bloom;
-        bloom.vertexShader = shaders.get("bloom.vert");
-        bloom.fragmentShader = shaders.get(up ? "bloom.up.frag" : "bloom.down.frag");
-        bloom.fragmentEntry = up ? "PSUpsample" : "PSDownsample";
-        bloom.blend = up ? rhi::BlendMode::Additive : rhi::BlendMode::Opaque;
+        PipelineDesc bloom;
+        bloom.name = up ? "BloomUpsample" : "BloomDownsample";
+        bloom.vertexShader = "bloom.vert";
+        bloom.pixelShader = up ? "bloom.up.frag" : "bloom.down.frag";
+        bloom.pixelEntry = up ? "PSUpsample" : "PSDownsample";
+        bloom.blend = up ? BlendMode::Additive : BlendMode::Opaque;
         bloom.colorFormats = {hdr};
-        bloom.layout = ctx_.pipelineLayout();
-        bloom.debugName = up ? "BloomUpsample" : "BloomDownsample";
-        bloom_.emplace(up, rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), bloom));
+        (up ? bloomUp_ : bloomDown_) = make(bloom);
     }
 }
 
 SceneRenderer::~SceneRenderer() {
-    if (hudAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseImage(hudAtlasIndex_);
+    if (hudAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(hudAtlasIndex_);
 }
 
-VkPipeline SceneRenderer::tonemapPipeline(VkFormat outputFormat) {
-    if (auto it = tonemap_.find(outputFormat); it != tonemap_.end()) {
-        return it->second.get();
+nvrhi::IGraphicsPipeline* SceneRenderer::outputPipeline(std::unordered_map<int, nvrhi::GraphicsPipelineHandle>& cache,
+                                                        const PipelineDesc& desc, nvrhi::Format format) {
+    nvrhi::GraphicsPipelineHandle& pipeline = cache[static_cast<int>(format)];
+    if (!pipeline) {
+        PipelineDesc d = desc;
+        d.colorFormats = {format};
+        pipeline = ctx_.createPipeline(d);
     }
-    rhi::GraphicsPipelineDesc desc;
-    desc.vertexShader = ctx_.shaders().get("tonemap.vert");
-    desc.fragmentShader = ctx_.shaders().get("tonemap.frag");
-    desc.colorFormats = {outputFormat};
-    desc.layout = ctx_.pipelineLayout();
-    desc.debugName = "Tonemap";
-    return tonemap_.emplace(outputFormat, rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), desc))
-        .first->second.get();
-}
-
-VkPipeline SceneRenderer::hudPipeline(VkFormat outputFormat) {
-    if (auto it = hud_.find(outputFormat); it != hud_.end()) {
-        return it->second.get();
-    }
-    rhi::GraphicsPipelineDesc desc;
-    desc.vertexShader = ctx_.shaders().get("hud.vert");
-    desc.fragmentShader = ctx_.shaders().get("hud.frag");
-    desc.hudVertexInput = true;
-    desc.blend = rhi::BlendMode::Alpha;
-    desc.colorFormats = {outputFormat};
-    desc.layout = ctx_.pipelineLayout();
-    desc.debugName = "HUD";
-    return hud_.emplace(outputFormat, rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), desc))
-        .first->second.get();
-}
-
-VkPipeline SceneRenderer::fxaaPipeline(VkFormat outputFormat) {
-    if (auto it = fxaa_.find(outputFormat); it != fxaa_.end()) {
-        return it->second.get();
-    }
-    rhi::GraphicsPipelineDesc desc;
-    desc.vertexShader = ctx_.shaders().get("fxaa.vert");
-    desc.fragmentShader = ctx_.shaders().get("fxaa.frag");
-    desc.colorFormats = {outputFormat};
-    desc.layout = ctx_.pipelineLayout();
-    desc.debugName = "FXAA";
-    return fxaa_.emplace(outputFormat, rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), desc))
-        .first->second.get();
-}
-
-VkPipeline SceneRenderer::overlayPipeline(VkFormat outputFormat) {
-    if (auto it = overlay_.find(outputFormat); it != overlay_.end()) {
-        return it->second.get();
-    }
-    rhi::GraphicsPipelineDesc desc;
-    desc.vertexShader = ctx_.shaders().get("overlay.vert");
-    desc.fragmentShader = ctx_.shaders().get("overlay.frag");
-    desc.overlayVertexInput = true;
-    desc.blend = rhi::BlendMode::Alpha;
-    desc.colorFormats = {outputFormat};
-    desc.layout = ctx_.pipelineLayout();
-    desc.debugName = "Overlay";
-    return overlay_.emplace(outputFormat, rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), desc))
-        .first->second.get();
+    return pipeline;
 }
 
 const GpuMesh* SceneRenderer::meshFor(const MeshRendererComponent& mesh, AssetLibrary* assets, bool block) {
@@ -348,60 +296,10 @@ const GpuMesh* SceneRenderer::meshFor(const MeshRendererComponent& mesh, AssetLi
     return assets != nullptr ? ctx_.meshes().asset(*assets, mesh.meshAsset, block) : nullptr;
 }
 
-void SceneRenderer::ensureObjectCapacity(FrameResources& frame, std::uint32_t count) {
-    if (count <= frame.objectCapacity && frame.objects) return;
-    std::uint32_t capacity = std::max(frame.objectCapacity, 256u);
-    while (capacity < count) capacity *= 2;
-    frame.objects = rhi::Buffer(ctx_.device(), {capacity * sizeof(GpuObject), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                                rhi::MemoryUsage::CpuToGpu, "FrameObjects"});
-    frame.objectCapacity = capacity;
-    const VkDescriptorBufferInfo info{frame.objects.handle(), 0, VK_WHOLE_SIZE};
-    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.dstSet = frame.set;
-    write.dstBinding = 1;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    write.pBufferInfo = &info;
-    vkUpdateDescriptorSets(ctx_.device().handle(), 1, &write, 0, nullptr);
-}
-
-void SceneRenderer::ensureStorage(rhi::Buffer& buffer, std::uint32_t& capacity, std::uint32_t count,
-                                  std::size_t elementSize, VkDescriptorSet set, std::uint32_t binding, const char* name) {
-    if (count <= capacity && buffer) return;
-    std::uint32_t grown = std::max(capacity, 64u);
-    while (grown < count) grown *= 2;
-    buffer = rhi::Buffer(ctx_.device(), {grown * elementSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, rhi::MemoryUsage::CpuToGpu, name});
-    capacity = grown;
-    const VkDescriptorBufferInfo info{buffer.handle(), 0, VK_WHOLE_SIZE};
-    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.dstSet = set;
-    write.dstBinding = binding;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    write.pBufferInfo = &info;
-    vkUpdateDescriptorSets(ctx_.device().handle(), 1, &write, 0, nullptr);
-}
-
-void SceneRenderer::ensureJointCapacity(FrameResources& frame, std::uint32_t count) {
-    if (count <= frame.jointCapacity && frame.joints) return;
-    std::uint32_t capacity = std::max(frame.jointCapacity, 64u);
-    while (capacity < count) capacity *= 2;
-    frame.joints = rhi::Buffer(ctx_.device(), {capacity * sizeof(glm::mat4), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                               rhi::MemoryUsage::CpuToGpu, "FrameJoints"});
-    frame.jointCapacity = capacity;
-    const VkDescriptorBufferInfo info{frame.joints.handle(), 0, VK_WHOLE_SIZE};
-    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.dstSet = frame.set;
-    write.dstBinding = 2;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    write.pBufferInfo = &info;
-    vkUpdateDescriptorSets(ctx_.device().handle(), 1, &write, 0, nullptr);
-}
-
 SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, const Scene& scene,
                                     const CameraView& camera, const RenderSettings& settings, RGImage output,
-                                    VkFormat outputFormat, VkExtent2D extent, double timeSeconds) {
+                                    nvrhi::Format outputFormat, VkExtent2D extent, double timeSeconds) {
+    nvrhi::IDevice* gpu = ctx_.gpu();
     SceneDrawStats stats;
     const auto& reg = scene.registry();
     const EnvironmentSettings& env = scene.environment();
@@ -471,17 +369,17 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         const LightGrid grid = buildLightGrid(pointLights, camera.view, camera.projection, extent.width, extent.height);
         fc.lightGrid = glm::uvec4(grid.tilesX, grid.tilesY, grid.tileSize, static_cast<std::uint32_t>(pointLights.size()));
         if (pointLights.empty()) pointLights.push_back(GpuLight{});  // storage buffers may not be empty
-        ensureStorage(frame.pointLights, frame.pointLightCapacity, static_cast<std::uint32_t>(pointLights.size()),
-                      sizeof(GpuLight), frame.set, 3, "FramePointLights");
-        frame.pointLights.write(std::as_bytes(std::span(pointLights)));
-        ensureStorage(frame.lightGrid, frame.lightGridCapacity, static_cast<std::uint32_t>(grid.data.size()),
-                      sizeof(std::uint32_t), frame.set, 4, "FrameLightGrid");
-        frame.lightGrid.write(std::as_bytes(std::span(grid.data)));
+        frame.pointLights.write(gpu, std::as_bytes(std::span(pointLights)), DynamicBuffer::Kind::Structured,
+                                sizeof(GpuLight), "FramePointLights");
+        std::vector<std::uint32_t> gridData = grid.data;
+        if (gridData.empty()) gridData.push_back(0);
+        frame.lightGrid.write(gpu, std::as_bytes(std::span(gridData)), DynamicBuffer::Kind::Structured,
+                              sizeof(std::uint32_t), "FrameLightGrid");
     }
     // Cascades are the 2x2 tiles of one atlas; each covers the view frustum from the near plane
     // to its split (nested), so every visible point within the shadow distance has a cascade.
     const std::uint32_t tile =
-        std::min(settings.shadowResolution, ctx_.device().caps().maxImageDimension2D / 2);
+        std::min(settings.shadowResolution, ctx_.caps().maxImageDimension2D / 2);
     const std::uint32_t atlasSize = tile * 2;
     std::array<glm::mat4, kShadowCascades> cascadeMatrices{};
     if (shadows) {
@@ -497,7 +395,8 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         fc.shadowFade = glm::vec4(settings.shadowDistance * 0.85f, settings.shadowDistance, 0.0f, 0.0f);
         stats.shadowsRendered = true;
     }
-    frame.constants.write(std::as_bytes(std::span(&fc, 1)));
+    frame.constants.write(gpu, std::as_bytes(std::span(&fc, 1)), DynamicBuffer::Kind::Constant, sizeof(FrameConstants),
+                          "FrameConstants");
 
     // ---- Objects + culling -----------------------------------------------------------------
     struct Draw {
@@ -606,12 +505,12 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     auto byPipelineAndMesh = [](const Draw& d) { return std::pair(d.mesh->skinned(), d.mesh); };
     std::ranges::sort(draws, std::less<>{}, byPipelineAndMesh);
     std::ranges::sort(casters, std::less<>{}, byPipelineAndMesh);
-    ensureObjectCapacity(frame, static_cast<std::uint32_t>(std::max<std::size_t>(objects.size(), 1)));
-    ensureJointCapacity(frame, static_cast<std::uint32_t>(std::max<std::size_t>(joints.size(), 1)));
-    if (!joints.empty()) frame.joints.write(std::as_bytes(std::span(joints)));
-    if (!objects.empty()) {
-        frame.objects.write(std::as_bytes(std::span(objects)));
-    }
+    if (objects.empty()) objects.emplace_back();  // structured buffers may not be empty
+    if (joints.empty()) joints.emplace_back(1.0f);
+    frame.objects.write(gpu, std::as_bytes(std::span(objects)), DynamicBuffer::Kind::Structured, sizeof(GpuObject),
+                        "FrameObjects");
+    frame.joints.write(gpu, std::as_bytes(std::span(joints)), DynamicBuffer::Kind::Structured, sizeof(glm::mat4),
+                       "FrameJoints");
     stats.visibleObjects = static_cast<std::uint32_t>(draws.size());
     for (const Draw& d : draws) {
         stats.triangles += d.mesh->indexCount / 3;
@@ -619,12 +518,18 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     stats.drawCalls = static_cast<std::uint32_t>(draws.size()) * 2 + 2 + (settings.showGrid ? 1u : 0u);  // prepass + shading
 
     // ---- Render graph ----------------------------------------------------------------------
-    const RGImage hdr = graph.createImage("SceneColorHDR", {ctx_.hdrFormat(), extent});
-    const RGImage depth = graph.createImage("SceneDepth", {ctx_.depthFormat(), extent});
-    const VkPipelineLayout layout = ctx_.pipelineLayout();
-    const VkDescriptorSet sets[2] = {frame.set, ctx_.bindless().set()};
-    auto bindSets = [layout, sets](VkCommandBuffer cmd) {
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 2, sets, 0, nullptr);
+    const RGImage hdr = graph.createImage("SceneColorHDR", {ctx_.hdrFormat(), extent.width, extent.height});
+    const RGImage depth = graph.createImage("SceneDepth", {ctx_.depthFormat(), extent.width, extent.height});
+    nvrhi::IBindingSet* frameSet = frame.bindingSet(gpu, ctx_.frameLayout(), ctx_.samplers());
+    nvrhi::IDescriptorTable* bindless = ctx_.bindless().table();
+    // Every draw: a pipeline over the pass's framebuffer with set 0 and the bindless set 1.
+    auto stateFor = [frameSet, bindless](nvrhi::IGraphicsPipeline* pipeline, const PassContext& ctx) {
+        nvrhi::GraphicsState state;
+        state.pipeline = pipeline;
+        state.framebuffer = ctx.framebuffer;
+        state.viewport = ctx.viewport();
+        state.bindings = {frameSet, bindless};
+        return state;
     };
 
     RGImage shadowMap{};
@@ -646,42 +551,35 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         stats.drawCalls += static_cast<std::uint32_t>(casterDraws);
         const bool parallelShadow = casterDraws >= settings.parallelRecordingMinDraws;
         stats.parallelRecording = stats.parallelRecording || parallelShadow;
-        shadowMap = graph.createImage("SunShadowAtlas", {ctx_.depthFormat(), {atlasSize, atlasSize}});
+        shadowMap = graph.createImage("SunShadowAtlas", {ctx_.depthFormat(), atlasSize, atlasSize});
         graph.addRasterPass(
             "SunShadow",
             [&](PassBuilder& b) {
                 b.writeDepth(shadowMap, LoadOp::Clear, 1.0f);
                 b.recordInParallel(parallelShadow);
             },
-            [this, bindSets, layout, tile, cascadeCasters = std::move(cascadeCasters)](PassContext& ctx) {
-                // One cascade per secondary command buffer when recorded in parallel.
-                ctx.recordParallel(kShadowCascades, 1, [&](VkCommandBuffer cmd, std::size_t begin, std::size_t end) {
-                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_.get());
-                    bindSets(cmd);
+            [this, stateFor, tile, cascadeCasters = std::move(cascadeCasters)](PassContext& ctx) {
+                // One cascade per command list when recorded in parallel.
+                ctx.recordParallel(kShadowCascades, 1, [&](nvrhi::ICommandList* cmd, std::size_t begin, std::size_t end) {
                     for (std::size_t c = begin; c < end; ++c) {
-                        const auto x = static_cast<std::int32_t>((c % 2) * tile);
-                        const auto y = static_cast<std::int32_t>((c / 2) * tile);
-                        const VkViewport viewport{static_cast<float>(x), static_cast<float>(y), static_cast<float>(tile),
-                                                  static_cast<float>(tile), 0.0f, 1.0f};
-                        const VkRect2D scissor{{x, y}, {tile, tile}};
-                        vkCmdSetViewport(cmd, 0, 1, &viewport);
-                        vkCmdSetScissor(cmd, 0, 1, &scissor);
+                        const float x = static_cast<float>((c % 2) * tile);
+                        const float y = static_cast<float>((c / 2) * tile);
+                        nvrhi::GraphicsState state = stateFor(shadow_, ctx);
+                        state.viewport = nvrhi::ViewportState().addViewportAndScissorRect(
+                            nvrhi::Viewport(x, x + static_cast<float>(tile), y, y + static_cast<float>(tile), 0.0f, 1.0f));
                         const GpuMesh* mesh = nullptr;
                         for (const Draw& d : cascadeCasters[c]) {
                             if (d.mesh != mesh) {
-                                if (mesh == nullptr || d.mesh->skinned() != mesh->skinned()) {
-                                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                                      d.mesh->skinned() ? shadowSkinned_.get() : shadow_.get());
-                                }
                                 mesh = d.mesh;
-                                bindMeshBuffers(cmd, *mesh);
+                                state.pipeline = mesh->skinned() ? shadowSkinned_ : shadow_;
+                                bindMesh(state, *mesh);
+                                cmd->setGraphicsState(state);
                             }
                             PushConstants pc;
                             pc.index0 = d.object;
                             pc.index1 = static_cast<std::uint32_t>(c);
-                            vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                               sizeof(pc), &pc);
-                            vkCmdDrawIndexed(cmd, mesh->indexCount, 1, 0, 0, 0);
+                            push(cmd, pc);
+                            cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount));
                         }
                     }
                 });
@@ -696,27 +594,23 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             b.writeDepth(depth, LoadOp::Clear, 0.0f);  // reversed-Z: 0 is the far plane
             b.recordInParallel(parallelPrepass);
         },
-        [this, bindSets, layout, draws](PassContext& ctx) {  // a copy: runs after build() returns
+        [this, stateFor, draws](PassContext& ctx) {  // a copy: runs after build() returns
             if (draws.empty()) return;
-            ctx.recordParallel(draws.size(), 64, [&](VkCommandBuffer cmd, std::size_t begin, std::size_t end) {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, depthPrepass_.get());
-                bindSets(cmd);
+            ctx.recordParallel(draws.size(), 64, [&](nvrhi::ICommandList* cmd, std::size_t begin, std::size_t end) {
+                nvrhi::GraphicsState state = stateFor(depthPrepass_, ctx);
                 const GpuMesh* mesh = nullptr;
                 for (std::size_t i = begin; i < end; ++i) {
                     const Draw& d = draws[i];
                     if (d.mesh != mesh) {
-                        if (mesh == nullptr || d.mesh->skinned() != mesh->skinned()) {
-                            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                              d.mesh->skinned() ? depthPrepassSkinned_.get() : depthPrepass_.get());
-                        }
                         mesh = d.mesh;
-                        bindMeshBuffers(cmd, *mesh);
+                        state.pipeline = mesh->skinned() ? depthPrepassSkinned_ : depthPrepass_;
+                        bindMesh(state, *mesh);
+                        cmd->setGraphicsState(state);
                     }
                     PushConstants pc;
                     pc.index0 = d.object;
-                    vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                       sizeof(pc), &pc);
-                    vkCmdDrawIndexed(cmd, mesh->indexCount, 1, 0, 0, 0);
+                    push(cmd, pc);
+                    cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount));
                 }
             });
         });
@@ -724,9 +618,9 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     RGImage ao{};
     const bool ambientOcclusion = settings.ambientOcclusion && !draws.empty() && extent.width >= 8 && extent.height >= 8;
     if (ambientOcclusion) {
-        const VkExtent2D half{std::max(extent.width / 2, 1u), std::max(extent.height / 2, 1u)};
-        const RGImage aoRaw = graph.createImage("SSAORaw", {kAoFormat, half});
-        ao = graph.createImage("SSAO", {kAoFormat, extent});
+        const RGImage aoRaw = graph.createImage("SSAORaw", {kAoFormat, std::max(extent.width / 2, 1u),
+                                                              std::max(extent.height / 2, 1u)});
+        ao = graph.createImage("SSAO", {kAoFormat, extent.width, extent.height});
         const std::uint32_t linear = ctx_.linearClampSampler();
         graph.addRasterPass(
             "SSAO",
@@ -734,17 +628,13 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.writeColor(aoRaw, LoadOp::DontCare);
                 b.sample(depth);
             },
-            [this, bindSets, layout, depth, radius = settings.aoRadius, intensity = settings.aoIntensity](PassContext& ctx) {
-                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, ssao_.get());
-                bindSets(ctx.cmd);
+            [this, stateFor, depth, radius = settings.aoRadius, intensity = settings.aoIntensity](PassContext& ctx) {
                 PushConstants pc;
                 pc.index0 = ctx.bindlessIndex(depth);
                 pc.param0 = radius;
                 pc.param1 = intensity;
                 pc.param2 = 0.02f;
-                vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(pc), &pc);
-                vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
+                fullscreen(ctx.cmd, stateFor(ssao_, ctx), pc);
             });
         graph.addRasterPass(
             "SSAOBlur",
@@ -753,27 +643,19 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.sample(aoRaw);
                 b.sample(depth);
             },
-            [this, bindSets, layout, depth, aoRaw, linear](PassContext& ctx) {
-                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, ssaoBlur_.get());
-                bindSets(ctx.cmd);
+            [this, stateFor, depth, aoRaw, linear](PassContext& ctx) {
                 PushConstants pc;
                 pc.index0 = ctx.bindlessIndex(depth);
                 pc.index1 = ctx.bindlessIndex(aoRaw);
                 pc.index2 = linear;
-                vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(pc), &pc);
-                vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
+                fullscreen(ctx.cmd, stateFor(ssaoBlur_, ctx), pc);
             });
         stats.ambientOcclusion = true;
     }
 
     graph.addRasterPass(
         "Sky", [&](PassBuilder& b) { b.writeColor(hdr, LoadOp::DontCare); },
-        [this, bindSets](PassContext& ctx) {
-            vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sky_.get());
-            bindSets(ctx.cmd);
-            vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
-        });
+        [this, stateFor](PassContext& ctx) { fullscreen(ctx.cmd, stateFor(sky_, ctx), PushConstants{}); });
 
     const bool parallelOpaque = draws.size() >= settings.parallelRecordingMinDraws;
     stats.parallelRecording = stats.parallelRecording || parallelOpaque;
@@ -786,7 +668,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             if (ambientOcclusion) b.sample(ao);
             b.recordInParallel(parallelOpaque);
         },
-        [this, bindSets, layout, shadows, shadowMap, ambientOcclusion, ao, debugCascades = settings.debugCascades,
+        [this, stateFor, shadows, shadowMap, ambientOcclusion, ao, debugCascades = settings.debugCascades,
          draws = std::move(draws)](PassContext& ctx) {
             if (draws.empty()) return;
             const std::uint32_t shadowIndex = shadows ? ctx.bindlessIndex(shadowMap) : 0u;
@@ -794,28 +676,24 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             const std::uint32_t flags =
                 (shadows ? 1u : 0u) | (shadows && debugCascades ? 2u : 0u) | (ambientOcclusion ? 4u : 0u);
             // Draws are sorted by mesh, so each chunk rebinds buffers only where meshes change.
-            ctx.recordParallel(draws.size(), 64, [&](VkCommandBuffer cmd, std::size_t begin, std::size_t end) {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, opaque_.get());
-                bindSets(cmd);
+            ctx.recordParallel(draws.size(), 64, [&](nvrhi::ICommandList* cmd, std::size_t begin, std::size_t end) {
+                nvrhi::GraphicsState state = stateFor(opaque_, ctx);
                 const GpuMesh* mesh = nullptr;
                 for (std::size_t i = begin; i < end; ++i) {
                     const Draw& d = draws[i];
                     if (d.mesh != mesh) {
-                        if (mesh == nullptr || d.mesh->skinned() != mesh->skinned()) {
-                            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                              d.mesh->skinned() ? opaqueSkinned_.get() : opaque_.get());
-                        }
                         mesh = d.mesh;
-                        bindMeshBuffers(cmd, *mesh);
+                        state.pipeline = mesh->skinned() ? opaqueSkinned_ : opaque_;
+                        bindMesh(state, *mesh);
+                        cmd->setGraphicsState(state);
                     }
                     PushConstants pc;
                     pc.index0 = d.object;
                     pc.index1 = shadowIndex;
                     pc.index2 = aoIndex;
                     pc.flags = flags;
-                    vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                       sizeof(pc), &pc);
-                    vkCmdDrawIndexed(cmd, mesh->indexCount, 1, 0, 0, 0);
+                    push(cmd, pc);
+                    cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount));
                 }
             });
         });
@@ -827,11 +705,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.writeColor(hdr, LoadOp::Load);
                 b.readDepth(depth);
             },
-            [this, bindSets](PassContext& ctx) {
-                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, grid_.get());
-                bindSets(ctx.cmd);
-                vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
-            });
+            [this, stateFor](PassContext& ctx) { fullscreen(ctx.cmd, stateFor(grid_, ctx), PushConstants{}); });
     }
 
     // ---- Particles: camera-facing quads, alpha-blended ones far to near, then additive ones.
@@ -882,15 +756,9 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             };
             for (const Quad& q : alpha) emit(q);
             for (const Quad& q : additive) emit(q);
-            const VkDeviceSize bytes = vertices.size() * sizeof(ParticleVertex);
-            if (frame.particleVertices.size() < bytes) {
-                VkDeviceSize capacity = std::max<VkDeviceSize>(256 * 1024, frame.particleVertices.size());
-                while (capacity < bytes) capacity *= 2;
-                frame.particleVertices = rhi::Buffer(ctx_.device(), {capacity, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                                                     rhi::MemoryUsage::CpuToGpu, "ParticleVertices"});
-            }
-            frame.particleVertices.write(std::as_bytes(std::span(vertices)));
-            const VkBuffer vb = frame.particleVertices.handle();
+            nvrhi::IBuffer* vb = frame.particleVertices.write(gpu, std::as_bytes(std::span(vertices)),
+                                                              DynamicBuffer::Kind::Vertex, sizeof(ParticleVertex),
+                                                              "ParticleVertices");
             const auto alphaVertices = static_cast<std::uint32_t>(alphaCount * 6);
             const auto additiveVertices = static_cast<std::uint32_t>((total - alphaCount) * 6);
             graph.addRasterPass(
@@ -899,24 +767,22 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     b.writeColor(hdr, LoadOp::Load);
                     b.readDepth(depth);
                 },
-                [this, bindSets, layout, vb, alphaVertices, additiveVertices](PassContext& ctx) {
-                    const VkDeviceSize offset = 0;
-                    bindSets(ctx.cmd);
-                    vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
+                [this, stateFor, vb, alphaVertices, additiveVertices](PassContext& ctx) {
+                    nvrhi::GraphicsState state = stateFor(particlesAlpha_, ctx);
+                    state.vertexBuffers = {nvrhi::VertexBufferBinding().setBuffer(vb).setSlot(0)};
                     PushConstants pc;
                     if (alphaVertices > 0) {
-                        vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, particlesAlpha_.get());
+                        ctx.cmd->setGraphicsState(state);
                         pc.flags = 0u;
-                        vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                           sizeof(pc), &pc);
-                        vkCmdDraw(ctx.cmd, alphaVertices, 1, 0, 0);
+                        push(ctx.cmd, pc);
+                        ctx.cmd->draw(nvrhi::DrawArguments().setVertexCount(alphaVertices));
                     }
                     if (additiveVertices > 0) {
-                        vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, particlesAdditive_.get());
+                        state.pipeline = particlesAdditive_;
+                        ctx.cmd->setGraphicsState(state);
                         pc.flags = 1u;
-                        vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                           sizeof(pc), &pc);
-                        vkCmdDraw(ctx.cmd, additiveVertices, 1, alphaVertices, 0);
+                        push(ctx.cmd, pc);
+                        ctx.cmd->draw(nvrhi::DrawArguments().setVertexCount(additiveVertices).setStartVertexLocation(alphaVertices));
                     }
                 });
         }
@@ -926,14 +792,15 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     const std::uint32_t sampler = ctx_.linearClampSampler();
     std::vector<RGImage> bloomChain;
     if (settings.bloom && env.bloomIntensity > 0.0f) {
-        VkExtent2D size = extent;
-        while (bloomChain.size() < 6 && size.width >= 16 && size.height >= 16) {
-            size = {size.width / 2, size.height / 2};
-            bloomChain.push_back(graph.createImage("Bloom" + std::to_string(bloomChain.size()), {ctx_.hdrFormat(), size}));
+        std::uint32_t w = extent.width, h = extent.height;
+        while (bloomChain.size() < 6 && w >= 16 && h >= 16) {
+            w /= 2;
+            h /= 2;
+            bloomChain.push_back(graph.createImage("Bloom" + std::to_string(bloomChain.size()), {ctx_.hdrFormat(), w, h}));
         }
     }
-    const VkPipeline bloomDown = bloom_.at(0).get();
-    const VkPipeline bloomUp = bloom_.at(1).get();
+    nvrhi::IGraphicsPipeline* bloomDown = bloomDown_;
+    nvrhi::IGraphicsPipeline* bloomUp = bloomUp_;
     for (std::size_t i = 0; i < bloomChain.size(); ++i) {
         const RGImage source = i == 0 ? hdr : bloomChain[i - 1];
         const RGImage target = bloomChain[i];
@@ -944,22 +811,17 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.writeColor(target, LoadOp::DontCare);
             },
             [=](PassContext& ctx) {
-                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bloomDown);
-                bindSets(ctx.cmd);
                 PushConstants pc;
                 pc.index0 = ctx.bindlessIndex(source);
                 pc.index1 = sampler;
                 pc.flags = i == 0 ? 1u : 0u;
-                vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(pc), &pc);
-                vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
+                fullscreen(ctx.cmd, stateFor(bloomDown, ctx), pc);
             });
     }
     for (std::size_t i = bloomChain.size(); i-- > 1;) {
         const RGImage source = bloomChain[i];
         const RGImage target = bloomChain[i - 1];
-        const VkExtent2D sourceSize = {std::max(extent.width >> (i + 1), 1u), std::max(extent.height >> (i + 1), 1u)};
-        const float radius = 1.0f / static_cast<float>(std::max(sourceSize.width, 1u));
+        const float radius = 1.0f / static_cast<float>(std::max(extent.width >> (i + 1), 1u));
         graph.addRasterPass(
             "BloomUp" + std::to_string(i),
             [&](PassBuilder& b) {
@@ -967,15 +829,11 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.writeColor(target, LoadOp::Load);
             },
             [=](PassContext& ctx) {
-                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bloomUp);
-                bindSets(ctx.cmd);
                 PushConstants pc;
                 pc.index0 = ctx.bindlessIndex(source);
                 pc.index1 = sampler;
                 pc.param0 = radius;
-                vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(pc), &pc);
-                vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
+                fullscreen(ctx.cmd, stateFor(bloomUp, ctx), pc);
             });
     }
     stats.drawCalls += static_cast<std::uint32_t>(bloomChain.empty() ? 0 : bloomChain.size() * 2 - 1);
@@ -984,11 +842,15 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     // resolves into the output; without, it writes the output directly.
     const bool fxaa = settings.antiAliasing;
     // Half floats: the gamma-encoded image is quantised only once, when FXAA writes the output.
-    constexpr VkFormat kLdrFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-    const RGImage ldr = fxaa ? graph.createImage("LDR", {kLdrFormat, extent}) : output;
-    const VkFormat tonemapFormat = fxaa ? kLdrFormat : outputFormat;
-    const VkPipeline tonemap = tonemapPipeline(tonemapFormat);
-    const bool shaderSrgb = !rhi::isSrgbFormat(tonemapFormat);
+    constexpr nvrhi::Format kLdrFormat = nvrhi::Format::RGBA16_FLOAT;
+    const RGImage ldr = fxaa ? graph.createImage("LDR", {kLdrFormat, extent.width, extent.height}) : output;
+    const nvrhi::Format tonemapFormat = fxaa ? kLdrFormat : outputFormat;
+    PipelineDesc fullscreenDesc;
+    fullscreenDesc.vertexShader = "tonemap.vert";
+    fullscreenDesc.pixelShader = "tonemap.frag";
+    fullscreenDesc.name = "Tonemap";
+    nvrhi::IGraphicsPipeline* tonemap = outputPipeline(tonemap_, fullscreenDesc, tonemapFormat);
+    const bool shaderSrgb = !isSrgbFormat(tonemapFormat);
     const bool haveBloom = !bloomChain.empty();
     const RGImage bloomResult = haveBloom ? bloomChain.front() : RGImage{};
     // Bloom is a lerp towards the blurred image; normalise for the summed chain levels.
@@ -1004,8 +866,6 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             b.writeColor(ldr, LoadOp::DontCare);
         },
         [=](PassContext& ctx) {
-            vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, tonemap);
-            bindSets(ctx.cmd);
             PushConstants pc;
             pc.index0 = ctx.bindlessIndex(hdr);
             pc.index1 = sampler;
@@ -1015,13 +875,15 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             pc.param1 = bloomStrength;
             pc.param2 = vignette;
             pc.param3 = bloomNormalisation;
-            vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                               sizeof(pc), &pc);
-            vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
+            fullscreen(ctx.cmd, stateFor(tonemap, ctx), pc);
         });
     if (fxaa) {
-        const VkPipeline resolve = fxaaPipeline(outputFormat);
-        const bool outputSrgb = rhi::isSrgbFormat(outputFormat);
+        PipelineDesc fxaaDesc;
+        fxaaDesc.vertexShader = "fxaa.vert";
+        fxaaDesc.pixelShader = "fxaa.frag";
+        fxaaDesc.name = "FXAA";
+        nvrhi::IGraphicsPipeline* resolve = outputPipeline(fxaa_, fxaaDesc, outputFormat);
+        const bool outputSrgb = isSrgbFormat(outputFormat);
         graph.addRasterPass(
             "FXAA",
             [&](PassBuilder& b) {
@@ -1029,15 +891,11 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.writeColor(output, LoadOp::DontCare);
             },
             [=](PassContext& ctx) {
-                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, resolve);
-                bindSets(ctx.cmd);
                 PushConstants pc;
                 pc.index0 = ctx.bindlessIndex(ldr);
                 pc.index1 = sampler;
                 pc.flags = outputSrgb ? 1u : 0u;
-                vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(pc), &pc);
-                vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
+                fullscreen(ctx.cmd, stateFor(resolve, ctx), pc);
             });
         stats.drawCalls += 1;
     }
@@ -1072,29 +930,26 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         !combinedOverlay.empty() ? &combinedOverlay : settings.overlay != nullptr ? &settings.overlay->vertices : nullptr;
     if (overlayVertices != nullptr && !overlayVertices->empty()) {
         const auto& vertices = *overlayVertices;
-        const VkDeviceSize bytes = vertices.size() * sizeof(OverlayVertex);
-        if (frame.overlayVertices.size() < bytes) {
-            VkDeviceSize capacity = std::max<VkDeviceSize>(64 * 1024, frame.overlayVertices.size());
-            while (capacity < bytes) capacity *= 2;
-            frame.overlayVertices = rhi::Buffer(ctx_.device(), {capacity, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                                                rhi::MemoryUsage::CpuToGpu, "OverlayVertices"});
-        }
-        frame.overlayVertices.write(std::as_bytes(std::span(vertices)));
-        const VkPipeline overlay = overlayPipeline(outputFormat);
-        const VkBuffer vb = frame.overlayVertices.handle();
+        nvrhi::IBuffer* vb = frame.overlayVertices.write(gpu, std::as_bytes(std::span(vertices)), DynamicBuffer::Kind::Vertex,
+                                                         sizeof(OverlayVertex), "OverlayVertices");
+        PipelineDesc overlayDesc;
+        overlayDesc.name = "Overlay";
+        overlayDesc.vertexShader = "overlay.vert";
+        overlayDesc.pixelShader = "overlay.frag";
+        overlayDesc.input = VertexInput::Overlay;
+        overlayDesc.blend = BlendMode::Alpha;
+        nvrhi::IGraphicsPipeline* overlay = outputPipeline(overlay_, overlayDesc, outputFormat);
         const auto count = static_cast<std::uint32_t>(vertices.size());
         graph.addRasterPass(
             "Overlay", [&](PassBuilder& b) { b.writeColor(output, LoadOp::Load); },
             [=](PassContext& ctx) {
-                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, overlay);
-                bindSets(ctx.cmd);
+                nvrhi::GraphicsState state = stateFor(overlay, ctx);
+                state.vertexBuffers = {nvrhi::VertexBufferBinding().setBuffer(vb).setSlot(0)};
+                ctx.cmd->setGraphicsState(state);
                 PushConstants pc;
-                pc.flags = rhi::isSrgbFormat(outputFormat) ? 0u : 1u;  // the overlay draws into the output itself
-                vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(pc), &pc);
-                const VkDeviceSize offset = 0;
-                vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
-                vkCmdDraw(ctx.cmd, count, 1, 0, 0);
+                pc.flags = isSrgbFormat(outputFormat) ? 0u : 1u;  // the overlay draws into the output itself
+                push(ctx.cmd, pc);
+                ctx.cmd->draw(nvrhi::DrawArguments().setVertexCount(count));
             });
         ++stats.drawCalls;
     }
@@ -1104,10 +959,9 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             hudFont_ = std::make_unique<HudFont>();
             const auto& atlas = hudFont_->atlas();
             const std::span<const std::byte> bytes = std::as_bytes(std::span(atlas));
-            const VkExtent2D size{hudFont_->atlasWidth(), hudFont_->atlasHeight()};
-            hudAtlas_ = ctx_.uploads().uploadImageLevels(std::span(&bytes, 1), std::span(&size, 1), VK_FORMAT_R8_UNORM, 1,
-                                                         "HudFontAtlas");
-            hudAtlasIndex_ = ctx_.bindless().registerImage(hudAtlas_.view());
+            hudAtlas_ = ctx_.createTexture(std::span(&bytes, 1), hudFont_->atlasWidth(), hudFont_->atlasHeight(),
+                                           nvrhi::Format::R8_UNORM, "HudFontAtlas");
+            hudAtlasIndex_ = ctx_.bindless().registerTexture(hudAtlas_);
         }
         std::vector<HudVertex> vertices;
         hudFont_->layout(*settings.hud, vertices);
@@ -1115,33 +969,30 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         const glm::vec2 scale(static_cast<float>(extent.width) / std::max(settings.hud->screenSize.x, 1.0f),
                               static_cast<float>(extent.height) / std::max(settings.hud->screenSize.y, 1.0f));
         for (HudVertex& v : vertices) v.position *= scale;
-        const VkDeviceSize bytes = vertices.size() * sizeof(HudVertex);
-        if (frame.hudVertices.size() < bytes) {
-            VkDeviceSize capacity = std::max<VkDeviceSize>(64 * 1024, frame.hudVertices.size());
-            while (capacity < bytes) capacity *= 2;
-            frame.hudVertices = rhi::Buffer(ctx_.device(), {capacity, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                                            rhi::MemoryUsage::CpuToGpu, "HudVertices"});
-        }
-        frame.hudVertices.write(std::as_bytes(std::span(vertices)));
-        const VkPipeline hud = hudPipeline(outputFormat);
-        const VkBuffer vb = frame.hudVertices.handle();
+        nvrhi::IBuffer* vb = frame.hudVertices.write(gpu, std::as_bytes(std::span(vertices)), DynamicBuffer::Kind::Vertex,
+                                                     sizeof(HudVertex), "HudVertices");
+        PipelineDesc hudDesc;
+        hudDesc.name = "HUD";
+        hudDesc.vertexShader = "hud.vert";
+        hudDesc.pixelShader = "hud.frag";
+        hudDesc.input = VertexInput::Hud;
+        hudDesc.blend = BlendMode::Alpha;
+        nvrhi::IGraphicsPipeline* hud = outputPipeline(hud_, hudDesc, outputFormat);
         const auto count = static_cast<std::uint32_t>(vertices.size());
         const std::uint32_t atlas = hudAtlasIndex_;
-        const bool unorm = !rhi::isSrgbFormat(outputFormat);
+        const bool unorm = !isSrgbFormat(outputFormat);
         graph.addRasterPass(
             "HUD", [&](PassBuilder& b) { b.writeColor(output, LoadOp::Load); },
             [=](PassContext& ctx) {
-                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, hud);
-                bindSets(ctx.cmd);
+                nvrhi::GraphicsState state = stateFor(hud, ctx);
+                state.vertexBuffers = {nvrhi::VertexBufferBinding().setBuffer(vb).setSlot(0)};
+                ctx.cmd->setGraphicsState(state);
                 PushConstants pc;
                 pc.index0 = atlas;
                 pc.index1 = sampler;
                 pc.flags = unorm ? 1u : 0u;
-                vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(pc), &pc);
-                const VkDeviceSize offset = 0;
-                vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
-                vkCmdDraw(ctx.cmd, count, 1, 0, 0);
+                push(ctx.cmd, pc);
+                ctx.cmd->draw(nvrhi::DrawArguments().setVertexCount(count));
             });
         ++stats.drawCalls;
     }

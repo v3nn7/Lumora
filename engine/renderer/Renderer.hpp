@@ -47,7 +47,13 @@ public:
 
 private:
     friend class Renderer;
+    /// NVRHI textures over the swapchain's images (made on first use after each recreate).
+    nvrhi::ITexture* image(std::uint32_t index);
+    void releaseImages();
+
+    RenderContext& ctx_;
     std::unique_ptr<rhi::Swapchain> swapchain_;
+    std::vector<nvrhi::TextureHandle> images_;
     VkExtent2D desired_{};
     bool dirty_ = false;
 };
@@ -83,15 +89,17 @@ public:
 
 private:
     FrameResources& beginFrame();
-    SceneDrawStats record(FrameResources& frame, const Scene& scene, const CameraView& camera,
-                          const RenderSettings& settings, const ImportedImage& output,
-                          const std::function<void(RenderGraph&, RGImage)>& extraPasses);
-    void submit(FrameResources& frame, VkSemaphore waitAcquired, VkSemaphore signalPresent);
+    /// Records the frame; the returned command lists are closed and ready to execute.
+    std::vector<nvrhi::CommandListHandle> record(FrameResources& frame, const Scene& scene, const CameraView& camera,
+                                                 const RenderSettings& settings, const ImportedImage& output,
+                                                 const std::function<void(RenderGraph&, RGImage)>& extraPasses);
+    void submit(FrameResources& frame, std::vector<nvrhi::CommandListHandle>& lists);
+    void finish(FrameResources& frame);
     void advance() noexcept;
 
     RenderContext& ctx_;
     SceneRenderer sceneRenderer_;
-    rhi::UniqueDescriptorPool descriptorPool_;
+    FramebufferCache framebuffers_;
     std::array<FrameResources, kFramesInFlight> frames_;
     std::uint32_t slot_ = 0;
     std::uint64_t frameNumber_ = 0;

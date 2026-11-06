@@ -18,5 +18,5 @@ float4 VSMain(VSInput input) : SV_Position {
 #endif
     // Same expression as mesh.hlsl so both passes produce the same depth.
     float4 world = mul(object.world, float4(position, 1.0));
-    return mul(gFrame.viewProjection, world);
+    return toTarget(mul(gFrame.viewProjection, world));
 }

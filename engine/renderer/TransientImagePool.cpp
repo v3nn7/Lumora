@@ -1,52 +1,60 @@
 #include "renderer/TransientImagePool.hpp"
 
-#include "renderer/vulkan/BindlessTable.hpp"
-#include "renderer/vulkan/Device.hpp"
-
-#include <algorithm>
+#include "renderer/vulkan/VulkanCommon.hpp"
 
 namespace lumora::render {
 
-TransientImagePool::TransientImagePool(const rhi::Device& device, rhi::BindlessTable& bindless)
+TransientImagePool::TransientImagePool(nvrhi::IDevice* device, BindlessTable& bindless)
     : device_(device), bindless_(bindless) {}
 
 TransientImagePool::~TransientImagePool() { clear(); }
 
 void TransientImagePool::clear() {
-    for (auto& img : images_) bindless_.releaseImage(img->bindlessIndex);
+    for (const auto& image : images_) bindless_.releaseTexture(image->bindlessIndex);
     images_.clear();
 }
 
 void TransientImagePool::beginFrame() {
-    for (auto& img : images_) {
-        img->idleFrames = img->inUse ? 0 : img->idleFrames + 1;
-        img->inUse = false;
+    for (auto it = images_.begin(); it != images_.end();) {
+        PooledImage& image = **it;
+        if (!image.inUse && ++image.idleFrames > kMaxIdleFrames) {
+            bindless_.releaseTexture(image.bindlessIndex);
+            it = images_.erase(it);
+            continue;
+        }
+        if (image.inUse) image.idleFrames = 0;
+        image.inUse = false;
+        ++it;
     }
-    std::erase_if(images_, [&](const std::unique_ptr<PooledImage>& img) {
-        if (img->idleFrames <= kMaxIdleFrames) return false;
-        bindless_.releaseImage(img->bindlessIndex);
-        return true;
-    });
 }
 
-const PooledImage& TransientImagePool::acquire(VkFormat format, VkExtent2D extent, VkImageUsageFlags usage,
+const PooledImage& TransientImagePool::acquire(nvrhi::Format format, std::uint32_t width, std::uint32_t height,
                                                const char* name) {
-    for (auto& img : images_) {
-        const VkExtent2D e = img->image.extent();
-        if (!img->inUse && img->image.format() == format && e.width == extent.width && e.height == extent.height &&
-            img->usage == usage) {
-            img->inUse = true;
-            return *img;
+    for (const auto& image : images_) {
+        const nvrhi::TextureDesc& d = image->texture->getDesc();
+        if (!image->inUse && d.format == format && d.width == width && d.height == height) {
+            image->inUse = true;
+            return *image;
         }
     }
-    auto img = std::make_unique<PooledImage>();
-    img->image = rhi::Image(device_, {format, extent, usage, 1, name});
-    img->usage = usage;
-    img->inUse = true;
-    if (usage & VK_IMAGE_USAGE_SAMPLED_BIT) {
-        img->bindlessIndex = bindless_.registerImage(img->image.view());
-    }
-    images_.push_back(std::move(img));
+    const bool depth = nvrhi::getFormatInfo(format).hasDepth;
+    nvrhi::TextureDesc desc;
+    desc.width = width;
+    desc.height = height;
+    desc.format = format;
+    desc.debugName = name;
+    desc.isRenderTarget = true;
+    desc.setClearValue(depth ? nvrhi::Color(0.0f) : nvrhi::Color(0.0f));
+    // Every command list starts and ends with transients sampleable; render passes move them
+    // to attachment states and back.
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    auto image = std::make_unique<PooledImage>();
+    image->texture = device_->createTexture(desc);
+    if (!image->texture) throw rhi::VulkanError(std::string("could not create render target ") + name, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+    image->bindlessIndex = bindless_.registerTexture(image->texture);
+    image->inUse = true;
+    images_.push_back(std::move(image));
     return *images_.back();
 }
 

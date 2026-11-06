@@ -10,7 +10,7 @@ struct FullscreenOut {
 FullscreenOut fullscreenTriangle(uint id) {
     FullscreenOut o;
     o.uv = float2((id << 1) & 2, id & 2);
-    o.position = float4(o.uv * 2.0 - 1.0, 0.0, 1.0);
+    o.position = toTarget(float4(o.uv * 2.0 - 1.0, 0.0, 1.0));
     return o;
 }
 

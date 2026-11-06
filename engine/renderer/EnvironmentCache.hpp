@@ -1,6 +1,6 @@
 #pragma once
 
-#include "renderer/vulkan/Resources.hpp"
+#include "renderer/Gpu.hpp"
 
 #include <glm/vec3.hpp>
 
@@ -15,14 +15,10 @@ namespace lumora {
 class AssetLibrary;
 }
 
-namespace lumora::rhi {
-class BindlessTable;
-class UploadQueue;
-}
-
 namespace lumora::render {
 
 struct EnvironmentMap;
+class RenderContext;
 
 /// GPU image-based lighting for a scene's sky texture (an equirectangular .hdr): the sky image
 /// itself, its GGX-prefiltered specular mip chain and SH9 irradiance. Loading and prefiltering
@@ -31,15 +27,15 @@ struct EnvironmentMap;
 class EnvironmentCache {
 public:
     struct Gpu {
-        rhi::Image sky;
-        rhi::Image specular;
+        nvrhi::TextureHandle sky;
+        nvrhi::TextureHandle specular;
         std::uint32_t skyIndex = UINT32_MAX;
         std::uint32_t specularIndex = UINT32_MAX;
         std::uint32_t specularLevels = 0;
         std::array<glm::vec3, 9> irradiance{};
     };
 
-    EnvironmentCache(rhi::UploadQueue& uploads, rhi::BindlessTable& bindless);
+    explicit EnvironmentCache(RenderContext& context);
     ~EnvironmentCache();
     EnvironmentCache(const EnvironmentCache&) = delete;
     EnvironmentCache& operator=(const EnvironmentCache&) = delete;
@@ -54,8 +50,7 @@ private:
         std::unique_ptr<Gpu> gpu;
         bool failed = false;
     };
-    rhi::UploadQueue& uploads_;
-    rhi::BindlessTable& bindless_;
+    RenderContext& ctx_;
     std::unordered_map<std::string, Entry> entries_;
     std::unordered_set<std::string> warned_;
 };

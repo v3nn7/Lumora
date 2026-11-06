@@ -68,10 +68,10 @@ lumora_engine_module(renderer
         renderer/vulkan/Device.cpp
         renderer/vulkan/Resources.cpp
         renderer/vulkan/Swapchain.cpp
-        renderer/vulkan/Pipeline.cpp
-        renderer/vulkan/BindlessTable.cpp
-        renderer/vulkan/UploadQueue.cpp
         renderer/vulkan/VmaImpl.cpp
+        renderer/Gpu.cpp
+        renderer/VulkanHppDispatch.cpp
+        renderer/FrameResources.cpp
         renderer/RenderGraph.cpp
         renderer/GpuProfiler.cpp
         renderer/TransientImagePool.cpp
@@ -85,9 +85,8 @@ lumora_engine_module(renderer
         renderer/RenderContext.cpp
         renderer/Renderer.cpp
         renderer/SceneRenderer.cpp
-        renderer/ParallelCommandPools.cpp
         renderer/Overlay.cpp
-    DEPS lumora_scene Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator)
+    DEPS lumora_scene Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator nvrhi_vk nvrhi)
 
 # The HUD font (DejaVu Sans, Latin subset) compiled into the renderer as a byte array.
 set(LUMORA_HUD_FONT ${CMAKE_CURRENT_SOURCE_DIR}/renderer/fonts/DejaVuSans-Subset.ttf)

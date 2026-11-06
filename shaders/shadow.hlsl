@@ -18,5 +18,5 @@ float4 VSMain(VSInput input) : SV_Position {
 #if defined(LUMORA_SKINNED)
     position = mul(skinMatrix(input.joints, input.weights, (uint)object.flags.z), float4(position, 1.0)).xyz;
 #endif
-    return mul(gFrame.cascadeViewProjection[gPush.index1], mul(object.world, float4(position, 1.0)));
+    return toTarget(mul(gFrame.cascadeViewProjection[gPush.index1], mul(object.world, float4(position, 1.0))));
 }

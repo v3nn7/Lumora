@@ -1,6 +1,6 @@
 #pragma once
 
-#include "renderer/vulkan/Resources.hpp"
+#include "renderer/Gpu.hpp"
 
 #include <string>
 #include <unordered_map>
@@ -10,12 +10,10 @@ namespace lumora {
 class AssetLibrary;
 }
 
-namespace lumora::rhi {
-class BindlessTable;
-class UploadQueue;
-}
 
 namespace lumora::render {
+
+class RenderContext;
 
 enum class TextureColorSpace { Srgb, Linear };
 
@@ -25,7 +23,7 @@ enum class TextureColorSpace { Srgb, Linear };
 /// in the bindless table. Entries live until the RenderContext is destroyed.
 class TextureCache {
 public:
-    TextureCache(rhi::UploadQueue& uploads, rhi::BindlessTable& bindless);
+    explicit TextureCache(RenderContext& context);
     ~TextureCache();
     TextureCache(const TextureCache&) = delete;
     TextureCache& operator=(const TextureCache&) = delete;
@@ -41,11 +39,10 @@ public:
 
 private:
     struct Entry {
-        rhi::Image image;
+        nvrhi::TextureHandle texture;
         std::uint32_t bindless = UINT32_MAX;
     };
-    rhi::UploadQueue& uploads_;
-    rhi::BindlessTable& bindless_;
+    RenderContext& ctx_;
     std::unordered_map<std::string, Entry> textures_;
     std::unordered_set<std::string> failed_;
 };

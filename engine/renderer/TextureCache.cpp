@@ -3,18 +3,16 @@
 #include "assets/AssetLibrary.hpp"
 #include "core/Log.hpp"
 #include "core/Timer.hpp"
-#include "renderer/vulkan/BindlessTable.hpp"
-#include "renderer/vulkan/UploadQueue.hpp"
+#include "renderer/RenderContext.hpp"
 
 #include <span>
 
 namespace lumora::render {
 
-TextureCache::TextureCache(rhi::UploadQueue& uploads, rhi::BindlessTable& bindless)
-    : uploads_(uploads), bindless_(bindless) {}
+TextureCache::TextureCache(RenderContext& context) : ctx_(context) {}
 
 TextureCache::~TextureCache() {
-    for (auto& [key, entry] : textures_) bindless_.releaseImage(entry.bindless);
+    for (auto& [key, entry] : textures_) ctx_.bindless().releaseTexture(entry.bindless);
 }
 
 std::size_t TextureCache::invalidateFile(const std::string& file) {
@@ -25,7 +23,7 @@ std::size_t TextureCache::invalidateFile(const std::string& file) {
     std::size_t dropped = 0;
     for (auto it = textures_.begin(); it != textures_.end();) {
         if (fromFile(it->first)) {
-            if (it->second.bindless != UINT32_MAX) bindless_.releaseImage(it->second.bindless);
+            if (it->second.bindless != UINT32_MAX) ctx_.bindless().releaseTexture(it->second.bindless);
             it = textures_.erase(it);
             ++dropped;
         } else {
@@ -57,11 +55,14 @@ std::uint32_t TextureCache::index(AssetLibrary& library, const std::string& key,
         failed_.insert(id);
         return UINT32_MAX;
     }
-    const VkFormat format = space == TextureColorSpace::Srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+    const bool srgb = space == TextureColorSpace::Srgb;
+    const auto mips = buildMipChain(std::span(data->rgba), data->width, data->height, srgb);
+    std::vector<std::span<const std::byte>> levels;
+    for (const auto& level : mips) levels.push_back(std::as_bytes(std::span(level)));
     Entry entry;
-    entry.image = uploads_.uploadImage(std::as_bytes(std::span(data->rgba)), {data->width, data->height},
-                                       format, true, key.c_str());
-    entry.bindless = bindless_.registerImage(entry.image.view());
+    entry.texture = ctx_.createTexture(levels, data->width, data->height,
+                                       srgb ? nvrhi::Format::SRGBA8_UNORM : nvrhi::Format::RGBA8_UNORM, key.c_str());
+    entry.bindless = ctx_.bindless().registerTexture(entry.texture);
     log::debug("Renderer", "texture '{}' {}x{} ready in {:.1f} ms", key, data->width, data->height,
                timer.elapsedMs());
     return textures_.emplace(id, std::move(entry)).first->second.bindless;

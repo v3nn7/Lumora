@@ -6,7 +6,6 @@
 #include "renderer/GpuTypes.hpp"
 #include "renderer/Overlay.hpp"
 #include "renderer/RenderGraph.hpp"
-#include "renderer/vulkan/Resources.hpp"
 #include "scene/Camera.hpp"
 #include "scene/Components.hpp"
 
@@ -96,41 +95,36 @@ public:
     SceneRenderer& operator=(const SceneRenderer&) = delete;
 
     SceneDrawStats build(RenderGraph& graph, FrameResources& frame, const Scene& scene, const CameraView& camera,
-                         const RenderSettings& settings, RGImage output, VkFormat outputFormat, VkExtent2D extent,
+                         const RenderSettings& settings, RGImage output, nvrhi::Format outputFormat, VkExtent2D extent,
                          double timeSeconds);
 
 private:
-    void ensureObjectCapacity(FrameResources& frame, std::uint32_t count);
-    void ensureJointCapacity(FrameResources& frame, std::uint32_t count);
-    /// Grows a per-frame storage buffer to `count` elements and points set binding `binding` at it.
-    void ensureStorage(rhi::Buffer& buffer, std::uint32_t& capacity, std::uint32_t count, std::size_t elementSize,
-                       VkDescriptorSet set, std::uint32_t binding, const char* name);
     [[nodiscard]] const struct GpuMesh* meshFor(const MeshRendererComponent& mesh, AssetLibrary* assets, bool block);
-    VkPipeline tonemapPipeline(VkFormat outputFormat);
-    VkPipeline overlayPipeline(VkFormat outputFormat);
-    VkPipeline fxaaPipeline(VkFormat outputFormat);
-    VkPipeline hudPipeline(VkFormat outputFormat);
+    /// Pipelines that draw into the output image, one per output format.
+    nvrhi::IGraphicsPipeline* outputPipeline(std::unordered_map<int, nvrhi::GraphicsPipelineHandle>& cache,
+                                             const PipelineDesc& desc, nvrhi::Format format);
 
     RenderContext& ctx_;
-    rhi::UniquePipeline sky_;
-    rhi::UniquePipeline opaque_;
-    rhi::UniquePipeline grid_;
-    rhi::UniquePipeline particlesAlpha_;
-    rhi::UniquePipeline particlesAdditive_;
-    rhi::UniquePipeline shadow_;
-    rhi::UniquePipeline depthPrepass_;
-    rhi::UniquePipeline opaqueSkinned_;
-    rhi::UniquePipeline shadowSkinned_;
-    rhi::UniquePipeline depthPrepassSkinned_;
-    rhi::UniquePipeline ssao_;
-    rhi::UniquePipeline ssaoBlur_;
-    std::unordered_map<int, rhi::UniquePipeline> bloom_;  // 0 = downsample, 1 = upsample
-    std::unordered_map<VkFormat, rhi::UniquePipeline> tonemap_;
-    std::unordered_map<VkFormat, rhi::UniquePipeline> overlay_;
-    std::unordered_map<VkFormat, rhi::UniquePipeline> fxaa_;
-    std::unordered_map<VkFormat, rhi::UniquePipeline> hud_;
+    nvrhi::GraphicsPipelineHandle sky_;
+    nvrhi::GraphicsPipelineHandle opaque_;
+    nvrhi::GraphicsPipelineHandle opaqueSkinned_;
+    nvrhi::GraphicsPipelineHandle grid_;
+    nvrhi::GraphicsPipelineHandle particlesAlpha_;
+    nvrhi::GraphicsPipelineHandle particlesAdditive_;
+    nvrhi::GraphicsPipelineHandle shadow_;
+    nvrhi::GraphicsPipelineHandle shadowSkinned_;
+    nvrhi::GraphicsPipelineHandle depthPrepass_;
+    nvrhi::GraphicsPipelineHandle depthPrepassSkinned_;
+    nvrhi::GraphicsPipelineHandle ssao_;
+    nvrhi::GraphicsPipelineHandle ssaoBlur_;
+    nvrhi::GraphicsPipelineHandle bloomDown_;
+    nvrhi::GraphicsPipelineHandle bloomUp_;
+    std::unordered_map<int, nvrhi::GraphicsPipelineHandle> tonemap_;
+    std::unordered_map<int, nvrhi::GraphicsPipelineHandle> overlay_;
+    std::unordered_map<int, nvrhi::GraphicsPipelineHandle> fxaa_;
+    std::unordered_map<int, nvrhi::GraphicsPipelineHandle> hud_;
     std::unique_ptr<HudFont> hudFont_;  // built on first use
-    rhi::Image hudAtlas_;
+    nvrhi::TextureHandle hudAtlas_;
     std::uint32_t hudAtlasIndex_ = UINT32_MAX;
 };
 

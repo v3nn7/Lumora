@@ -104,6 +104,8 @@ set(NVRHI_WITH_RTXMU OFF CACHE BOOL "" FORCE)
 set(NVRHI_FETCH_VULKAN_HEADERS OFF CACHE BOOL "" FORCE)  # the Vulkan SDK's headers (Vulkan::Headers)
 
 FetchContent_MakeAvailable(glm EnTT VulkanMemoryAllocator nlohmann_json cgltf stb JoltPhysics miniaudio nvrhi)
+# NVRHI is static; the renderer module may be a shared library.
+set_target_properties(nvrhi nvrhi_vk PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(stb INTERFACE)
 target_include_directories(stb SYSTEM INTERFACE ${stb_SOURCE_DIR})
 add_library(miniaudio INTERFACE)

@@ -1,14 +1,10 @@
 #pragma once
 
-#include "renderer/vulkan/Resources.hpp"
+#include "renderer/Gpu.hpp"
 
 #include <cstdint>
 #include <string>
 #include <vector>
-
-namespace lumora::rhi {
-class Device;
-}
 
 namespace lumora::render {
 
@@ -17,32 +13,31 @@ struct GpuTiming {
     double milliseconds = 0.0;
 };
 
-/// Per-frame-slot timestamp queries. Results are read back after the slot's fence signals,
-/// i.e. they describe the frame rendered `framesInFlight` frames ago.
+/// Per-frame-slot GPU timer queries, one per render-graph pass plus the whole frame. Results
+/// are read after the slot's frame completed, i.e. they describe the frame rendered
+/// `framesInFlight` frames ago.
 class GpuProfiler {
 public:
-    GpuProfiler(const rhi::Device& device, std::uint32_t maxScopes = 64);
-
+    GpuProfiler(nvrhi::IDevice* device, bool enabled);
     [[nodiscard]] bool enabled() const noexcept { return enabled_; }
-    void beginFrame(VkCommandBuffer cmd);
-    [[nodiscard]] std::uint32_t beginScope(VkCommandBuffer cmd, const std::string& name);
-    void endScope(VkCommandBuffer cmd, std::uint32_t scope);
-    void endFrame(VkCommandBuffer cmd);
-    /// Call after the frame's fence has been waited on.
+    void beginFrame(nvrhi::ICommandList* cmd);
+    [[nodiscard]] std::uint32_t beginScope(nvrhi::ICommandList* cmd, const std::string& name);
+    void endScope(nvrhi::ICommandList* cmd, std::uint32_t scope);
+    void endFrame(nvrhi::ICommandList* cmd);
+    /// Call after the frame completed on the GPU.
     void resolve();
-
     [[nodiscard]] const std::vector<GpuTiming>& results() const noexcept { return results_; }
     [[nodiscard]] double frameMilliseconds() const noexcept { return frameMs_; }
 
 private:
-    const rhi::Device& device_;
+    nvrhi::ITimerQuery* query(std::uint32_t index);
+
+    nvrhi::IDevice* device_;
     bool enabled_ = false;
-    std::uint32_t maxQueries_ = 0;
+    std::vector<nvrhi::TimerQueryHandle> queries_;  // 0 = whole frame, then the scopes
+    std::vector<std::string> names_;
     std::uint32_t used_ = 0;
     bool recorded_ = false;
-    double periodNs_ = 1.0;
-    rhi::UniqueQueryPool pool_;
-    std::vector<std::string> names_;  // scope i uses queries 2+2i, 3+2i; 0/1 = whole frame
     std::vector<GpuTiming> results_;
     double frameMs_ = 0.0;
 };

@@ -2,24 +2,22 @@
 
 #include "assets/AssetLibrary.hpp"
 #include "core/Log.hpp"
-#include "renderer/vulkan/UploadQueue.hpp"
+#include "renderer/RenderContext.hpp"
 
 #include <format>
 #include <span>
 
 namespace lumora::render {
 
-MeshCache::MeshCache(rhi::UploadQueue& uploads) : uploads_(uploads) {
+MeshCache::MeshCache(RenderContext& context) : ctx_(context) {
     for (std::size_t i = 0; i < primitives_.size(); ++i) {
         const auto prim = static_cast<MeshPrimitive>(i);
         const MeshData data = makePrimitive(prim);
         GpuMesh& mesh = primitives_[i];
         const std::string vbName = std::format("{}.vertices", toString(prim));
         const std::string ibName = std::format("{}.indices", toString(prim));
-        mesh.vertices = uploads.uploadBuffer(std::as_bytes(std::span(data.vertices)),
-                                             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vbName.c_str());
-        mesh.indices = uploads.uploadBuffer(std::as_bytes(std::span(data.indices)),
-                                            VK_BUFFER_USAGE_INDEX_BUFFER_BIT, ibName.c_str());
+        mesh.vertices = ctx_.createBuffer(std::as_bytes(std::span(data.vertices)), true, false, vbName.c_str());
+        mesh.indices = ctx_.createBuffer(std::as_bytes(std::span(data.indices)), false, true, ibName.c_str());
         mesh.indexCount = static_cast<std::uint32_t>(data.indices.size());
         mesh.bounds = data.bounds;
     }
@@ -54,15 +52,12 @@ const GpuMesh* MeshCache::asset(AssetLibrary& library, const std::string& key, b
     const MeshData& data = mesh->data;
     GpuMesh gpu;
     const std::string name = mesh->name;
-    gpu.vertices = uploads_.uploadBuffer(std::as_bytes(std::span(data.vertices)), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                         (name + ".vertices").c_str());
-    gpu.indices = uploads_.uploadBuffer(std::as_bytes(std::span(data.indices)), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                                        (name + ".indices").c_str());
+    gpu.vertices = ctx_.createBuffer(std::as_bytes(std::span(data.vertices)), true, false, (name + ".vertices").c_str());
+    gpu.indices = ctx_.createBuffer(std::as_bytes(std::span(data.indices)), false, true, (name + ".indices").c_str());
     gpu.indexCount = static_cast<std::uint32_t>(data.indices.size());
     gpu.bounds = data.bounds;
     if (!data.skin.empty() && data.skin.size() == data.vertices.size()) {
-        gpu.skin = uploads_.uploadBuffer(std::as_bytes(std::span(data.skin)), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                         (name + ".skin").c_str());
+        gpu.skin = ctx_.createBuffer(std::as_bytes(std::span(data.skin)), true, false, (name + ".skin").c_str());
     }
     log::debug("Renderer", "uploaded mesh '{}' ({} triangles)", key, gpu.indexCount / 3);
     return &assets_.emplace(*canonical, std::move(gpu)).first->second;

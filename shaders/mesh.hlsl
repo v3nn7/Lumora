@@ -230,20 +230,28 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
         color *= gTextures[gPush.index2].Load(int3(int2(input.position.xy), 0)).r;
     }
     uint lightCount = min(gFrame.counts.x, (uint)MAX_LIGHTS);
-    for (uint i = 0; i < lightCount; ++i) {
+    for (uint i = 0; i < lightCount; ++i) {  // directional lights
         GpuLight light = gFrame.lights[i];
         float3 radiance = light.colorIntensity.rgb * light.colorIntensity.w;
-        if ((int)light.directionType.w == LIGHT_DIRECTIONAL) {
-            if (i == gFrame.counts.y) {
-                radiance *= sunShadow(s.position, geometricNormal, -light.directionType.xyz, dpdx, dpdy);
-            }
-            color += evaluateLight(s, -light.directionType.xyz, radiance);
-        } else {
+        if (i == gFrame.counts.y) {
+            radiance *= sunShadow(s.position, geometricNormal, -light.directionType.xyz, dpdx, dpdy);
+        }
+        color += evaluateLight(s, -light.directionType.xyz, radiance);
+    }
+    if (gFrame.lightGrid.w > 0u) {
+        // Point lights binned into this pixel's screen tile.
+        uint2 tile = min(uint2(input.position.xy) / gFrame.lightGrid.z, gFrame.lightGrid.xy - 1u);
+        uint t = tile.y * gFrame.lightGrid.x + tile.x;
+        uint first = gLightGrid[t * 2u];
+        uint count = gLightGrid[t * 2u + 1u];
+        for (uint k = 0; k < count; ++k) {
+            GpuLight light = gPointLights[gLightGrid[first + k]];
             float3 toLight = light.positionRange.xyz - s.position;
             float distance = length(toLight);
             float attenuation = pointAttenuation(distance, light.positionRange.w);
             if (attenuation > 0.0) {
-                color += evaluateLight(s, toLight / max(distance, 1e-4), radiance * attenuation);
+                float3 radiance = light.colorIntensity.rgb * light.colorIntensity.w * attenuation;
+                color += evaluateLight(s, toLight / max(distance, 1e-4), radiance);
             }
         }
     }

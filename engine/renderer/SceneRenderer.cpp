@@ -5,6 +5,7 @@
 #include "core/JobSystem.hpp"
 #include "renderer/FrameResources.hpp"
 #include "renderer/GpuTypes.hpp"
+#include "renderer/LightGrid.hpp"
 #include "renderer/RenderContext.hpp"
 #include "scene/Scene.hpp"
 
@@ -327,6 +328,23 @@ void SceneRenderer::ensureObjectCapacity(FrameResources& frame, std::uint32_t co
     vkUpdateDescriptorSets(ctx_.device().handle(), 1, &write, 0, nullptr);
 }
 
+void SceneRenderer::ensureStorage(rhi::Buffer& buffer, std::uint32_t& capacity, std::uint32_t count,
+                                  std::size_t elementSize, VkDescriptorSet set, std::uint32_t binding, const char* name) {
+    if (count <= capacity && buffer) return;
+    std::uint32_t grown = std::max(capacity, 64u);
+    while (grown < count) grown *= 2;
+    buffer = rhi::Buffer(ctx_.device(), {grown * elementSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, rhi::MemoryUsage::CpuToGpu, name});
+    capacity = grown;
+    const VkDescriptorBufferInfo info{buffer.handle(), 0, VK_WHOLE_SIZE};
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = set;
+    write.dstBinding = binding;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.pBufferInfo = &info;
+    vkUpdateDescriptorSets(ctx_.device().handle(), 1, &write, 0, nullptr);
+}
+
 void SceneRenderer::ensureJointCapacity(FrameResources& frame, std::uint32_t count) {
     if (count <= frame.jointCapacity && frame.joints) return;
     std::uint32_t capacity = std::max(frame.jointCapacity, 64u);
@@ -376,19 +394,27 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         }
     }
 
+    // Directional lights go into the constants (few, they light everything); point lights into
+    // a storage buffer, binned into screen tiles so each pixel only visits the ones near it.
     std::uint32_t lightCount = 0;
+    std::vector<GpuLight> pointLights;
     bool haveSun = false;
     std::uint32_t sunIndex = UINT32_MAX;
     glm::vec3 sunTravel(0.0f, -1.0f, 0.0f);
     for (auto [e, light, world] : reg.view<LightComponent, WorldTransformComponent>().each()) {
-        if (lightCount >= kMaxLights) break;
-        GpuLight& gl = fc.lights[lightCount++];
+        GpuLight gl;
         const glm::vec3 position(world.matrix[3]);
         const glm::vec3 direction = glm::normalize(glm::vec3(world.matrix * glm::vec4(0, 0, -1, 0)));
         gl.positionRange = glm::vec4(position, light.range);
         gl.colorIntensity = glm::vec4(light.color, light.intensity);
         gl.directionType = glm::vec4(direction, static_cast<float>(light.type));
-        if (light.type == LightType::Directional && !haveSun) {
+        if (light.type != LightType::Directional) {
+            if (pointLights.size() < kMaxPointLights && light.intensity > 0.0f) pointLights.push_back(gl);
+            continue;
+        }
+        if (lightCount >= kMaxLights) continue;
+        fc.lights[lightCount++] = gl;
+        if (!haveSun) {
             haveSun = true;
             sunIndex = lightCount - 1;
             sunTravel = direction;
@@ -398,7 +424,18 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     }
     const bool shadows = settings.shadows && haveSun && settings.shadowResolution > 0 && settings.shadowDistance > 0.0f;
     fc.counts = glm::uvec4(lightCount, shadows ? sunIndex : UINT32_MAX, ctx_.materialSampler(), 0);
-    stats.lights = lightCount;
+    stats.lights = lightCount + static_cast<std::uint32_t>(pointLights.size());
+    {
+        const LightGrid grid = buildLightGrid(pointLights, camera.view, camera.projection, extent.width, extent.height);
+        fc.lightGrid = glm::uvec4(grid.tilesX, grid.tilesY, grid.tileSize, static_cast<std::uint32_t>(pointLights.size()));
+        if (pointLights.empty()) pointLights.push_back(GpuLight{});  // storage buffers may not be empty
+        ensureStorage(frame.pointLights, frame.pointLightCapacity, static_cast<std::uint32_t>(pointLights.size()),
+                      sizeof(GpuLight), frame.set, 3, "FramePointLights");
+        frame.pointLights.write(std::as_bytes(std::span(pointLights)));
+        ensureStorage(frame.lightGrid, frame.lightGridCapacity, static_cast<std::uint32_t>(grid.data.size()),
+                      sizeof(std::uint32_t), frame.set, 4, "FrameLightGrid");
+        frame.lightGrid.write(std::as_bytes(std::span(grid.data)));
+    }
     // Cascades are the 2x2 tiles of one atlas; each covers the view frustum from the near plane
     // to its split (nested), so every visible point within the shadow distance has a cascade.
     const std::uint32_t tile =

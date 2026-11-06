@@ -42,7 +42,7 @@ Renderer::Renderer(RenderContext& context)
     rhi::Device& device = ctx_.device();
 
     const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight},
-                                           {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * kFramesInFlight}};
+                                           {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 * kFramesInFlight}};
     VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     poolInfo.maxSets = kFramesInFlight;
     poolInfo.poolSizeCount = 2;

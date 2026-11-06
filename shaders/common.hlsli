@@ -37,7 +37,8 @@ struct FrameData {
     float4 environmentParams;   // x enabled, y intensity, z rotation (radians), w max specular lod
     uint4 environmentTextures;  // x sky, y prefiltered specular (bindless), z sampler
     float4 irradianceSh[9];     // SH9 irradiance / pi
-    GpuLight lights[MAX_LIGHTS];
+    uint4 lightGrid;            // x tiles across, y tiles down, z tile size (px), w point lights
+    GpuLight lights[MAX_LIGHTS];  // directional lights
 };
 
 struct GpuObject {
@@ -53,6 +54,11 @@ static const uint NO_TEXTURE = 0xFFFFFFFFu;
 
 [[vk::binding(0, 0)]] cbuffer FrameCB { FrameData gFrame; };
 [[vk::binding(1, 0)]] StructuredBuffer<GpuObject> gObjects;
+// Point lights, binned into screen tiles on the CPU: gLightGrid holds (first, count) per tile,
+// then the light indices those ranges point into.
+[[vk::binding(3, 0)]] StructuredBuffer<GpuLight> gPointLights;
+[[vk::binding(4, 0)]] StructuredBuffer<uint> gLightGrid;
+
 // Skinning palettes: GpuObject.flags.z is where an object's joint matrices start.
 struct GpuJoint {
     column_major float4x4 transform;

@@ -576,3 +576,93 @@ TEST_F(RendererTest, SkinnedMeshFollowsItsJoints) {
     EXPECT_FALSE(isRed(pixel(*bent, top.x, top.y))) << "the top left (0, 1.8)";
     EXPECT_TRUE(isRed(pixel(*bent, left.x, left.y))) << "and now lies at (-0.85, 1.2)";
 }
+
+// ---- Point lights (tiled) -------------------------------------------------------------------
+
+#include "renderer/LightGrid.hpp"
+
+TEST(LightGrid, BinsLightsByTheTilesTheyCover) {
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.0f, 10.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const CameraView view = cam.view(1.0f);
+    auto light = [](glm::vec3 p, float range) {
+        GpuLight l;
+        l.positionRange = glm::vec4(p, range);
+        return l;
+    };
+    const std::vector<GpuLight> lights = {
+        light({0, 0, 0}, 1.0f),     // small, in the middle
+        light({0, 0, 20}, 2.0f),    // behind the camera
+        light({0, 0, 10}, 3.0f),    // the camera is inside it
+        light({500, 0, 0}, 1.0f),   // far off to the side
+    };
+    const LightGrid grid = buildLightGrid(lights, view.view, view.projection, 256, 256, 32);
+    ASSERT_EQ(grid.tilesX, 8u);
+    ASSERT_EQ(grid.tilesY, 8u);
+    auto has = [&](std::uint32_t x, std::uint32_t y, std::uint32_t light) {
+        const std::uint32_t t = y * grid.tilesX + x;
+        for (std::uint32_t k = 0; k < grid.data[t * 2 + 1]; ++k) {
+            if (grid.data[grid.data[t * 2] + k] == light) return true;
+        }
+        return false;
+    };
+    EXPECT_TRUE(has(4, 4, 0)) << "the centre light covers the centre tiles";
+    EXPECT_FALSE(has(0, 0, 0)) << "but not the corners";
+    for (std::uint32_t y = 0; y < 8; ++y) {
+        for (std::uint32_t x = 0; x < 8; ++x) {
+            EXPECT_FALSE(has(x, y, 1));
+            EXPECT_TRUE(has(x, y, 2)) << "inside a light: every tile";
+            EXPECT_FALSE(has(x, y, 3));
+        }
+    }
+}
+
+TEST_F(RendererTest, ManyPointLightsLightTheirSurroundings) {
+    // 120 dim green lights over a dark floor, then one strong red light (number 121, far past the
+    // old limit of 16) above one spot: that spot turns red, another spot only sees green.
+    auto scene = std::make_unique<Scene>("Lights");
+    scene->environment().ambientIntensity = 0.0f;
+    scene->environment().fogDensity = 0.0f;
+    const auto ground = scene->createEntity("Ground");
+    auto& mesh = scene->registry().emplace<MeshRendererComponent>(ground);
+    mesh.mesh = MeshPrimitive::Plane;
+    mesh.baseColor = glm::vec3(0.8f);
+    mesh.roughness = 1.0f;
+    scene->registry().get<TransformComponent>(ground).scale = glm::vec3(60.0f, 1.0f, 60.0f);
+    for (int i = 0; i < 120; ++i) {
+        const auto e = scene->createEntity("Green");
+        scene->registry().get<TransformComponent>(e).position = glm::vec3((i % 12) * 2.0f - 11.0f, 0.6f, (i / 12) * 2.0f - 9.0f);
+        auto& l = scene->registry().emplace<LightComponent>(e);
+        l.type = LightType::Point;
+        l.color = glm::vec3(0.0f, 1.0f, 0.0f);
+        l.intensity = 1.0f;
+        l.range = 1.5f;
+    }
+    const auto red = scene->createEntity("Red");
+    scene->registry().get<TransformComponent>(red).position = glm::vec3(4.0f, 0.5f, 4.0f);
+    auto& r = scene->registry().emplace<LightComponent>(red);
+    r.type = LightType::Point;
+    r.color = glm::vec3(1.0f, 0.0f, 0.0f);
+    r.intensity = 6.0f;
+    r.range = 1.5f;
+    scene->updateWorldTransforms();
+
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 14.0f, 0.1f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const glm::uvec2 size(160, 160);
+    const CameraView view = cam.view(1.0f);
+    RenderSettings settings;
+    settings.bloom = false;
+    auto image = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(image.has_value()) << image.error().message;
+    EXPECT_EQ(renderer_->stats().scene.lights, 121u);
+    const glm::ivec2 underRed = toPixel(view, glm::vec3(4.0f, 0.0f, 4.0f), size);
+    const glm::ivec2 underGreen = toPixel(view, glm::vec3(-5.0f, 0.0f, -3.0f), size);
+    const auto a = pixel(*image, underRed.x, underRed.y);
+    const auto b = pixel(*image, underGreen.x, underGreen.y);
+    EXPECT_GT(a.r, a.g + 40) << "light 121 reaches the floor below it";
+    EXPECT_GT(b.g, b.r + 20) << "the green lights light theirs";
+    EXPECT_LT(b.r, 30);
+}

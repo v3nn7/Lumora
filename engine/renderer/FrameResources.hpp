@@ -21,6 +21,10 @@ struct FrameResources {
     std::uint32_t objectCapacity = 0;
     rhi::Buffer joints;              // float4x4[] skinning palettes of this frame (host-visible SSBO)
     std::uint32_t jointCapacity = 0;
+    rhi::Buffer pointLights;         // GpuLight[] (host-visible SSBO)
+    std::uint32_t pointLightCapacity = 0;
+    rhi::Buffer lightGrid;           // uint[]: (first, count) per tile, then light indices
+    std::uint32_t lightGridCapacity = 0;
     rhi::Buffer overlayVertices;     // render::OverlayVertex[] (host-visible vertex buffer)
     VkDescriptorSet set = VK_NULL_HANDLE;
     std::unique_ptr<TransientImagePool> transients;

@@ -198,7 +198,8 @@ The Mesh Renderer component holds the material: base colour, metallic, roughness
 and strength, an optional procedural grid or checker pattern, and optional base-colour, metallic-roughness, normal and emissive textures. Shading is physically
 based (GGX), so metallic and roughness behave as in other PBR tools.
 
-Lights are directional (the sun) or point lights. The directional light casts soft cascaded
+Lights are directional (the sun) or point lights. A scene can have thousands of point lights:
+each part of the screen only computes the ones whose range reaches it, so keep ranges tight. The directional light casts soft cascaded
 shadows across the whole view. Screen-space ambient occlusion darkens ambient light where surfaces meet
 (corners, contacts, under objects).
 

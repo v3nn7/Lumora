@@ -77,6 +77,7 @@ lumora_engine_module(renderer
         renderer/TextureCache.cpp
         renderer/EnvironmentMap.cpp
         renderer/EnvironmentCache.cpp
+        renderer/LightGrid.cpp
         renderer/RenderContext.cpp
         renderer/Renderer.cpp
         renderer/SceneRenderer.cpp

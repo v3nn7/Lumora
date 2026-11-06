@@ -92,6 +92,9 @@ public:
 private:
     void ensureObjectCapacity(FrameResources& frame, std::uint32_t count);
     void ensureJointCapacity(FrameResources& frame, std::uint32_t count);
+    /// Grows a per-frame storage buffer to `count` elements and points set binding `binding` at it.
+    void ensureStorage(rhi::Buffer& buffer, std::uint32_t& capacity, std::uint32_t count, std::size_t elementSize,
+                       VkDescriptorSet set, std::uint32_t binding, const char* name);
     [[nodiscard]] const struct GpuMesh* meshFor(const MeshRendererComponent& mesh, AssetLibrary* assets, bool block);
     VkPipeline tonemapPipeline(VkFormat outputFormat);
     VkPipeline overlayPipeline(VkFormat outputFormat);

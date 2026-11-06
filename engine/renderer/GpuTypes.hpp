@@ -11,7 +11,9 @@
 
 namespace lumora::render {
 
-inline constexpr std::uint32_t kMaxLights = 16;
+inline constexpr std::uint32_t kMaxLights = 16;          // directional lights in FrameConstants
+inline constexpr std::uint32_t kMaxPointLights = 4096;    // point lights (storage buffer, tiled)
+inline constexpr std::uint32_t kLightTileSize = 32;       // pixels per light-grid tile side
 /// Sun shadow cascades, rendered as the 2x2 tiles of one depth atlas.
 inline constexpr std::uint32_t kShadowCascades = 4;
 
@@ -43,6 +45,7 @@ struct FrameConstants {
     glm::vec4 environmentParams{0.0f};      // x enabled, y intensity, z rotation (radians), w max specular lod
     glm::uvec4 environmentTextures{0u};     // x sky, y prefiltered specular (bindless), z sampler
     glm::vec4 irradianceSh[9]{};            // SH9 irradiance / pi (rgb)
+    glm::uvec4 lightGrid{0u};               // x tiles across, y tiles down, z tile size (px), w point lights
     GpuLight lights[kMaxLights]{};
 };
 
@@ -77,8 +80,8 @@ static_assert(offsetof(FrameConstants, shadowParams) == 656);
 static_assert(offsetof(FrameConstants, cascadeTexelWorld) == 672);
 static_assert(offsetof(FrameConstants, shadowFade) == 688);
 static_assert(offsetof(FrameConstants, fogParams) == 704);
-static_assert(offsetof(FrameConstants, lights) == 896);
-static_assert(sizeof(FrameConstants) == 896 + 48 * kMaxLights);
+static_assert(offsetof(FrameConstants, lights) == 912);
+static_assert(sizeof(FrameConstants) == 912 + 48 * kMaxLights);
 static_assert(sizeof(GpuObject) == 192);
 static_assert(offsetof(GpuObject, textures) == 176);
 static_assert(offsetof(GpuObject, flags) == 160);

@@ -83,9 +83,12 @@ int Simulation::advance(double frameSeconds) {
 }
 
 void Simulation::setScripts(std::shared_ptr<ScriptModule> module, const InputState* input) {
+    // Lua and visual-script behaviours need no game library, so a runner exists whenever the
+    // scene has Script components.
+    const bool scripted = module || !scene_.registry().view<ScriptComponent>().empty();
     if (scripts_) {
         scripts_->reload(std::move(module));
-    } else if (module) {
+    } else if (scripted) {
         scripts_ = std::make_unique<ScriptRunner>(scene_, std::move(module), input);
         scripts_->setHud(&hud_);
         scripts_->setDebugDraw(&debug_);

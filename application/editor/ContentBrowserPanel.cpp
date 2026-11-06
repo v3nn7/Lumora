@@ -23,6 +23,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QRegularExpression>
 #include <QSortFilterProxyModel>
 #include <QSplitter>
 #include <QToolButton>
@@ -46,12 +47,13 @@ bool isPrefab(const QFileInfo& info) { return hasSuffix(info, {"lprefab"}); }
 bool isHdr(const QFileInfo& info) { return hasSuffix(info, {"hdr"}); }
 bool isMaterial(const QFileInfo& info) { return hasSuffix(info, {"lmat"}); }
 bool isCode(const QFileInfo& info) {
-    return hasSuffix(info, {"cpp", "hpp", "h", "cc", "cxx", "inl", "txt", "md", "json", "lumora", "lscene", "lprefab"});
+    return hasSuffix(info, {"cpp", "hpp", "h", "cc", "cxx", "inl", "txt", "md", "json", "lumora", "lscene", "lprefab", "lua",
+                            "lanim"});
 }
 /// Files the browser can bring into the project.
 bool isImportable(const QFileInfo& info) {
     return isModel(info) || isPrefab(info) || isHdr(info) || isMaterial(info) ||
-           hasSuffix(info, {"png", "jpg", "jpeg", "tga", "bmp", "wav", "flac", "mp3", "cpp", "hpp", "h"});
+           hasSuffix(info, {"png", "jpg", "jpeg", "tga", "bmp", "wav", "flac", "mp3", "cpp", "hpp", "h", "lua", "lgraph", "lanim"});
 }
 
 class AssetIconProvider final : public QFileIconProvider {
@@ -64,6 +66,9 @@ public:
         if (isHdr(info)) return app::theme::icon(QStringLiteral("sun"));
         if (isMaterial(info)) return app::theme::icon(QStringLiteral("sphere"));
         if (hasSuffix(info, {"cpp", "hpp", "h"})) return app::theme::icon(QStringLiteral("console"));
+        if (hasSuffix(info, {"lua"})) return app::theme::icon(QStringLiteral("code"));
+        if (hasSuffix(info, {"lgraph"})) return app::theme::icon(QStringLiteral("hierarchy"));
+        if (hasSuffix(info, {"lanim"})) return app::theme::icon(QStringLiteral("animation"));
         return app::theme::icon(QStringLiteral("file"));
     }
     using QFileIconProvider::icon;
@@ -266,6 +271,8 @@ void ContentBrowserPanel::activate(const QString& path) {
         emit assetSelected(path);
     } else if (info.suffix() == QLatin1String("ltimeline")) {
         emit openTimelineRequested(path);
+    } else if (info.suffix() == QLatin1String("lgraph")) {
+        emit openGraphRequested(path);
     } else if (isCode(info)) {
         emit openCodeRequested(path);
     } else {
@@ -278,8 +285,12 @@ void ContentBrowserPanel::populateNewMenu(QMenu& menu) {
     menu.addAction(app::theme::icon(QStringLiteral("scene")), tr("Scene…"), this, &ContentBrowserPanel::newScene);
     menu.addAction(app::theme::icon(QStringLiteral("sphere")), tr("Material…"), this, &ContentBrowserPanel::newMaterial);
     menu.addAction(app::theme::icon(QStringLiteral("animation")), tr("Timeline…"), this, &ContentBrowserPanel::newTimeline);
-    menu.addAction(app::theme::icon(QStringLiteral("console")), tr("C++ Behaviour…"), this,
+    menu.addAction(app::theme::icon(QStringLiteral("hierarchy")), tr("Visual Script…"), this, &ContentBrowserPanel::newVisualScript);
+    menu.addAction(app::theme::icon(QStringLiteral("code")), tr("Lua Script…"), this, &ContentBrowserPanel::newLuaScript);
+    menu.addAction(app::theme::icon(QStringLiteral("console")), tr("C++ Behaviour (advanced)…"), this,
                    [this] { emit newBehaviourRequested(); });
+    menu.addAction(app::theme::icon(QStringLiteral("animation")), tr("Animator Controller…"), this,
+                   &ContentBrowserPanel::newAnimatorController);
     menu.addAction(app::theme::icon(QStringLiteral("entity")), tr("Prefab from Selection"), this,
                    [this] { emit prefabFromSelectionRequested(current_); });
 }
@@ -331,6 +342,130 @@ void ContentBrowserPanel::newTimeline() {
         return;
     }
     emit openTimelineRequested(path);
+}
+
+namespace {
+
+QString askFileName(QWidget* parent, const QString& title, const QString& label, const QString& fallback, const QString& suffix) {
+    bool ok = false;
+    QString name = QInputDialog::getText(parent, title, label, QLineEdit::Normal, fallback, &ok).trimmed();
+    if (!ok || name.isEmpty()) return {};
+    if (!name.endsWith(suffix)) name += suffix;
+    return name;
+}
+
+bool writeNewFile(const QString& path, const QByteArray& content) {
+    if (QFileInfo::exists(path)) return false;
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    return file.write(content) == content.size();
+}
+
+} // namespace
+
+QString ContentBrowserPanel::createLuaScript(QString name) {
+    if (!name.endsWith(QLatin1String(".lua"))) name += QStringLiteral(".lua");
+    QString cls = QFileInfo(name).completeBaseName();
+    cls.remove(QRegularExpression(QStringLiteral("[^A-Za-z0-9_]")));
+    if (cls.isEmpty() || cls.front().isDigit()) cls.prepend(QLatin1Char('B'));
+    const QString text = QStringLiteral(
+        "-- %1: a Lua behaviour. Put \"%2\" into a Script component's Behaviour field\n"
+        "-- (or drag this file onto an object). Saving reloads it, also while playing.\n"
+        "local %1 = Behaviour:extend()\n\n"
+        "function %1:start()\n"
+        "    self.speed = self:param(\"speed\", 2)  -- Script component > Parameters: speed=2\n"
+        "end\n\n"
+        "function %1:update(dt)\n"
+        "    -- Move with W/A/S/D (or the left stick).\n"
+        "    local input = vec3(self:axis(\"MoveX\"), 0, -self:axis(\"MoveY\"))\n"
+        "    self:moveBy(input * (self.speed * dt))\n"
+        "end\n\n"
+        "function %1:onCollision(other)\n"
+        "    self:log(\"touched\", self:name(other))\n"
+        "end\n\n"
+        "return %1\n");
+    const QString path = QDir(current_).filePath(name);
+    const QString relative = QDir(root_).relativeFilePath(path);
+    return writeNewFile(path, text.arg(cls, relative).toUtf8()) ? path : QString();
+}
+
+QString ContentBrowserPanel::createVisualScript(QString name) {
+    if (!name.endsWith(QLatin1String(".lgraph"))) name += QStringLiteral(".lgraph");
+    // A starter graph: On Start prints a greeting; On Update spins the object.
+    const QByteArray text = R"({
+  "version": 1,
+  "variables": [ { "name": "speed", "type": "number", "value": 90 } ],
+  "nodes": [
+    { "id": 1, "type": "event.start", "x": 0, "y": 0 },
+    { "id": 2, "type": "debug.log", "x": 360, "y": 0, "inputs": { "message": "Hello from a visual script!" } },
+    { "id": 3, "type": "event.update", "x": 0, "y": 140 },
+    { "id": 4, "type": "entity.rotate", "x": 1080, "y": 140 },
+    { "id": 5, "type": "vec.make", "x": 720, "y": 280 },
+    { "id": 6, "type": "math.mul", "x": 360, "y": 280 },
+    { "id": 7, "type": "var.get", "x": 0, "y": 320, "inputs": { "name": "speed" } }
+  ],
+  "links": [
+    { "from": 1, "fromPin": "exec", "to": 2, "toPin": "in" },
+    { "from": 3, "fromPin": "exec", "to": 4, "toPin": "in" },
+    { "from": 5, "fromPin": "vector", "to": 4, "toPin": "degrees" },
+    { "from": 6, "fromPin": "result", "to": 5, "toPin": "y" },
+    { "from": 3, "fromPin": "dt", "to": 6, "toPin": "a" },
+    { "from": 7, "fromPin": "value", "to": 6, "toPin": "b" }
+  ]
+}
+)";
+    const QString path = QDir(current_).filePath(name);
+    return writeNewFile(path, text) ? path : QString();
+}
+
+void ContentBrowserPanel::newLuaScript() {
+    const QString name = askFileName(this, tr("New Lua Script"), tr("Script name"), tr("Player"), QStringLiteral(".lua"));
+    if (name.isEmpty()) return;
+    const QString path = createLuaScript(name);
+    if (path.isEmpty()) {
+        QMessageBox::warning(this, tr("New Lua Script"), tr("Could not create %1 (does it exist already?).").arg(name));
+        return;
+    }
+    emit openCodeRequested(path);
+}
+
+void ContentBrowserPanel::newVisualScript() {
+    const QString name = askFileName(this, tr("New Visual Script"), tr("Script name"), tr("Logic"), QStringLiteral(".lgraph"));
+    if (name.isEmpty()) return;
+    const QString path = createVisualScript(name);
+    if (path.isEmpty()) {
+        QMessageBox::warning(this, tr("New Visual Script"), tr("Could not create %1 (does it exist already?).").arg(name));
+        return;
+    }
+    emit openGraphRequested(path);
+}
+
+void ContentBrowserPanel::newAnimatorController() {
+    const QString name =
+        askFileName(this, tr("New Animator Controller"), tr("Controller name"), tr("Character"), QStringLiteral(".lanim"));
+    if (name.isEmpty()) return;
+    const QByteArray text = R"({
+  "parameters": [ { "name": "speed", "type": "float", "value": 0 }, { "name": "jump", "type": "trigger" } ],
+  "entry": "Idle",
+  "states": [
+    { "name": "Idle", "clip": "Idle", "loop": true },
+    { "name": "Run", "clip": "Run", "loop": true },
+    { "name": "Jump", "clip": "Jump", "loop": false }
+  ],
+  "transitions": [
+    { "from": "Idle", "to": "Run", "duration": 0.2, "conditions": [ { "parameter": "speed", "op": ">", "value": 0.1 } ] },
+    { "from": "Run", "to": "Idle", "duration": 0.2, "conditions": [ { "parameter": "speed", "op": "<=", "value": 0.1 } ] },
+    { "from": "*", "to": "Jump", "duration": 0.1, "conditions": [ { "parameter": "jump", "op": "trigger" } ] },
+    { "from": "Jump", "to": "Idle", "duration": 0.2, "exitTime": 1.0 }
+  ]
+}
+)";
+    const QString path = QDir(current_).filePath(name);
+    if (!writeNewFile(path, text)) {
+        QMessageBox::warning(this, tr("New Animator Controller"), tr("Could not create %1 (does it exist already?).").arg(name));
+        return;
+    }
+    emit openCodeRequested(path);
 }
 
 QString ContentBrowserPanel::createMaterial(QString name) {

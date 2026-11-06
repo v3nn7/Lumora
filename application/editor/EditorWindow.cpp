@@ -11,6 +11,7 @@
 #include "core/Version.hpp"
 #include "editor/ConsolePanel.hpp"
 #include "editor/TimelinePanel.hpp"
+#include "editor/GraphEditorPanel.hpp"
 #include "editor/CodeEditorPanel.hpp"
 #include "editor/ContentBrowserPanel.hpp"
 #include "editor/EditorViewportClient.hpp"
@@ -88,7 +89,14 @@ namespace {
 bool isScriptFile(const QString& file) {
     const QString suffix = QFileInfo(file).suffix().toLower();
     return suffix == QLatin1String("cpp") || suffix == QLatin1String("cc") || suffix == QLatin1String("cxx") ||
-           suffix == QLatin1String("hpp") || suffix == QLatin1String("h");
+           suffix == QLatin1String("hpp") || suffix == QLatin1String("h") || suffix == QLatin1String("lua") ||
+           suffix == QLatin1String("lgraph");
+}
+
+/// Lua scripts and visual scripts run from their file: the behaviour is the file's path.
+bool isFileBehaviour(const QString& file) {
+    const QString suffix = QFileInfo(file).suffix().toLower();
+    return suffix == QLatin1String("lua") || suffix == QLatin1String("lgraph");
 }
 
 /// Classes a script file registers with LUMORA_BEHAVIOUR(Name), in order (comments skipped).
@@ -448,6 +456,8 @@ void EditorWindow::buildDocks() {
                      if (field.id == "audioClip") return pickAudioAsset(parent);
                      if (field.id == "material") return pickMaterialAsset(parent);
                      if (field.id == "timeline") return pickContentFile(parent, tr("Choose Timeline"), tr("Timelines (*.ltimeline)"));
+                     if (field.id == "controller")
+                         return pickContentFile(parent, tr("Choose Animator Controller"), tr("Animator Controllers (*.lanim)"));
                      const bool image = field.id.ends_with("Texture") || field.id == "texture" || field.id == "heightmap";
                      return image ? pickTextureAsset(parent) : pickMeshAsset(parent);
                  });
@@ -482,8 +492,12 @@ void EditorWindow::buildDocks() {
     tabifyDockWidget(contentDock, codeDock_);
     timeline_ = new TimelinePanel(ctx_, app::toQString(project_.rootDir()));
     timelineDock_ = makeDock(this, tr("Timeline"), QStringLiteral("dock.timeline"), QStringLiteral("animation"), timeline_);
+    graph_ = new GraphEditorPanel(app::toQString(project_.rootDir()));
+    graphDock_ = makeDock(this, tr("Visual Script"), QStringLiteral("dock.graph"), QStringLiteral("hierarchy"), graph_);
     addDockWidget(Qt::BottomDockWidgetArea, timelineDock_);
     tabifyDockWidget(contentDock, timelineDock_);
+    addDockWidget(Qt::BottomDockWidgetArea, graphDock_);
+    tabifyDockWidget(contentDock, graphDock_);
     contentDock->raise();
     resizeDocks({hierarchy, inspector}, {280, 360}, Qt::Horizontal);
     resizeDocks({contentDock}, {230}, Qt::Vertical);
@@ -514,6 +528,17 @@ void EditorWindow::buildDocks() {
         if (timeline_->open(path)) {
             timelineDock_->show();
             timelineDock_->raise();
+        }
+    });
+    connect(content, &ContentBrowserPanel::openGraphRequested, this, [this](const QString& path) {
+        if (graph_->isDirty() && QMessageBox::question(this, tr("Visual Script"),
+                                                       tr("Save the changes to %1?").arg(QFileInfo(graph_->file()).fileName())) ==
+                                     QMessageBox::Yes) {
+            graph_->save();
+        }
+        if (graph_->open(path)) {
+            graphDock_->show();
+            graphDock_->raise();
         }
     });
     connect(content, &ContentBrowserPanel::assetSelected, inspector_, &InspectorPanel::showAsset);
@@ -1201,6 +1226,24 @@ bool EditorWindow::attachScript(Uuid id, const QString& scriptPath) {
     Scene* scene = ctx_.scene();
     const entt::entity target = scene != nullptr ? scene->findByUuid(id) : entt::entity{entt::null};
     if (target == entt::null) return false;
+    if (isFileBehaviour(scriptPath)) {
+        const std::filesystem::path absolute = std::filesystem::absolute(app::toPath(scriptPath));
+        std::string relative = project_.relativePath(absolute);
+        std::ranges::replace(relative, '\\', '/');
+        if (relative.starts_with("..")) {
+            statusBar()->showMessage(tr("%1 is not inside the project").arg(QFileInfo(scriptPath).fileName()), 6000);
+            return false;
+        }
+        ctx_.edit(tr("Attach Script"), [&](Scene& s) {
+            const entt::entity e = s.findByUuid(id);
+            if (e == entt::null) return;
+            auto& script = s.registry().get_or_emplace<ScriptComponent>(e);
+            if (script.behaviour != relative) script.parameters.clear();
+            script.behaviour = relative;
+        });
+        statusBar()->showMessage(tr("%1 now runs %2").arg(QString::fromStdString(scene->nameOf(target)), QString::fromStdString(relative)), 4000);
+        return true;
+    }
     const QStringList behaviours = behavioursIn(scriptPath);
     if (behaviours.isEmpty()) {
         statusBar()->showMessage(tr("%1 registers no behaviour (LUMORA_BEHAVIOUR)").arg(QFileInfo(scriptPath).fileName()), 6000);
@@ -1381,6 +1424,13 @@ bool EditorWindow::maybeSave() {
         if (answer == QMessageBox::Cancel) return false;
         if (answer == QMessageBox::Save && !timeline_->save()) return false;
     }
+    if (graph_ != nullptr && graph_->isDirty()) {
+        const auto answer = QMessageBox::warning(
+            this, tr("Unsaved visual script"), tr("Save changes to '%1'?").arg(QFileInfo(graph_->file()).fileName()),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+        if (answer == QMessageBox::Cancel) return false;
+        if (answer == QMessageBox::Save && !graph_->save()) return false;
+    }
     if (!ctx_.isDirty()) return true;
     const auto answer = QMessageBox::warning(
         this, tr("Unsaved changes"), tr("Save changes to '%1'?").arg(QString::fromStdString(editScene_->name())),
@@ -1452,7 +1502,7 @@ void EditorWindow::play() {
             log::warn("Editor", "{} - playing without sound", audio.error().message);
         }
     }
-    if (gameModule_) simulation_->setScripts(gameModule_, &viewport_->input());
+    simulation_->setScripts(gameModule_, &viewport_->input());  // C++ library (if any), Lua and graphs
     client_->hud = &simulation_->hud();
     client_->debug = &simulation_->debugDraw();
     paused_ = false;

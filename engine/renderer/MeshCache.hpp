@@ -4,11 +4,13 @@
 #include "assets/Primitives.hpp"
 #include "renderer/Gpu.hpp"
 
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace lumora {
 class AssetLibrary;
@@ -23,7 +25,14 @@ struct GpuMesh {
     std::uint32_t indexCount = 0;
     Aabb bounds;
     nvrhi::BufferHandle skin;  // lumora::SkinVertex per vertex, when the mesh is skinned
+    /// Coarser levels of detail (LOD1...): the same vertices, fewer triangles (MeshLod.hpp).
+    std::vector<GpuMesh> lods;
     [[nodiscard]] bool skinned() const noexcept { return skin != nullptr; }
+    /// The mesh to draw at `level` (0 = this one; clamped to the coarsest level).
+    [[nodiscard]] const GpuMesh& level(int level) const noexcept {
+        if (level <= 0 || lods.empty()) return *this;
+        return lods[static_cast<std::size_t>(std::min<int>(level, static_cast<int>(lods.size()))) - 1];
+    }
 };
 
 class RenderContext;

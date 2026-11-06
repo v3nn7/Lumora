@@ -65,15 +65,31 @@ private:
 
 // ---- CppHighlighter --------------------------------------------------------------------------
 
-CppHighlighter::CppHighlighter(QTextDocument* document) : QSyntaxHighlighter(document) {
+CppHighlighter::CppHighlighter(QTextDocument* document, bool lua) : QSyntaxHighlighter(document) {
+    auto words = [](const QStringList& list) {
+        return QRegularExpression(QStringLiteral("\\b(") + list.join(QLatin1Char('|')) + QStringLiteral(")\\b"));
+    };
+    comment_ = textFormat(QColor(0x7f, 0x84, 0x8e), false, true);
+    if (lua) {
+        const QStringList keywords = {"and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if",
+                                      "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while"};
+        const QStringList api = {"Behaviour", "vec3", "self", "extend", "start", "update", "onCollision", "print",
+                                 "require", "math", "string", "table", "pairs", "ipairs", "tostring", "tonumber"};
+        rules_.push_back({words(keywords), textFormat(QColor(0xc6, 0x78, 0xdd), true)});
+        rules_.push_back({words(api), textFormat(QColor(0xe5, 0xc0, 0x7b))});
+        rules_.push_back({QRegularExpression(QStringLiteral("\\b[0-9]+(\\.[0-9]*)?\\b")), textFormat(QColor(0xd1, 0x9a, 0x66))});
+        rules_.push_back({QRegularExpression(QStringLiteral("\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()")), textFormat(QColor(0x61, 0xaf, 0xef))});
+        rules_.push_back({QRegularExpression(QStringLiteral("\"([^\"\\\\]|\\\\.)*\"|'([^'\\\\]|\\\\.)*'")), textFormat(QColor(0x98, 0xc3, 0x79))});
+        rules_.push_back({QRegularExpression(QStringLiteral("--(?!\\[\\[)[^\n]*")), comment_});
+        blockOpen_ = QStringLiteral("--[[");
+        blockClose_ = QStringLiteral("]]");
+        return;
+    }
     const QStringList& keywords = cppKeywords();
     const QStringList types = {"bool", "char", "double", "float", "int", "long", "short", "unsigned", "signed",
                                "size_t", "std", "string", "vector", "uint32_t", "int32_t", "uint64_t"};
     const QStringList api = {"Behaviour", "Vec3", "Entity", "Key", "MouseButton", "RayHit", "LUMORA_BEHAVIOUR",
                              "kNoEntity", "start", "update", "onCollision"};
-    auto words = [](const QStringList& list) {
-        return QRegularExpression(QStringLiteral("\\b(") + list.join(QLatin1Char('|')) + QStringLiteral(")\\b"));
-    };
     rules_.push_back({words(keywords), textFormat(QColor(0xc6, 0x78, 0xdd), true)});
     rules_.push_back({words(types), textFormat(QColor(0x56, 0xb6, 0xc2))});
     rules_.push_back({words(api), textFormat(QColor(0xe5, 0xc0, 0x7b))});
@@ -94,18 +110,19 @@ void CppHighlighter::highlightBlock(const QString& text) {
     }
     // Block comments may span lines: state 1 = inside one.
     setCurrentBlockState(0);
-    qsizetype start = previousBlockState() == 1 ? 0 : text.indexOf(QStringLiteral("/*"));
+    qsizetype start = previousBlockState() == 1 ? 0 : text.indexOf(blockOpen_);
     while (start >= 0) {
-        const qsizetype end = text.indexOf(QStringLiteral("*/"), start + (previousBlockState() == 1 && start == 0 ? 0 : 2));
+        const qsizetype end =
+            text.indexOf(blockClose_, start + (previousBlockState() == 1 && start == 0 ? 0 : blockOpen_.size()));
         qsizetype length;
         if (end < 0) {
             setCurrentBlockState(1);
             length = text.length() - start;
         } else {
-            length = end - start + 2;
+            length = end - start + blockClose_.size();
         }
         setFormat(static_cast<int>(start), static_cast<int>(length), comment_);
-        start = end < 0 ? -1 : text.indexOf(QStringLiteral("/*"), start + length);
+        start = end < 0 ? -1 : text.indexOf(blockOpen_, start + length);
     }
 }
 
@@ -128,7 +145,7 @@ CodeEdit::CodeEdit(QString path, QWidget* parent) : QPlainTextEdit(parent), path
     });
     connect(this, &QPlainTextEdit::cursorPositionChanged, this, &CodeEdit::highlightCurrentLine);
     setViewportMargins(lineNumberAreaWidth(), 0, 0, 0);
-    new CppHighlighter(document());
+    new CppHighlighter(document(), path_.endsWith(QLatin1String(".lua"), Qt::CaseInsensitive));
     completions_ = new QStandardItemModel(this);
     completer_ = new QCompleter(completions_, this);
     completer_->setWidget(this);

@@ -4,6 +4,8 @@
 #include "input/InputState.hpp"
 #include "runtime/AnimationSystem.hpp"
 #include "runtime/AudioWorld.hpp"
+#include "runtime/LuaScript.hpp"
+#include "runtime/VisualScript.hpp"
 #include "runtime/Localization.hpp"
 #include "runtime/TimelineSystem.hpp"
 #include "runtime/Navigation.hpp"
@@ -626,6 +628,33 @@ double apiParameter(void* c, script::Entity entity, const char* key, double fall
     return fallback;
 }
 
+int apiAnimatorParameter(void* c, script::Entity entity, int kind, const char* name, float value) {
+    AnimationSystem* animation = context(c).animation;
+    const entt::entity e = liveEntity(c, entity);
+    if (animation == nullptr || e == entt::null || name == nullptr) return 0;
+    return animation->setParameter(e, kind, name, value) ? 1 : 0;
+}
+
+int apiAnimatorState(void* c, script::Entity entity, char* out, int capacity) {
+    AnimationSystem* animation = context(c).animation;
+    const entt::entity e = liveEntity(c, entity);
+    if (animation == nullptr || e == entt::null) return -1;
+    const std::string state = animation->currentState(e);
+    if (state.empty()) return -1;
+    return copyOut(state, out, capacity);
+}
+
+float apiAudioBus(void* c, const char* bus, int command, float value) {
+    AudioWorld* audio = context(c).audio;
+    if (audio == nullptr || bus == nullptr) return command == 1 ? 1.0f : 0.0f;
+    switch (command) {
+        case 0: return audio->setBusVolume(bus, value) ? audio->busVolume(bus) : 0.0f;
+        case 1: return audio->busVolume(bus);
+        case 2: return audio->setBusMuted(bus, value != 0.0f) ? 1.0f : 0.0f;
+        default: return audio->busMuted(bus) ? 1.0f : 0.0f;
+    }
+}
+
 } // namespace
 
 // ---- ScriptModule ------------------------------------------------------------------------------
@@ -742,71 +771,173 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.localize = apiLocalize;
     api_.gameMenu = apiGameMenu;
     api_.timeline = apiTimeline;
+    api_.animatorParameter = apiAnimatorParameter;
+    api_.animatorState = apiAnimatorState;
+    api_.audioBus = apiAudioBus;
 }
+
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }
 
+ScriptRunner::Kind ScriptRunner::kindOf(std::string_view behaviour) noexcept {
+    if (behaviour.ends_with(".lua")) return Kind::Lua;
+    if (behaviour.ends_with(".lgraph")) return Kind::Graph;
+    return Kind::Native;
+}
+
+ScriptRunner::Instance::Instance(std::uint64_t e, std::string b, Kind k) : entity(e), behaviour(std::move(b)), kind(k) {}
+ScriptRunner::Instance::Instance(Instance&&) noexcept = default;
+ScriptRunner::Instance& ScriptRunner::Instance::operator=(Instance&&) noexcept = default;
+ScriptRunner::Instance::~Instance() = default;
+
+std::string ScriptRunner::errorOf(const Instance& instance) const {
+    switch (instance.kind) {
+        case Kind::Lua: return instance.lua ? instance.lua->error() : std::string("?");
+        case Kind::Graph: return instance.graph ? instance.graph->error() : std::string("?");
+        case Kind::Native: break;
+    }
+    const char* message = module_ ? module_->lastError() : nullptr;
+    return message != nullptr ? message : "?";
+}
+
 void ScriptRunner::reportFailure(const Instance& instance, const char* phase) {
-    const char* message = module_->lastError();
-    log::error("Script", "{}.{} on '{}' threw: {} - behaviour disabled", instance.behaviour, phase,
-               apiName(&context_, instance.entity) != nullptr ? context_.nameScratch : std::string("?"),
-               message != nullptr ? message : "?");
+    const std::string message = errorOf(instance);
+    log::error("Script", "{}.{} on '{}' failed: {} - behaviour disabled", instance.behaviour, phase,
+               apiName(&context_, instance.entity) != nullptr ? context_.nameScratch : std::string("?"), message);
+}
+
+bool ScriptRunner::callStart(Instance& instance) {
+    switch (instance.kind) {
+        case Kind::Lua: return instance.lua->start();
+        case Kind::Graph: return instance.graph->start();
+        case Kind::Native: return module_->start(instance.object) == 0;
+    }
+    return false;
+}
+
+bool ScriptRunner::callUpdate(Instance& instance, float dt) {
+    switch (instance.kind) {
+        case Kind::Lua: return instance.lua->update(dt);
+        case Kind::Graph: return instance.graph->update(dt);
+        case Kind::Native: return module_->update(instance.object, dt) == 0;
+    }
+    return false;
+}
+
+bool ScriptRunner::callCollision(Instance& instance, std::uint64_t other) {
+    switch (instance.kind) {
+        case Kind::Lua: return instance.lua->collision(other);
+        case Kind::Graph: return instance.graph->collision(other);
+        case Kind::Native: return module_->collision(instance.object, other) == 0;
+    }
+    return false;
+}
+
+void ScriptRunner::release(Instance& instance) {
+    if (instance.kind == Kind::Native && instance.object != nullptr && module_) module_->destroy(instance.object);
+    instance.object = nullptr;
+    instance.lua.reset();
+    instance.graph.reset();
+}
+
+std::shared_ptr<const visual::Graph> ScriptRunner::graph(const std::string& file, std::string& error) {
+    if (const auto it = graphs_.find(file); it != graphs_.end()) {
+        if (!it->second.graph) error = std::format("{} failed to load (fix it and save)", file);
+        return it->second.graph;
+    }
+    const std::filesystem::path path = context_.projectRoot / file;
+    std::error_code ec;
+    GraphEntry entry{nullptr, std::filesystem::last_write_time(path, ec)};
+    std::vector<std::string> warnings;
+    auto loaded = visual::Graph::load(path, &warnings);
+    for (const std::string& w : warnings) log::warn("Script", "{}: {}", file, w);
+    if (loaded) {
+        entry.graph = *loaded;
+    } else {
+        error = loaded.error().message;
+    }
+    graphs_[file] = entry;
+    return entry.graph;
 }
 
 bool ScriptRunner::createInstance(entt::entity e, const ScriptComponent& script) {
     const auto id = static_cast<script::Entity>(entt::to_integral(e));
     scripted_.insert(id);
-    if (script.behaviour.empty() || !module_) return false;
-    const int index = module_->find(script.behaviour);
-    if (index < 0) {
-        log::warn("Script", "no behaviour named '{}' in the game library (entity '{}')", script.behaviour,
-                  apiName(&context_, id) != nullptr ? context_.nameScratch : std::string("?"));
-        return false;
+    if (script.behaviour.empty()) return false;
+    auto entityName = [&] { return apiName(&context_, id) != nullptr ? context_.nameScratch : std::string("?"); };
+    Instance instance(id, script.behaviour, kindOf(script.behaviour));
+    std::string error;
+    switch (instance.kind) {
+        case Kind::Lua:
+            if (!lua_) lua_ = std::make_unique<LuaHost>(&api_, context_.projectRoot);
+            instance.lua = lua_->create(script.behaviour, id, error);
+            if (!instance.lua) {
+                log::error("Script", "{} (entity '{}'): {}", script.behaviour, entityName(), error);
+                return false;
+            }
+            break;
+        case Kind::Graph: {
+            auto g = graph(script.behaviour, error);
+            if (!g) {
+                log::error("Script", "{} (entity '{}'): {}", script.behaviour, entityName(), error);
+                return false;
+            }
+            instance.graph = std::make_unique<visual::GraphInstance>(std::move(g), &api_, id);
+            break;
+        }
+        case Kind::Native: {
+            if (!module_) {
+                log::warn("Script", "'{}' (entity '{}') is a C++ behaviour, but the project has no compiled game library",
+                          script.behaviour, entityName());
+                return false;
+            }
+            const int index = module_->find(script.behaviour);
+            if (index < 0) {
+                log::warn("Script", "no behaviour named '{}' in the game library (entity '{}')", script.behaviour, entityName());
+                return false;
+            }
+            instance.object = module_->create(static_cast<std::uint32_t>(index), &api_, id);
+            if (instance.object == nullptr) {
+                log::error("Script", "creating {} failed: {}", script.behaviour, module_->lastError());
+                return false;
+            }
+            break;
+        }
     }
-    void* object = module_->create(static_cast<std::uint32_t>(index), &api_, id);
-    if (object == nullptr) {
-        log::error("Script", "creating {} failed: {}", script.behaviour, module_->lastError());
-        return false;
-    }
-    instances_.push_back({id, script.behaviour, object});
+    instances_.push_back(std::move(instance));
     return true;
+}
+
+void ScriptRunner::startFrom(std::size_t first) {
+    // start() after every instance exists, so behaviours can find each other's entities.
+    for (std::size_t i = first; i < instances_.size();) {
+        if (!callStart(instances_[i])) {
+            reportFailure(instances_[i], "start");
+            release(instances_[i]);
+            instances_.erase(instances_.begin() + static_cast<std::ptrdiff_t>(i));
+        } else {
+            ++i;
+        }
+    }
 }
 
 void ScriptRunner::createInstances() {
     created_ = true;
     scripted_.clear();
-    if (!module_) return;
     const std::size_t first = instances_.size();
     for (auto [e, script] : scene_.registry().view<ScriptComponent>().each()) createInstance(e, script);
-    // start() after every instance exists, so behaviours can find each other's entities.
-    for (std::size_t i = first; i < instances_.size();) {
-        if (module_->start(instances_[i].object) != 0) {
-            reportFailure(instances_[i], "start");
-            module_->destroy(instances_[i].object);
-            instances_.erase(instances_.begin() + static_cast<std::ptrdiff_t>(i));
-        } else {
-            ++i;
-        }
-    }
+    startFrom(first);
 }
 
 void ScriptRunner::startNewInstances() {
-    if (!module_) return;
     std::vector<entt::entity> fresh;
     for (auto [e, script] : scene_.registry().view<ScriptComponent>().each()) {
         if (!scripted_.contains(static_cast<std::uint64_t>(entt::to_integral(e)))) fresh.push_back(e);
     }
+    if (fresh.empty()) return;
     const std::size_t first = instances_.size();
     for (entt::entity e : fresh) createInstance(e, scene_.registry().get<ScriptComponent>(e));
-    for (std::size_t i = first; i < instances_.size();) {
-        if (module_->start(instances_[i].object) != 0) {
-            reportFailure(instances_[i], "start");
-            module_->destroy(instances_[i].object);
-            instances_.erase(instances_.begin() + static_cast<std::ptrdiff_t>(i));
-        } else {
-            ++i;
-        }
-    }
+    startFrom(first);
 }
 
 void ScriptRunner::finishStep() {
@@ -818,7 +949,7 @@ void ScriptRunner::finishStep() {
     // Their instances (and those of destroyed children) stop.
     for (auto it = instances_.begin(); it != instances_.end();) {
         if (!scene_.registry().valid(toEntity(it->entity))) {
-            module_->destroy(it->object);
+            release(*it);
             scripted_.erase(it->entity);
             it = instances_.erase(it);
         } else {
@@ -829,15 +960,15 @@ void ScriptRunner::finishStep() {
 }
 
 void ScriptRunner::dispatchCollisions(const std::vector<std::pair<entt::entity, entt::entity>>& pairs) {
-    if (!module_ || pairs.empty() || instances_.empty()) return;
+    if (pairs.empty() || instances_.empty()) return;
     auto notify = [&](entt::entity self, entt::entity other) {
         const auto selfId = static_cast<std::uint64_t>(entt::to_integral(self));
         const auto otherId = static_cast<script::Entity>(entt::to_integral(other));
         for (std::size_t i = 0; i < instances_.size(); ++i) {
             if (instances_[i].entity != selfId) continue;
-            if (module_->collision(instances_[i].object, otherId) != 0) {
+            if (!callCollision(instances_[i], otherId)) {
                 reportFailure(instances_[i], "onCollision");
-                module_->destroy(instances_[i].object);
+                release(instances_[i]);
                 instances_.erase(instances_.begin() + static_cast<std::ptrdiff_t>(i));
             }
             return;
@@ -851,11 +982,47 @@ void ScriptRunner::dispatchCollisions(const std::vector<std::pair<entt::entity, 
 }
 
 void ScriptRunner::destroyInstances() {
-    if (module_) {
-        for (const Instance& instance : instances_) module_->destroy(instance.object);
-    }
+    for (Instance& instance : instances_) release(instance);
     instances_.clear();
     scripted_.clear();
+}
+
+void ScriptRunner::restartBehaviour(const std::string& behaviour) {
+    std::size_t restarted = 0;
+    for (auto it = instances_.begin(); it != instances_.end();) {
+        if (it->behaviour == behaviour) {
+            release(*it);
+            it = instances_.erase(it);
+            ++restarted;
+        } else {
+            ++it;
+        }
+    }
+    // Entities whose behaviour failed to load before get another chance too.
+    for (auto [e, script] : scene_.registry().view<ScriptComponent>().each()) {
+        if (script.behaviour == behaviour) scripted_.erase(static_cast<std::uint64_t>(entt::to_integral(e)));
+    }
+    log::info("Script", "reloaded {} ({} instances)", behaviour, restarted);
+}
+
+void ScriptRunner::checkScriptFiles(double now) {
+    if (now < nextFileCheck_) return;
+    nextFileCheck_ = now + 0.5;
+    std::vector<std::string> changed;
+    if (lua_) changed = lua_->changedFiles();
+    for (auto it = graphs_.begin(); it != graphs_.end();) {
+        std::error_code ec;
+        const auto modified = std::filesystem::last_write_time(context_.projectRoot / it->first, ec);
+        if (!ec && modified != it->second.modified) {
+            changed.push_back(it->first);
+            it = graphs_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (changed.empty()) return;
+    for (const std::string& file : changed) restartBehaviour(file);
+    startNewInstances();
 }
 
 void ScriptRunner::update(float dt, double simulatedSeconds) {
@@ -865,7 +1032,11 @@ void ScriptRunner::update(float dt, double simulatedSeconds) {
     context_.ui.beginStep(context_.input, context_.hud,
                           {actions.pressed("Up"), actions.pressed("Down"), actions.pressed("Left"),
                            actions.pressed("Right"), actions.pressed("Submit")});
-    if (!created_) createInstances();
+    if (!created_) {
+        createInstances();
+    } else {
+        checkScriptFiles(simulatedSeconds);
+    }
     // Index loop: behaviours may clone entities (appending instances only in finishStep).
     for (std::size_t i = 0; i < instances_.size();) {
         Instance& instance = instances_[i];
@@ -873,9 +1044,9 @@ void ScriptRunner::update(float dt, double simulatedSeconds) {
             ++i;  // removed by finishStep
             continue;
         }
-        if (module_->update(instance.object, dt) != 0) {
+        if (!callUpdate(instance, dt)) {
             reportFailure(instance, "update");
-            module_->destroy(instance.object);
+            release(instance);
             instances_.erase(instances_.begin() + static_cast<std::ptrdiff_t>(i));
         } else {
             ++i;
@@ -885,6 +1056,17 @@ void ScriptRunner::update(float dt, double simulatedSeconds) {
 }
 
 void ScriptRunner::setProjectRoot(std::filesystem::path root) {
+    if (root != context_.projectRoot) {
+        // Lua classes and graphs are cached per project.
+        std::erase_if(instances_, [&](Instance& instance) {
+            if (instance.kind == Kind::Native) return false;
+            release(instance);
+            scripted_.erase(instance.entity);
+            return true;
+        });
+        lua_.reset();
+        graphs_.clear();
+    }
     context_.projectRoot = std::move(root);
     auto actions = InputActions::forProject(context_.projectRoot);
     if (actions) {

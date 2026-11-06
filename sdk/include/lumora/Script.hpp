@@ -39,7 +39,7 @@
 #include <string_view>
 #include <vector>
 
-#define LUMORA_SCRIPT_ABI 3u
+#define LUMORA_SCRIPT_ABI 4u
 
 namespace lumora::script {
 
@@ -151,6 +151,14 @@ struct EngineApi {
     // command: 0 play the entity's Timeline from the start, 1 stop, 2 playing?, 3 time (out[0]),
     // 4 did any timeline pass the event `name` in the latest step
     int (*timeline)(void* context, Entity entity, int command, const char* name, float* out);
+    // ABI 4
+    // Animator controller (.lanim) parameter: kind 0 float, 1 bool, 2 trigger. 0 if none.
+    int (*animatorParameter)(void* context, Entity entity, int kind, const char* name, float value);
+    // Name of the controller's current state into out; returns its length (-1: no controller).
+    int (*animatorState)(void* context, Entity entity, char* out, int capacity);
+    // Mixer bus ("Master", "Music", "SFX", "UI", "Voice"): command 0 set volume (returns it),
+    // 1 get volume, 2 mute (value != 0), 3 muted? (1/0)
+    float (*audioBus)(void* context, const char* bus, int command, float value);
 };
 
 class Behaviour;
@@ -353,6 +361,22 @@ protected:
         return api_->animationBlend(api_->context, entity_, std::string(clip).c_str(), seconds) != 0;
     }
     [[nodiscard]] bool animationPlaying() const { return api_->animation(api_->context, entity_, nullptr, 2) != 0; }
+    /// Animator controller (.lanim) parameters, which drive its state machine.
+    bool setAnimFloat(std::string_view name, float value) const {
+        return api_->animatorParameter(api_->context, entity_, 0, std::string(name).c_str(), value) != 0;
+    }
+    bool setAnimBool(std::string_view name, bool value) const {
+        return api_->animatorParameter(api_->context, entity_, 1, std::string(name).c_str(), value ? 1.0f : 0.0f) != 0;
+    }
+    bool setAnimTrigger(std::string_view name) const {
+        return api_->animatorParameter(api_->context, entity_, 2, std::string(name).c_str(), 1.0f) != 0;
+    }
+    /// The controller's current state ("" without a controller).
+    [[nodiscard]] std::string animState() const {
+        char buffer[256];
+        const int n = api_->animatorState(api_->context, entity_, buffer, static_cast<int>(sizeof buffer));
+        return n < 0 ? std::string() : std::string(buffer, static_cast<std::size_t>(std::min<int>(n, sizeof buffer - 1)));
+    }
 
     // Looks (the entity's Mesh Renderer).
     /// Uses a material asset (project-relative .lmat), or the renderer's own settings with "".
@@ -523,6 +547,16 @@ protected:
     void stopSound() const { api_->sound(api_->context, entity_, 0); }
     [[nodiscard]] bool soundPlaying() const { return api_->sound(api_->context, entity_, 2) != 0; }
     void playSoundOn(Entity e) const { api_->sound(api_->context, e, 1); }
+    /// Mixer buses: "Master", "Music", "SFX", "UI", "Voice" (Audio Source > Bus).
+    void setBusVolume(std::string_view bus, float volume) const {
+        api_->audioBus(api_->context, std::string(bus).c_str(), 0, volume);
+    }
+    [[nodiscard]] float busVolume(std::string_view bus) const {
+        return api_->audioBus(api_->context, std::string(bus).c_str(), 1, 0.0f);
+    }
+    void setBusMuted(std::string_view bus, bool muted) const {
+        api_->audioBus(api_->context, std::string(bus).c_str(), 2, muted ? 1.0f : 0.0f);
+    }
 
     /// A number from the Script component's Parameters field ("speed=4, jump=6").
     [[nodiscard]] float param(std::string_view key, float fallback) const {

@@ -19,12 +19,12 @@ class QTabWidget;
 
 namespace lumora::editor {
 
-/// C++ colouring: keywords, types, Lumora's scripting API, strings, numbers, comments,
-/// preprocessor lines (and block comments across lines).
+/// C++ (or, with lua = true, Lua) colouring: keywords, types, Lumora's scripting API, strings,
+/// numbers, comments, preprocessor lines (and block comments across lines).
 class LUMORA_EDITOR_API CppHighlighter final : public QSyntaxHighlighter {
     Q_OBJECT
 public:
-    explicit CppHighlighter(QTextDocument* document);
+    explicit CppHighlighter(QTextDocument* document, bool lua = false);
 
 protected:
     void highlightBlock(const QString& text) override;
@@ -36,6 +36,8 @@ private:
     };
     std::vector<Rule> rules_;
     QTextCharFormat comment_;
+    QString blockOpen_ = QStringLiteral("/*");
+    QString blockClose_ = QStringLiteral("*/");
 };
 
 /// One open file: line numbers, current-line highlight, 4-space tabs, auto-indent, Ctrl+S, and

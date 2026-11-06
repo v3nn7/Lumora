@@ -23,6 +23,12 @@
 namespace lumora {
 
 class AnimationSystem;
+class LuaHost;
+class LuaInstance;
+namespace visual {
+class Graph;
+class GraphInstance;
+}
 class AudioWorld;
 class InputState;
 struct HudCanvas;
@@ -69,11 +75,18 @@ private:
     std::vector<std::string> names_;
 };
 
-/// The behaviour instances of one simulation: one per entity with a ScriptComponent whose
-/// behaviour the module provides. Instances are created (and start() runs) on the first
-/// update; reload() destroys them, swaps the module and starts fresh instances.
+/// The behaviour instances of one simulation: one per entity with a ScriptComponent. A
+/// behaviour is one of three kinds, chosen by the Behaviour field:
+///   - "Scripts/Player.lua": a Lua script (runtime/LuaScript.hpp), reloaded when the file changes;
+///   - "Content/Door.lgraph": a visual script (runtime/VisualScript.hpp), reloaded likewise;
+///   - "Player": a C++ class of the game library (the module; may be null if there is none).
+/// Instances are created (and start() runs) on the first update; reload() destroys them, swaps
+/// the module and starts fresh instances.
 class ScriptRunner {
 public:
+    enum class Kind { Native, Lua, Graph };
+    [[nodiscard]] static Kind kindOf(std::string_view behaviour) noexcept;
+
     ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, const InputState* input);
     ~ScriptRunner();
     ScriptRunner(const ScriptRunner&) = delete;
@@ -134,10 +147,28 @@ public:
 
 private:
     struct Instance {
+        Instance(std::uint64_t e, std::string b, Kind k);
+        Instance(Instance&&) noexcept;
+        Instance& operator=(Instance&&) noexcept;
+        ~Instance();
         std::uint64_t entity;
         std::string behaviour;
-        void* object;
+        Kind kind;
+        void* object = nullptr;  // Native
+        std::unique_ptr<LuaInstance> lua;
+        std::unique_ptr<visual::GraphInstance> graph;
     };
+    // The three kinds behind one interface; false = the behaviour failed (then disabled).
+    bool callStart(Instance& instance);
+    bool callUpdate(Instance& instance, float dt);
+    bool callCollision(Instance& instance, std::uint64_t other);
+    void release(Instance& instance);  // destroys the behaviour object
+    [[nodiscard]] std::string errorOf(const Instance& instance) const;
+    void startFrom(std::size_t first);   // start() on instances_[first..], dropping failures
+    void checkScriptFiles(double now);   // hot reload of .lua / .lgraph files
+    void restartBehaviour(const std::string& behaviour);
+    std::shared_ptr<const visual::Graph> graph(const std::string& file, std::string& error);
+
     void createInstances();
     void startNewInstances();  // behaviours on entities without one yet (e.g. clones)
     bool createInstance(entt::entity entity, const ScriptComponent& script);
@@ -149,6 +180,13 @@ private:
     std::shared_ptr<ScriptModule> module_;
     Context context_;
     script::EngineApi api_{};
+    std::unique_ptr<LuaHost> lua_;  // created with the first Lua behaviour
+    struct GraphEntry {
+        std::shared_ptr<const visual::Graph> graph;  // null: failed to load
+        std::filesystem::file_time_type modified;
+    };
+    std::unordered_map<std::string, GraphEntry> graphs_;
+    double nextFileCheck_ = 0.0;
     std::vector<Instance> instances_;
     std::unordered_set<std::uint64_t> scripted_;  // entities that got an instance (or were skipped)
     bool created_ = false;

@@ -1,6 +1,7 @@
 #include "renderer/MeshCache.hpp"
 
 #include "assets/AssetLibrary.hpp"
+#include "assets/MeshLod.hpp"
 #include "core/Log.hpp"
 #include "renderer/RenderContext.hpp"
 
@@ -59,7 +60,18 @@ const GpuMesh* MeshCache::asset(AssetLibrary& library, const std::string& key, b
     if (!data.skin.empty() && data.skin.size() == data.vertices.size()) {
         gpu.skin = ctx_.createBuffer(std::as_bytes(std::span(data.skin)), true, false, (name + ".skin").c_str());
     }
-    log::debug("Renderer", "uploaded mesh '{}' ({} triangles)", key, gpu.indexCount / 3);
+    // Levels of detail share the vertex (and skin) buffers; each has its own indices.
+    for (const MeshLod& lod : buildLods(data)) {
+        GpuMesh level;
+        level.vertices = gpu.vertices;
+        level.skin = gpu.skin;
+        level.bounds = gpu.bounds;
+        level.indexCount = static_cast<std::uint32_t>(lod.indices.size());
+        const std::string lodName = std::format("{}.lod{}.indices", name, gpu.lods.size() + 1);
+        level.indices = ctx_.createBuffer(std::as_bytes(std::span(lod.indices)), false, true, lodName.c_str());
+        gpu.lods.push_back(std::move(level));
+    }
+    log::debug("Renderer", "uploaded mesh '{}' ({} triangles, {} levels of detail)", key, gpu.indexCount / 3, gpu.lods.size());
     return &assets_.emplace(*canonical, std::move(gpu)).first->second;
 }
 

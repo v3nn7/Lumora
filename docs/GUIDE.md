@@ -195,6 +195,12 @@ Clips animate the entities made from the model's nodes (they move, turn and scal
 the clip does not animate keeps its value. Scripts on the root entity control it with
 `playAnimation("Walk")`, `stopAnimation()` and `animationPlaying()`.
 
+An **Animator Controller** (`.lanim`, *New → Animator Controller* in the Content Browser) picks
+the clip with a state machine instead: states (Idle, Run, Jump), parameters that scripts set
+(`setAnimFloat("speed", v)`, `setAnimTrigger("jump")`) and transitions that crossfade between
+clips when their conditions hold. Choose it as the Animator's **Controller**; see
+[SCRIPTING.md](SCRIPTING.md#animator-controllers-lanim).
+
 Skinned characters work too: meshes with a glTF skin get a **Skin** component and are deformed
 on the GPU by the entities made from their joints, so a clip animating the bones (or a script
 turning one) bends the mesh. Up to four joints influence each vertex.
@@ -372,6 +378,12 @@ joined to its parent, the animation stops and the model falls with gravity and c
 Physics runs only in play mode. *Create → Physics* has ready-made objects to start from,
 including a moving platform and a trigger volume.
 
+### Gameplay scripts
+
+Behaviours can be **visual scripts** (node graphs, no code), **Lua** scripts or **C++** classes.
+Visual scripts and Lua need no compiler and reload as soon as you save them. See
+[SCRIPTING.md](SCRIPTING.md) for all three; the rest of this section covers C++.
+
 ### Gameplay scripts (C++)
 
 Behaviours are C++ classes in your project's `Scripts/` folder. The editor compiles them into a
@@ -524,9 +536,12 @@ project copies it into `Content/Audio`) while the game runs:
 | Play on Start | Start when play begins; otherwise a script starts it with `playSound()` |
 | 3D | Heard from the entity's position, quieter with distance, panned left/right |
 | Min / Max Distance | Full volume up to Min; it stops getting quieter beyond Max |
+| Bus | Mixer group: Music, SFX, UI, Voice or Ambience (all below Master) |
 
 You hear the game from the camera. Pausing play mode pauses sound. Scripts control an entity's
-source with `playSound()`, `stopSound()`, `soundPlaying()` and `playSoundOn(entity)`.
+source with `playSound()`, `stopSound()`, `soundPlaying()` and `playSoundOn(entity)`, and the
+mixer with `setBusVolume("Music", 0.5)`, `busVolume("SFX")` and `setBusMuted("Master", true)`
+(an options menu with a music slider is a few lines).
 
 ### Play mode
 

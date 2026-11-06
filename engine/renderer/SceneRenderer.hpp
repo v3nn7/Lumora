@@ -52,6 +52,9 @@ struct RenderSettings {
     float aoIntensity = 1.6f;  // exponent applied to the visibility
     /// FXAA on the final image: smooths jagged edges.
     bool antiAliasing = true;
+    /// Levels of detail: imported meshes switch to simpler versions as they get smaller on
+    /// screen. Larger values keep detail longer; 0 always draws full detail.
+    float lodBias = 1.0f;
 };
 
 struct SceneDrawStats {
@@ -59,6 +62,7 @@ struct SceneDrawStats {
     std::uint32_t triangles = 0;
     std::uint32_t visibleObjects = 0;
     std::uint32_t culledObjects = 0;
+    std::uint32_t lodObjects = 0;  // visible objects drawn with a simpler level of detail
     std::uint32_t lights = 0;
     std::uint32_t particles = 0;
     bool parallelRecording = false;  // a pass was set up to record on several threads

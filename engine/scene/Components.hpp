@@ -274,6 +274,9 @@ struct ScriptComponent {
 
 /// Plays a sound file (project-relative WAV, FLAC or MP3) while the simulation runs, in 3D at the
 /// entity (spatial) or flat. Scripts start and stop it with playSound() / stopSound().
+/// Mixer groups every sound plays through (all of them below Master).
+enum class AudioBus : int { Music = 0, Sfx, Ui, Voice, Ambience };
+
 struct AudioSourceComponent {
     std::string clip;
     float volume = 1.0f;
@@ -283,6 +286,7 @@ struct AudioSourceComponent {
     bool spatial = true;
     float minDistance = 1.0f;   // full volume up to here (metres)
     float maxDistance = 50.0f;  // no further attenuation beyond
+    AudioBus bus = AudioBus::Sfx;  // mixer group; scripts set each bus's volume
 };
 
 /// Plays a glTF model's animation clip on the entities instantiated from that model (the
@@ -293,6 +297,7 @@ struct AnimatorComponent {
     float speed = 1.0f;
     bool loop = true;
     bool playOnStart = true;
+    std::string controller;    // optional project-relative .lanim state machine that picks the clip
 };
 
 /// The mesh on this entity is deformed by a skin of its model: the joints are the entities

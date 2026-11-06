@@ -190,6 +190,8 @@ private:
     ProfilerPanel* profiler_ = nullptr;
     class TimelinePanel* timeline_ = nullptr;
     QDockWidget* timelineDock_ = nullptr;
+    class GraphEditorPanel* graph_ = nullptr;
+    QDockWidget* graphDock_ = nullptr;
     QByteArray defaultLayout_;
 
     QAction* newScene_ = nullptr;

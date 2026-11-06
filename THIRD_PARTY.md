@@ -19,6 +19,7 @@ licences compatible with it. Versions are pinned (and hash-verified) in `cmake/`
 | NVRHI (NVIDIA Rendering Hardware Interface) | GPU layer of the renderer (Vulkan backend) | MIT |
 | Vulkan-Headers 1.4.352 (incl. vulkan.hpp) | Vulkan API declarations | Apache-2.0 or MIT |
 | Recast & Detour 1.6.0 | navigation meshes, path finding, crowds | zlib |
+| Lua 5.4.7 | Lua behaviours (scripting language) | MIT |
 | miniz | ZIP extraction (editor installer) | MIT |
 | Monocypher | Ed25519 signature checks (editor installer), XChaCha20-Poly1305 (session datagrams) | BSD-2-Clause or CC0 |
 | micro-ecc | ECDSA P-256 for the session host's TLS certificate | BSD-2-Clause |

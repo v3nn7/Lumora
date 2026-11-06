@@ -50,10 +50,15 @@ signals:
     void applyMaterialRequested(const QString& path);
     /// A timeline (.ltimeline) should open in the Timeline panel.
     void openTimelineRequested(const QString& path);
+    /// A visual script (.lgraph) should open in the Visual Script panel.
+    void openGraphRequested(const QString& path);
 
 public:
     /// Writes a default material into the open folder; returns its path (empty on failure).
     QString createMaterial(QString name);
+    /// Starter Lua behaviour / visual script in the open folder; their path (empty on failure).
+    QString createLuaScript(QString name);
+    QString createVisualScript(QString name);
     /// Moves project files into a folder (dragging them onto it).
     void moveInto(const QStringList& files, const QString& folder);
 
@@ -68,6 +73,9 @@ private:
     void newScene();
     void newMaterial();
     void newTimeline();
+    void newLuaScript();
+    void newVisualScript();
+    void newAnimatorController();
     void importFiles();
     void duplicate(const QString& path);
     void remove(const QStringList& paths);

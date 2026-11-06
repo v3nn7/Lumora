@@ -26,7 +26,10 @@ add_executable(lumora_tests
     NavigationTests.cpp
     LandscapeTests.cpp
     LocalizationTests.cpp
-    TimelineTests.cpp)
+    TimelineTests.cpp
+    LuaScriptTests.cpp
+    VisualScriptTests.cpp
+    MeshLodTests.cpp)
 target_link_libraries(lumora_tests PRIVATE
     lumora_core lumora_scene lumora_project lumora_runtime lumora_renderer lumora_cli
     GTest::gtest lumora_compile_options)
@@ -34,7 +37,7 @@ add_dependencies(lumora_tests lumora_shaders)
 gtest_discover_tests(lumora_tests DISCOVERY_TIMEOUT 30)
 
 # UI integration tests: real Hub/Editor widgets on Qt's offscreen platform, isolated config dir.
-add_executable(lumora_ui_tests UiTestMain.cpp EditorUiTests.cpp GizmoTests.cpp HubUiTests.cpp CollabTests.cpp ScriptTests.cpp StbWriteImpl.cpp ${CMAKE_SOURCE_DIR}/application/common/resources.qrc)
+add_executable(lumora_ui_tests UiTestMain.cpp EditorUiTests.cpp GizmoTests.cpp HubUiTests.cpp CollabTests.cpp ScriptTests.cpp GraphEditorTests.cpp StbWriteImpl.cpp ${CMAKE_SOURCE_DIR}/application/common/resources.qrc)
 set_target_properties(lumora_ui_tests PROPERTIES AUTORCC ON)
 target_link_libraries(lumora_ui_tests PRIVATE lumora_shell lumora_collab stb GTest::gtest lumora_compile_options)
 gtest_discover_tests(lumora_ui_tests DISCOVERY_TIMEOUT 30

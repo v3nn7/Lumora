@@ -106,7 +106,30 @@ set(NVRHI_WITH_DX12 OFF CACHE BOOL "" FORCE)
 set(NVRHI_WITH_RTXMU OFF CACHE BOOL "" FORCE)
 set(NVRHI_FETCH_VULKAN_HEADERS OFF CACHE BOOL "" FORCE)  # the Vulkan SDK's headers (Vulkan::Headers)
 
+# Lua 5.4.7 (MIT): the language of Lua behaviours. Pinned to the v5.4.7 release commit; built
+# below from its C sources (the interpreter, compiler and test files are left out).
+FetchContent_Declare(lua
+    GIT_REPOSITORY https://github.com/lua/lua.git
+    GIT_TAG 1ab3208a1fceb12fca8f24ba57d6e13c5bff15e3)
+
 FetchContent_MakeAvailable(glm EnTT nlohmann_json cgltf stb JoltPhysics miniaudio nvrhi recastnavigation)
+FetchContent_GetProperties(lua)
+if(NOT lua_POPULATED)
+    FetchContent_Populate(lua)
+endif()
+enable_language(C)
+set(lua_sources lapi lcode lctype ldebug ldo ldump lfunc lgc llex lmem lobject lopcodes lparser lstate
+    lstring ltable ltm lundump lvm lzio lauxlib lbaselib lcorolib ldblib liolib lmathlib loadlib loslib
+    lstrlib ltablib lutf8lib linit)
+list(TRANSFORM lua_sources PREPEND ${lua_SOURCE_DIR}/)
+list(TRANSFORM lua_sources APPEND .c)
+add_library(lumora_lua STATIC ${lua_sources})
+target_include_directories(lumora_lua SYSTEM PUBLIC ${lua_SOURCE_DIR})
+set_target_properties(lumora_lua PROPERTIES POSITION_INDEPENDENT_CODE ON C_STANDARD 99)
+if(UNIX)
+    target_compile_definitions(lumora_lua PRIVATE LUA_USE_POSIX)
+    target_link_libraries(lumora_lua PRIVATE m)
+endif()
 # NVRHI is static; the renderer module may be a shared library.
 set_target_properties(nvrhi nvrhi_vk Recast Detour DetourCrowd PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # On Windows NVRHI publishes VK_USE_PLATFORM_WIN32_KHR, which makes <vulkan/vulkan.h> include

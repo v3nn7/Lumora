@@ -12,6 +12,7 @@
 #include <miniaudio.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <unordered_map>
 #include <vector>
@@ -33,14 +34,48 @@ struct AudioWorld::Impl {
         std::unique_ptr<ma_sound> sound;
         std::string clip;
         bool started = false;
+        AudioBus bus = AudioBus::Sfx;
     };
     std::unordered_map<entt::entity, Voice> voices;
     std::unordered_map<std::string, bool> reported;  // clips that failed to load (logged once)
+    // Mixer: Master, then one group per AudioBus below it.
+    static constexpr int kBuses = 5;
+    ma_sound_group master{};
+    ma_sound_group buses[kBuses]{};
+    bool groupsReady = false;
+    float busVolumes[kBuses + 1] = {1, 1, 1, 1, 1, 1};  // index 0 Master, then AudioBus + 1
+    bool busMutedFlags[kBuses + 1] = {};
+
+    bool initGroups() {
+        if (ma_sound_group_init(&engine, 0, nullptr, &master) != MA_SUCCESS) return false;
+        for (int i = 0; i < kBuses; ++i) {
+            if (ma_sound_group_init(&engine, 0, &master, &buses[i]) != MA_SUCCESS) {
+                for (int j = 0; j < i; ++j) ma_sound_group_uninit(&buses[j]);
+                ma_sound_group_uninit(&master);
+                return false;
+            }
+        }
+        groupsReady = true;
+        return true;
+    }
+    ma_sound_group* group(AudioBus bus) {
+        const int i = static_cast<int>(bus);
+        return groupsReady && i >= 0 && i < kBuses ? &buses[i] : nullptr;
+    }
+    void applyBus(int index) {
+        if (!groupsReady) return;
+        ma_sound_group* g = index == 0 ? &master : &buses[index - 1];
+        ma_sound_group_set_volume(g, busMutedFlags[index] ? 0.0f : busVolumes[index]);
+    }
 
     explicit Impl(Scene& s) : scene(s) {}
     ~Impl() {
         for (auto& [entity, voice] : voices) ma_sound_uninit(voice.sound.get());
         voices.clear();
+        if (groupsReady) {
+            for (auto& g : buses) ma_sound_group_uninit(&g);
+            ma_sound_group_uninit(&master);
+        }
         if (engineReady) ma_engine_uninit(&engine);
     }
 
@@ -68,7 +103,7 @@ struct AudioWorld::Impl {
         const auto size = std::filesystem::file_size(file, ec);
         ma_uint32 flags = ec || size > kStreamAboveBytes ? MA_SOUND_FLAG_STREAM : MA_SOUND_FLAG_DECODE;
         auto sound = std::make_unique<ma_sound>();
-        const ma_result result = ma_sound_init_from_file(&engine, file.string().c_str(), flags, nullptr, nullptr, sound.get());
+        const ma_result result = ma_sound_init_from_file(&engine, file.string().c_str(), flags, group(source.bus), nullptr, sound.get());
         if (result != MA_SUCCESS) {
             if (!reported[source.clip]) {
                 log::warn("Audio", "cannot play '{}': {}", source.clip, ma_result_description(result));
@@ -76,7 +111,7 @@ struct AudioWorld::Impl {
             reported[source.clip] = true;
             return false;
         }
-        Voice voice{std::move(sound), source.clip, false};
+        Voice voice{std::move(sound), source.clip, false, source.bus};
         apply(voice, source);
         voices.emplace(e, std::move(voice));
         return true;
@@ -101,9 +136,50 @@ Result<std::unique_ptr<AudioWorld>> AudioWorld::create(Scene& scene, const Optio
     const ma_result result = ma_engine_init(&config, &impl->engine);
     if (result != MA_SUCCESS) return makeError("audio unavailable: {}", ma_result_description(result));
     impl->engineReady = true;
+    if (!impl->initGroups()) log::warn("Audio", "mixer buses unavailable; sounds play straight to the output");
     log::info("Audio", "audio engine started ({} Hz{})", ma_engine_get_sample_rate(&impl->engine),
               options.device ? "" : ", no device");
     return std::unique_ptr<AudioWorld>(new AudioWorld(std::move(impl)));
+}
+
+namespace {
+int busIndex(std::string_view name) {
+    std::string lower(name);
+    for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower == "master") return 0;
+    if (lower == "music") return 1;
+    if (lower == "sfx") return 2;
+    if (lower == "ui") return 3;
+    if (lower == "voice") return 4;
+    if (lower == "ambience") return 5;
+    return -1;
+}
+} // namespace
+
+bool AudioWorld::setBusVolume(std::string_view bus, float volume) {
+    const int i = busIndex(bus);
+    if (i < 0) return false;
+    impl_->busVolumes[i] = std::clamp(volume, 0.0f, 4.0f);
+    impl_->applyBus(i);
+    return true;
+}
+
+float AudioWorld::busVolume(std::string_view bus) const {
+    const int i = busIndex(bus);
+    return i < 0 ? -1.0f : impl_->busVolumes[i];
+}
+
+bool AudioWorld::setBusMuted(std::string_view bus, bool muted) {
+    const int i = busIndex(bus);
+    if (i < 0) return false;
+    impl_->busMutedFlags[i] = muted;
+    impl_->applyBus(i);
+    return true;
+}
+
+bool AudioWorld::busMuted(std::string_view bus) const {
+    const int i = busIndex(bus);
+    return i >= 0 && impl_->busMutedFlags[i];
 }
 
 bool AudioWorld::sceneHasAudio(const Scene& scene) {
@@ -127,7 +203,7 @@ void AudioWorld::update() {
         if (it == w.voices.end()) {
             if (!w.createVoice(e, source)) continue;
             it = w.voices.find(e);
-        } else if (it->second.clip != source.clip) {  // the clip changed: start over with the new one
+        } else if (it->second.clip != source.clip || it->second.bus != source.bus) {  // start over with the new clip / bus
             ma_sound_uninit(it->second.sound.get());
             w.voices.erase(it);
             if (!w.createVoice(e, source)) continue;

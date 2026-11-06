@@ -1,5 +1,7 @@
 #include "runtime/AnimationSystem.hpp"
 
+#include "runtime/AnimatorStateMachine.hpp"
+
 #include "assets/AssetLibrary.hpp"
 #include "core/Log.hpp"
 #include "scene/Scene.hpp"
@@ -9,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -37,6 +40,9 @@ struct AnimationSystem::Impl {
         float blendDuration = 0.0f;
         float blendElapsed = 0.0f;
         std::vector<NodePose> previousPoses;
+        // Animator controller (.lanim), when the component names one.
+        std::optional<AnimatorStateMachine> machine;
+        std::string controllerKey;
     };
     std::unordered_map<entt::entity, State> states;
 
@@ -148,8 +154,27 @@ void AnimationSystem::update(float dt) {
     Impl& w = *impl_;
     auto& reg = w.scene.registry();
     std::erase_if(w.states, [&](const auto& entry) { return !reg.valid(entry.first) || !reg.all_of<AnimatorComponent>(entry.first); });
+    std::vector<std::pair<entt::entity, AnimatorStateMachine::Change>> changes;
     for (auto [e, animator] : reg.view<AnimatorComponent>().each()) {
         Impl::State& state = w.states[e];
+        if (state.controllerKey != animator.controller) {
+            state.controllerKey = animator.controller;
+            state.machine.reset();
+            if (!animator.controller.empty()) {
+                auto file = w.assets.filePath(animator.controller);
+                auto machine = file ? AnimatorStateMachine::load(*file)
+                                    : Result<AnimatorStateMachine>(std::unexpected(file.error()));
+                if (machine) {
+                    state.machine = std::move(*machine);
+                    const AnimatorStateMachine::State* entry = state.machine->entry();
+                    animator.clip = entry->clip;
+                    animator.loop = entry->loop;
+                    animator.speed = entry->speed;
+                } else {
+                    log::warn("Animation", "{}", machine.error().message);
+                }
+            }
+        }
         if (state.clip == nullptr || state.modelKey != animator.model || state.clipName != animator.clip) {
             if (!w.bind(e, animator, state)) continue;
             if (!state.started) {
@@ -181,7 +206,34 @@ void AnimationSystem::update(float dt) {
             }
         }
         w.apply(state);
+        if (state.machine) {
+            const float length = state.clip->duration;
+            const float normalized = length > 0.0f ? state.time / length : 1.0f;
+            if (auto change = state.machine->update(normalized, !state.playing)) changes.emplace_back(e, *change);
+        }
     }
+    // State machine transitions, after the loop (crossfade() touches the components).
+    for (const auto& [e, change] : changes) {
+        auto& animator = reg.get<AnimatorComponent>(e);
+        animator.speed = change.state->speed;
+        if (change.fadeSeconds > 0.0f) {
+            crossfade(e, change.state->clip, change.fadeSeconds);
+        } else {
+            play(e, change.state->clip);
+        }
+        animator.loop = change.state->loop;
+    }
+}
+
+bool AnimationSystem::setParameter(entt::entity animator, int kind, std::string_view name, float value) {
+    const auto it = impl_->states.find(animator);
+    return it != impl_->states.end() && it->second.machine && it->second.machine->setParameter(name, kind, value);
+}
+
+std::string AnimationSystem::currentState(entt::entity animator) const {
+    const auto it = impl_->states.find(animator);
+    if (it == impl_->states.end() || !it->second.machine) return {};
+    return it->second.machine->current()->name;
 }
 
 bool AnimationSystem::play(entt::entity animator, std::string_view clip) {

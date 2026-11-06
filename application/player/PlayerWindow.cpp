@@ -50,14 +50,16 @@ PlayerWindow::PlayerWindow(AppContext& app, Project project, std::unique_ptr<Sce
     }
     // The game's behaviours, as last built by the editor (the player does not compile).
     const ScriptBuilder scripts(toQString(project_.rootDir()));
+    std::shared_ptr<ScriptModule> gameLibrary;
     if (QFileInfo::exists(scripts.libraryPath())) {
         auto module = ScriptModule::load(toPath(scripts.libraryPath()), toPath(scripts.loadDir()));
         if (module) {
-            simulation_->setScripts(*module, &window_->input());
+            gameLibrary = *module;
         } else {
             log::error("Player", "{}", module.error().message);
         }
     }
+    simulation_->setScripts(gameLibrary, &window_->input());  // also runs Lua and visual scripts
     connect(window_.get(), &VulkanViewport::renderFailed, this, [this](const QString& message) {
         QMessageBox::critical(nullptr, tr("Lumora Player"), message);
         window_->close();

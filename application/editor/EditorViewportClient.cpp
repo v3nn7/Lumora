@@ -289,7 +289,7 @@ void EditorViewportClient::viewportClicked(glm::vec2 ndc) {
     const Ray ray = rayFromNdc(viewportCamera(lastAspect_), ndc);
     entt::entity hit = entt::null;
     if (!sprites_.empty() && viewportPixels.x > 0.0f) {  // icons are on top, so they win
-        const glm::vec2 pixel((ndc.x * 0.5f + 0.5f) * viewportPixels.x, (0.5f - ndc.y * 0.5f) * viewportPixels.y);
+        const glm::vec2 pixel((ndc.x * 0.5f + 0.5f) * viewportPixels.x, (ndc.y * 0.5f + 0.5f) * viewportPixels.y);
         hit = SceneIcons::pick(sprites_, viewportCamera(lastAspect_), viewportPixels, pixel);
     }
     if (hit == entt::null) hit = pickEntity(*scene, ray, assets);

@@ -1280,6 +1280,19 @@ TEST_F(RendererTest, SpritesDrawTheirPictureTintedOnTop) {
     const auto x = static_cast<std::uint32_t>((clip.x / clip.w * 0.5f + 0.5f) * 200.0f);
     EXPECT_EQ(glm::ivec3(pixel(*drawn, x, 50)), glm::ivec3(pixel(*plain, x, 50)));
     EXPECT_EQ(glm::ivec3(pixel(*drawn, 5, 5)), glm::ivec3(pixel(*plain, 5, 5))) << "nothing else changes";
+
+    // Off the centre: the picture sits exactly where its point projects (above stays above).
+    for (const glm::vec3 at : {glm::vec3(-2.0f, 1.0f, 0.0f), glm::vec3(1.5f, -1.0f, 0.0f)}) {
+        batch.sprites = {{at, 10.0f, {0.0f, 0.0f, 0.5f, 1.0f}, {0.0f, 1.0f, 0.0f, 1.0f}, 3}};
+        auto moved = renderer_->capture(*scene, cam.view(2.0f), {200, 100}, on);
+        ASSERT_TRUE(moved.has_value());
+        const glm::ivec2 p = toPixel(cam.view(2.0f), at, {200, 100});
+        const auto green = pixel(*moved, static_cast<std::uint32_t>(p.x), static_cast<std::uint32_t>(p.y));
+        EXPECT_GT(static_cast<int>(green.g), static_cast<int>(green.r) + 150) << "the green picture at " << at.x << ", " << at.y;
+        const auto quad = layoutSprites(batch, cam.view(2.0f), {200.0f, 100.0f});
+        ASSERT_EQ(quad.size(), 1u);
+        EXPECT_NEAR((quad[0].min.y + quad[0].max.y) * 0.5f, static_cast<float>(p.y), 1.5f) << "layout and picking agree";
+    }
 }
 
 // ---- Terrain, foliage, water ------------------------------------------------------------------

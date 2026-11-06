@@ -17,7 +17,8 @@ std::vector<SpriteQuad> layoutSprites(const SpriteBatch& batch, const CameraView
         const glm::vec4 clip = viewProj * glm::vec4(s.position, 1.0f);
         if (clip.w <= camera.nearPlane) continue;  // behind the camera or inside the near plane
         const glm::vec2 ndc = glm::vec2(clip) / clip.w;
-        const glm::vec2 center((ndc.x * 0.5f + 0.5f) * targetPixels.x, (0.5f - ndc.y * 0.5f) * targetPixels.y);
+        // The projection's y already points down the image (row 0 at ndc.y = -1).
+        const glm::vec2 center((ndc.x * 0.5f + 0.5f) * targetPixels.x, (ndc.y * 0.5f + 0.5f) * targetPixels.y);
         const float half = s.size * batch.pixelRatio * 0.5f;
         if (center.x + half < 0.0f || center.y + half < 0.0f || center.x - half > targetPixels.x ||
             center.y - half > targetPixels.y) {

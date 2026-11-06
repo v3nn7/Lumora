@@ -140,6 +140,9 @@ Hover over the viewport or click it, then:
   entity, and ready-made physics objects (dynamic cube and sphere, static floor).
 - **Select** with a left click in the viewport (while playing, clicks go to the game: select in the Hierarchy) or the Hierarchy. <kbd>Esc</kbd> clears the
   selection.
+- **Select several** with <kbd>Ctrl</kbd>+click (viewport or Hierarchy) or <kbd>Shift</kbd>+click in the
+  Hierarchy: the gizmo moves, rotates and scales them as a group around the last one, the
+  Inspector changes a value on all of them, and duplicate and delete work on all.
 - **Transform** with the gizmo: <kbd>1</kbd> move, <kbd>2</kbd> rotate, <kbd>3</kbd> scale.
   Hold <kbd>Ctrl</kbd> while dragging to snap (0.25 m, 15°, 0.1×). Gizmos work in the parent's
   space, so child entities move as expected.

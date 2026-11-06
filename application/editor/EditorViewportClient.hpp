@@ -76,6 +76,15 @@ private:
     EditorContext& ctx_;
     FlyCameraController camera_;
     mutable float lastAspect_ = 16.0f / 9.0f;
+    struct GroupMember {
+        Uuid id;
+        TransformComponent transform;  // local, at the start of the drag
+        glm::mat4 world;
+    };
+    void moveGroup(Scene& scene);
+    std::vector<GroupMember> groupStart_;
+    glm::mat4 primaryWorldStart_{1.0f};
+    Qt::KeyboardModifiers pressModifiers_;
     TransformGizmo gizmo_;
     render::OverlayGeometry overlay_;
     Uuid dragTarget_;

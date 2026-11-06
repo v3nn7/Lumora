@@ -2,6 +2,11 @@
 
 #include "editor/EditorContext.hpp"
 #include "scene/Picking.hpp"
+
+#include <glm/gtx/euler_angles.hpp>
+#include <glm/geometric.hpp>
+#include <glm/trigonometric.hpp>
+#include <algorithm>
 #include "scene/Scene.hpp"
 
 #include <QObject>
@@ -12,6 +17,22 @@
 #include <algorithm>
 
 namespace lumora::editor {
+
+namespace {
+
+/// Local transform from a matrix (no shear): translation, Euler YXZ degrees, scale.
+void setTransformFromMatrix(TransformComponent& t, const glm::mat4& m) {
+    t.position = glm::vec3(m[3]);
+    const glm::vec3 scale(glm::length(glm::vec3(m[0])), glm::length(glm::vec3(m[1])), glm::length(glm::vec3(m[2])));
+    glm::mat4 rotation(1.0f);
+    for (int c = 0; c < 3; ++c) rotation[c] = glm::vec4(glm::vec3(m[c]) / std::max(scale[c], 1e-8f), 0.0f);
+    float y = 0.0f, x = 0.0f, z = 0.0f;
+    glm::extractEulerAngleYXZ(rotation, y, x, z);
+    t.rotationDeg = glm::degrees(glm::vec3(x, y, z));
+    t.scale = scale;
+}
+
+} // namespace
 
 EditorViewportClient::EditorViewportClient(EditorContext& ctx) : ctx_(ctx) {
     camera_.keyboardFlight = true;  // WASD/QE fly whenever the viewport has the keyboard
@@ -125,11 +146,36 @@ void EditorViewportClient::drawRemoteMarkers(const Scene& scene) {
     }
 }
 
-bool EditorViewportClient::viewportMousePressed(glm::vec2 ndc, Qt::MouseButton button, Qt::KeyboardModifiers) {
+bool EditorViewportClient::viewportMousePressed(glm::vec2 ndc, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) {
+    pressModifiers_ = modifiers;
     if (button != Qt::LeftButton || !gizmoVisible()) return false;
-    if (!gizmo_.begin(*ctx_.scene(), ctx_.selectedEntity(), camera_.view(lastAspect_), ndc)) return false;
+    Scene& scene = *ctx_.scene();
+    if (!gizmo_.begin(scene, ctx_.selectedEntity(), camera_.view(lastAspect_), ndc)) return false;
     dragTarget_ = ctx_.selectedUuid();
+    // The rest of the selection follows the primary as a group.
+    groupStart_.clear();
+    primaryWorldStart_ = scene.worldMatrix(ctx_.selectedEntity());
+    for (entt::entity e : ctx_.selectedRoots()) {
+        if (e == ctx_.selectedEntity()) continue;
+        groupStart_.push_back({scene.uuidOf(e), scene.registry().get<TransformComponent>(e), scene.worldMatrix(e)});
+    }
     return true;
+}
+
+void EditorViewportClient::moveGroup(Scene& scene) {
+    if (groupStart_.empty()) return;
+    const entt::entity primary = scene.findByUuid(dragTarget_);
+    if (primary == entt::null) return;
+    scene.updateWorldTransforms();
+    const glm::mat4 delta = scene.worldMatrix(primary) * glm::inverse(primaryWorldStart_);
+    for (const GroupMember& m : groupStart_) {
+        const entt::entity e = scene.findByUuid(m.id);
+        if (e == entt::null) continue;
+        glm::mat4 local = delta * m.world;
+        const entt::entity parent = scene.parentOf(e);
+        if (parent != entt::null) local = glm::inverse(scene.worldMatrix(parent)) * local;
+        setTransformFromMatrix(scene.registry().get<TransformComponent>(e), local);
+    }
 }
 
 void EditorViewportClient::viewportMouseMoved(glm::vec2 ndc, Qt::KeyboardModifiers modifiers) {
@@ -138,6 +184,7 @@ void EditorViewportClient::viewportMouseMoved(glm::vec2 ndc, Qt::KeyboardModifie
     if (gizmo_.active()) {
         const entt::entity target = scene->findByUuid(dragTarget_);
         gizmo_.drag(*scene, target, camera_.view(lastAspect_), ndc, (modifiers & Qt::ControlModifier) != 0);
+        moveGroup(*scene);
         ctx_.notifyValuesChanged(nullptr);  // live inspector values; recorded once on release
     } else {
         gizmo_.hover(*scene, ctx_.selectedEntity(), camera_.view(lastAspect_), ndc);
@@ -148,7 +195,15 @@ void EditorViewportClient::viewportMouseReleased(glm::vec2, Qt::MouseButton butt
     if (button != Qt::LeftButton || !gizmo_.active()) return;
     gizmo_.end();
     static const char* kNames[] = {"Move", "Rotate", "Scale"};
-    ctx_.commitTransform(dragTarget_, QObject::tr(kNames[static_cast<int>(gizmo_.mode())]), gizmo_.startTransform());
+    const QString text = QObject::tr(kNames[static_cast<int>(gizmo_.mode())]);
+    if (groupStart_.empty()) {
+        ctx_.commitTransform(dragTarget_, text, gizmo_.startTransform());
+    } else {
+        std::vector<std::pair<Uuid, TransformComponent>> before{{dragTarget_, gizmo_.startTransform()}};
+        for (const GroupMember& m : groupStart_) before.emplace_back(m.id, m.transform);
+        ctx_.commitTransforms(text, before);
+    }
+    groupStart_.clear();
     dragTarget_ = Uuid{};
 }
 
@@ -164,6 +219,12 @@ render::RenderSettings EditorViewportClient::viewportSettings() const {
     render::RenderSettings s;
     s.showGrid = showGrid && !viewingThroughSceneCamera();
     s.selected = ctx_.isPlaying() ? entt::entity{entt::null} : ctx_.selectedEntity();
+    if (!ctx_.isPlaying() && ctx_.scene() != nullptr && ctx_.selection().size() > 1) {
+        for (Uuid id : ctx_.selection()) {
+            const entt::entity e = ctx_.scene()->findByUuid(id);
+            if (e != entt::null && e != s.selected) s.alsoSelected.push_back(e);
+        }
+    }
     s.overlay = overlay_.empty() ? nullptr : &overlay_;
     s.assets = assets;
     s.hud = ctx_.isPlaying() ? hud : nullptr;
@@ -179,6 +240,10 @@ void EditorViewportClient::viewportClicked(glm::vec2 ndc) {
     if (scene == nullptr || ctx_.isPlaying()) return;
     const Ray ray = rayFromNdc(viewportCamera(lastAspect_), ndc);
     const entt::entity hit = pickEntity(*scene, ray, assets);
+    if (pressModifiers_ & (Qt::ControlModifier | Qt::ShiftModifier)) {
+        if (hit != entt::null) ctx_.toggleSelected(scene->uuidOf(hit));  // add to / remove from the selection
+        return;
+    }
     ctx_.select(hit == entt::null ? Uuid{} : scene->uuidOf(hit));
 }
 

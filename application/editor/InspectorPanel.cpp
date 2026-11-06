@@ -189,6 +189,13 @@ void InspectorPanel::buildEntity() {
     uuid->setTextInteractionFlags(Qt::TextSelectableByMouse);
     uuid->setStyleSheet(QStringLiteral("font-family: monospace; font-size: 8pt; padding-left: 4px;"));
     contentLayout_->addWidget(uuid);
+    if (ctx_.selection().size() > 1) {
+        auto* multi = new QLabel(tr("%n entities selected: changes apply to all of them that have the component.",
+                                    nullptr, static_cast<int>(ctx_.selection().size())));
+        multi->setWordWrap(true);
+        multi->setStyleSheet(QStringLiteral("color: #e8b84a; padding: 4px 4px 2px 4px;"));
+        contentLayout_->addWidget(multi);
+    }
     connect(nameEdit_, &QLineEdit::editingFinished, this, [this, id] {
         if (nameEdit_ != nullptr) ctx_.renameEntity(id, nameEdit_->text());
     });
@@ -218,7 +225,12 @@ void InspectorPanel::buildEntity() {
                 return field.get(s->registry(), ent);
             };
             FieldSetter set = [this, id, &desc, &field](const FieldValue& v) {
-                ctx_.setField(id, desc, field, v);
+                // With several entities selected, a value goes to all that have the component.
+                if (ctx_.selection().size() > 1) {
+                    ctx_.setFieldOnSelection(desc, field, v);
+                } else {
+                    ctx_.setField(id, desc, field, v);
+                }
                 // Choosing or clearing a material changes which fields apply.
                 if (field.id == "material") QTimer::singleShot(0, this, &InspectorPanel::rebuild);
             };

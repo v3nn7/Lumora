@@ -37,6 +37,7 @@ struct RenderSettings {
     float cascadeSplitLambda = 0.8f;       // 0 = uniform cascade splits, 1 = logarithmic
     bool debugCascades = false;           // tint surfaces by the shadow cascade they sample
     entt::entity selected = entt::null;
+    std::vector<entt::entity> alsoSelected;  // the rest of a multi-selection (outlined too)
     const OverlayGeometry* overlay = nullptr;  // drawn on top after tone mapping (gizmos)
     const HudCanvas* hud = nullptr;            // the game's 2D overlay (text, rectangles), drawn last
     const DebugDraw* debug = nullptr;          // behaviours' debug shapes, drawn on top like the overlay

@@ -27,27 +27,38 @@ void SceneSnapshotCommand::redo() {
 
 FieldCommand::FieldCommand(EditorContext& ctx, Uuid entity, const ComponentDesc& component, const FieldDesc& field,
                            FieldValue before, FieldValue after)
+    : FieldCommand(ctx, std::vector<Uuid>{entity}, component, field, std::vector<FieldValue>{std::move(before)},
+                   std::move(after)) {}
+
+FieldCommand::FieldCommand(EditorContext& ctx, std::vector<Uuid> entities, const ComponentDesc& component,
+                           const FieldDesc& field, std::vector<FieldValue> before, FieldValue after)
     : QUndoCommand(QObject::tr("Edit %1 %2")
                        .arg(QString::fromStdString(component.label), QString::fromStdString(field.label))),
-      ctx_(ctx), entity_(entity), component_(component), field_(field), before_(std::move(before)),
+      ctx_(ctx), entities_(std::move(entities)), component_(component), field_(field), before_(std::move(before)),
       after_(std::move(after)) {
     age_.start();
 }
 
-void FieldCommand::apply(const FieldValue& value) {
+void FieldCommand::apply(Uuid entity, const FieldValue& value) {
     Scene* scene = ctx_.scene();
-    const entt::entity e = scene ? scene->findByUuid(entity_) : entt::entity{entt::null};
+    const entt::entity e = scene ? scene->findByUuid(entity) : entt::entity{entt::null};
     if (e == entt::null || !component_.has(scene->registry(), e)) return;
     field_.set(scene->registry(), e, value);
+}
+
+void FieldCommand::undo() {
+    for (std::size_t i = 0; i < entities_.size(); ++i) apply(entities_[i], before_[i]);
     ctx_.notifyValuesChanged(nullptr);
 }
 
-void FieldCommand::undo() { apply(before_); }
-void FieldCommand::redo() { apply(after_); }
+void FieldCommand::redo() {
+    for (const Uuid id : entities_) apply(id, after_);
+    ctx_.notifyValuesChanged(nullptr);
+}
 
 bool FieldCommand::mergeWith(const QUndoCommand* other) {
     const auto* o = static_cast<const FieldCommand*>(other);
-    if (o->entity_ != entity_ || &o->field_ != &field_ || age_.elapsed() > kMergeWindowMs) return false;
+    if (o->entities_ != entities_ || &o->field_ != &field_ || age_.elapsed() > kMergeWindowMs) return false;
     after_ = o->after_;
     age_.restart();
     return true;

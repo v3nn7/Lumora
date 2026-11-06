@@ -32,25 +32,28 @@ private:
     bool applied_ = true;  // the edit already happened when the command was recorded
 };
 
-/// One reflected field on one entity. Consecutive edits of the same field (spin-box scrubbing,
-/// slider drags, colour picking) within a short window merge into a single undo step.
+/// One reflected field on one or several entities (a multi-selection) set to one value.
+/// Consecutive edits of the same field (spin-box scrubbing, slider drags, colour picking) within
+/// a short window merge into a single undo step.
 class FieldCommand final : public QUndoCommand {
 public:
     FieldCommand(EditorContext& ctx, Uuid entity, const ComponentDesc& component, const FieldDesc& field,
                  FieldValue before, FieldValue after);
+    FieldCommand(EditorContext& ctx, std::vector<Uuid> entities, const ComponentDesc& component, const FieldDesc& field,
+                 std::vector<FieldValue> before, FieldValue after);
     void undo() override;
     void redo() override;
     [[nodiscard]] int id() const override { return static_cast<int>(CommandId::Field); }
     bool mergeWith(const QUndoCommand* other) override;
 
 private:
-    void apply(const FieldValue& value);
+    void apply(Uuid entity, const FieldValue& value);
 
     EditorContext& ctx_;
-    Uuid entity_;
+    std::vector<Uuid> entities_;
     const ComponentDesc& component_;
     const FieldDesc& field_;
-    FieldValue before_;
+    std::vector<FieldValue> before_;  // per entity
     FieldValue after_;
     QElapsedTimer age_;
 };

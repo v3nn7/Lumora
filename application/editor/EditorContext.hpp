@@ -37,9 +37,18 @@ public:
     void setScene(Scene* scene, bool playing);
     [[nodiscard]] bool isPlaying() const noexcept { return playing_; }
 
+    /// The primary selection (the one the inspector and the gizmo follow).
     [[nodiscard]] Uuid selectedUuid() const noexcept { return selected_; }
     [[nodiscard]] entt::entity selectedEntity() const;
+    /// Everything selected (the primary last); empty when nothing is.
+    [[nodiscard]] const std::vector<Uuid>& selection() const noexcept { return selection_; }
+    [[nodiscard]] bool isSelected(Uuid id) const;
+    /// Selected entities that are not under another selected one (what moves, copies, deletes).
+    [[nodiscard]] std::vector<entt::entity> selectedRoots() const;
     void select(Uuid id);
+    /// Ctrl+click: adds an entity (making it primary) or removes it.
+    void toggleSelected(Uuid id);
+    void setSelection(std::vector<Uuid> ids);
     void clearSelection() { select(Uuid{}); }
 
     // ---- Structural edits (recorded as scene snapshots) -----------------------------------
@@ -56,6 +65,10 @@ public:
 
     // ---- Value edits (mergeable commands) ---------------------------------------------------
     void setField(Uuid id, const ComponentDesc& component, const FieldDesc& field, const FieldValue& value);
+    /// The field on every selected entity that has the component (one undo step).
+    void setFieldOnSelection(const ComponentDesc& component, const FieldDesc& field, const FieldValue& value);
+    /// Several transforms changed together (a group moved with the gizmo): one undo step.
+    void commitTransforms(const QString& text, const std::vector<std::pair<Uuid, TransformComponent>>& before);
     void setEnvironment(const QString& setting, const std::function<void(EnvironmentSettings&)>& mutate);
     /// Records a transform change that has already been applied (e.g. at the end of a gizmo drag).
     void commitTransform(Uuid id, const QString& text, const TransformComponent& before);
@@ -88,6 +101,8 @@ signals:
     void dirtyChanged(bool dirty);
 
 private:
+    /// Drops selected entities that no longer exist; true if the selection changed.
+    bool pruneSelection();
     [[nodiscard]] bool recording() const noexcept { return scene_ != nullptr && !playing_; }
     /// Runs `edit`, recording a before/after scene snapshot when not in play mode.
     void structuralEdit(const QString& text, const std::function<void()>& edit);
@@ -95,6 +110,7 @@ private:
     Scene* scene_ = nullptr;
     bool playing_ = false;
     Uuid selected_;
+    std::vector<Uuid> selection_;
     bool dirty_ = false;
     QUndoStack undo_;
 };

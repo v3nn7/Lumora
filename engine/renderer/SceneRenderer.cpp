@@ -563,7 +563,9 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 obj.emissiveRoughness = glm::vec4(mesh.emissive * mesh.emissiveStrength, mesh.roughness);
             }
             const float pattern = static_cast<float>(mat != nullptr ? mat->pattern : static_cast<std::int32_t>(mesh.pattern));
-            obj.flags = glm::vec4(c.entity == settings.selected ? 1.0f : 0.0f, pattern, 0.0f, 0.0f);
+            const bool highlighted = c.entity == settings.selected ||
+                                     std::ranges::find(settings.alsoSelected, c.entity) != settings.alsoSelected.end();
+            obj.flags = glm::vec4(highlighted ? 1.0f : 0.0f, pattern, 0.0f, 0.0f);
         }
     });
 

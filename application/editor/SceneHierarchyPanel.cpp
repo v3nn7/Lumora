@@ -115,7 +115,7 @@ SceneHierarchyPanel::SceneHierarchyPanel(EditorContext& ctx, QWidget* parent) : 
     tree_->setColumnCount(1);
     tree_->setIndentation(14);
     tree_->setIconSize(QSize(15, 15));
-    tree_->setSelectionMode(QAbstractItemView::SingleSelection);
+    tree_->setSelectionMode(QAbstractItemView::ExtendedSelection);  // Ctrl/Shift+click
     tree_->setDragDropMode(QAbstractItemView::InternalMove);
     tree_->setDefaultDropAction(Qt::MoveAction);
     tree_->setEditTriggers(QAbstractItemView::EditKeyPressed | QAbstractItemView::SelectedClicked);
@@ -126,8 +126,14 @@ SceneHierarchyPanel::SceneHierarchyPanel(EditorContext& ctx, QWidget* parent) : 
     connect(filter_, &QLineEdit::textChanged, this, &SceneHierarchyPanel::applyFilter);
     connect(tree_, &QTreeWidget::itemSelectionChanged, this, [this] {
         if (rebuilding_) return;
-        const auto items = tree_->selectedItems();
-        ctx_.select(items.isEmpty() ? Uuid{} : itemUuid(items.front()));
+        // The clicked (current) item is the primary selection: it goes last.
+        std::vector<Uuid> ids;
+        QTreeWidgetItem* current = tree_->currentItem();
+        for (QTreeWidgetItem* item : tree_->selectedItems()) {
+            if (item != current) ids.push_back(itemUuid(item));
+        }
+        if (current != nullptr && current->isSelected()) ids.push_back(itemUuid(current));
+        ctx_.setSelection(std::move(ids));
     });
     connect(tree_, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* item, int) {
         if (!rebuilding_) ctx_.renameEntity(itemUuid(item), item->text(0));
@@ -172,16 +178,15 @@ void SceneHierarchyPanel::rebuild() {
 void SceneHierarchyPanel::syncSelection() {
     rebuilding_ = true;
     tree_->clearSelection();
-    const Uuid selected = ctx_.selectedUuid();
-    if (selected.isValid()) {
-        for (QTreeWidgetItemIterator it(tree_); *it; ++it) {
-            if (itemUuid(*it) == selected) {
-                (*it)->setSelected(true);
-                tree_->setCurrentItem(*it);
-                tree_->scrollToItem(*it);
-                break;
-            }
+    const Uuid primary = ctx_.selectedUuid();
+    for (QTreeWidgetItemIterator it(tree_); *it; ++it) {
+        const Uuid id = itemUuid(*it);
+        if (!ctx_.isSelected(id)) continue;
+        if (id == primary) {
+            tree_->setCurrentItem(*it, 0, QItemSelectionModel::NoUpdate);
+            tree_->scrollToItem(*it);
         }
+        (*it)->setSelected(true);
     }
     rebuilding_ = false;
 }
@@ -202,7 +207,7 @@ void SceneHierarchyPanel::applyFilter() {
 
 void SceneHierarchyPanel::showContextMenu(const QPoint& pos) {
     QTreeWidgetItem* item = tree_->itemAt(pos);
-    if (item != nullptr) ctx_.select(itemUuid(item));
+    if (item != nullptr && !ctx_.isSelected(itemUuid(item))) ctx_.select(itemUuid(item));
     QMenu menu(this);
     QMenu* create = menu.addMenu(app::theme::icon(QStringLiteral("plus")), item ? tr("Create Child") : tr("Create"));
     populateCreateMenu(*create, ctx_, item != nullptr);

@@ -22,21 +22,68 @@ EditorContext::EditorContext() {
 void EditorContext::setScene(Scene* scene, bool playing) {
     scene_ = scene;
     playing_ = playing;
-    if (scene_ == nullptr || (selected_.isValid() && scene_->findByUuid(selected_) == entt::null)) {
-        selected_ = Uuid{};
-    }
+    pruneSelection();
     emit sceneReplaced();
     emit selectionChanged(selected_);
+}
+
+bool EditorContext::pruneSelection() {
+    const std::size_t before = selection_.size();
+    std::erase_if(selection_, [this](Uuid id) { return scene_ == nullptr || scene_->findByUuid(id) == entt::null; });
+    const Uuid primary = selection_.empty() ? Uuid{} : selection_.back();
+    const bool changed = selection_.size() != before || primary != selected_;
+    selected_ = primary;
+    return changed;
 }
 
 entt::entity EditorContext::selectedEntity() const {
     return scene_ != nullptr && selected_.isValid() ? scene_->findByUuid(selected_) : entt::entity{entt::null};
 }
 
+bool EditorContext::isSelected(Uuid id) const { return std::ranges::find(selection_, id) != selection_.end(); }
+
+std::vector<entt::entity> EditorContext::selectedRoots() const {
+    std::vector<entt::entity> roots;
+    if (scene_ == nullptr) return roots;
+    for (Uuid id : selection_) {
+        const entt::entity e = scene_->findByUuid(id);
+        if (e == entt::null) continue;
+        bool underSelected = false;
+        for (entt::entity p = scene_->parentOf(e); p != entt::null && !underSelected; p = scene_->parentOf(p)) {
+            underSelected = isSelected(scene_->uuidOf(p));
+        }
+        if (!underSelected) roots.push_back(e);
+    }
+    return roots;
+}
+
 void EditorContext::select(Uuid id) {
-    if (id == selected_) return;
-    selected_ = id;
-    emit selectionChanged(id);
+    if (id == selected_ && selection_.size() == (id.isValid() ? 1u : 0u)) return;
+    setSelection(id.isValid() ? std::vector<Uuid>{id} : std::vector<Uuid>{});
+}
+
+void EditorContext::toggleSelected(Uuid id) {
+    if (!id.isValid()) return;
+    std::vector<Uuid> next = selection_;
+    if (const auto it = std::ranges::find(next, id); it != next.end()) {
+        next.erase(it);
+    } else {
+        next.push_back(id);
+    }
+    setSelection(std::move(next));
+}
+
+void EditorContext::setSelection(std::vector<Uuid> ids) {
+    std::erase_if(ids, [](Uuid id) { return !id.isValid(); });
+    // No duplicates; the last occurrence is the primary.
+    std::vector<Uuid> unique;
+    for (auto it = ids.rbegin(); it != ids.rend(); ++it) {
+        if (std::ranges::find(unique, *it) == unique.end()) unique.insert(unique.begin(), *it);
+    }
+    if (unique == selection_ && (unique.empty() ? !selected_.isValid() : selected_ == unique.back())) return;
+    selection_ = std::move(unique);
+    selected_ = selection_.empty() ? Uuid{} : selection_.back();
+    emit selectionChanged(selected_);
 }
 
 void EditorContext::setDirty(bool dirty) {
@@ -72,10 +119,7 @@ void EditorContext::applyPatch(const ScenePatch& patch) {
     if (auto applied = patch.applyTo(*scene_); !applied) {
         log::error("Editor", "scene change only partly applied: {}", applied.error().message);
     }
-    if (selected_.isValid() && scene_->findByUuid(selected_) == entt::null) {
-        selected_ = Uuid{};
-        emit selectionChanged(selected_);
-    }
+    if (pruneSelection()) emit selectionChanged(selected_);
     emit structureChanged();
     emit valuesChanged(nullptr);
 }
@@ -95,27 +139,41 @@ entt::entity EditorContext::createEntity(const QString& name, const EntityInit& 
 }
 
 void EditorContext::deleteSelected() {
-    const entt::entity e = selectedEntity();
-    if (e == entt::null) return;
-    const QString name = QString::fromStdString(scene_->nameOf(e));
-    structuralEdit(tr("Delete %1").arg(name), [&] { scene_->destroyEntity(e); });
-    log::info("Editor", "deleted '{}'", name.toStdString());
+    const std::vector<entt::entity> roots = selectedRoots();
+    if (roots.empty()) return;
+    const QString name = roots.size() == 1 ? QString::fromStdString(scene_->nameOf(roots.front()))
+                                           : tr("%n entities", nullptr, static_cast<int>(roots.size()));
+    std::vector<Uuid> ids;
+    for (entt::entity e : roots) ids.push_back(scene_->uuidOf(e));
+    structuralEdit(tr("Delete %1").arg(name), [&] {
+        for (Uuid id : ids) {
+            const entt::entity e = scene_->findByUuid(id);
+            if (e != entt::null) scene_->destroyEntity(e);
+        }
+    });
+    log::info("Editor", "deleted {}", name.toStdString());
+    selection_.clear();
     selected_ = Uuid{};
     emit structureChanged();
     emit selectionChanged(selected_);
 }
 
 void EditorContext::duplicateSelected() {
-    const entt::entity e = selectedEntity();
-    if (e == entt::null) return;
-    entt::entity copy = entt::null;
-    structuralEdit(tr("Duplicate %1").arg(QString::fromStdString(scene_->nameOf(e))), [&] {
-        copy = scene_->duplicateEntity(e);
-        scene_->rename(copy, scene_->nameOf(e) + " Copy");
+    const std::vector<entt::entity> roots = selectedRoots();
+    if (roots.empty()) return;
+    std::vector<Uuid> copies;
+    const QString name = roots.size() == 1 ? QString::fromStdString(scene_->nameOf(roots.front()))
+                                           : tr("%n entities", nullptr, static_cast<int>(roots.size()));
+    structuralEdit(tr("Duplicate %1").arg(name), [&] {
+        for (entt::entity e : roots) {
+            const entt::entity copy = scene_->duplicateEntity(e);
+            scene_->rename(copy, scene_->nameOf(e) + " Copy");
+            copies.push_back(scene_->uuidOf(copy));
+        }
         scene_->updateWorldTransforms();
     });
     emit structureChanged();
-    select(scene_->uuidOf(copy));
+    setSelection(std::move(copies));
 }
 
 void EditorContext::renameEntity(Uuid id, const QString& name) {
@@ -187,6 +245,36 @@ void EditorContext::setField(Uuid id, const ComponentDesc& component, const Fiel
     const FieldValue before = field.get(scene_->registry(), e);
     if (before == value) return;
     undo_.push(new FieldCommand(*this, id, component, field, before, value));  // push() applies it
+}
+
+void EditorContext::setFieldOnSelection(const ComponentDesc& component, const FieldDesc& field, const FieldValue& value) {
+    if (scene_ == nullptr) return;
+    std::vector<Uuid> ids;
+    std::vector<FieldValue> before;
+    for (Uuid id : selection_) {
+        const entt::entity e = scene_->findByUuid(id);
+        if (e == entt::null || !component.has(scene_->registry(), e)) continue;
+        if (!recording()) {
+            field.set(scene_->registry(), e, value);
+            continue;
+        }
+        FieldValue current = field.get(scene_->registry(), e);
+        if (current == value) continue;
+        ids.push_back(id);
+        before.push_back(std::move(current));
+    }
+    if (!recording()) {
+        notifyValuesChanged(nullptr);
+        return;
+    }
+    if (!ids.empty()) undo_.push(new FieldCommand(*this, std::move(ids), component, field, std::move(before), value));
+}
+
+void EditorContext::commitTransforms(const QString& text, const std::vector<std::pair<Uuid, TransformComponent>>& before) {
+    if (!recording() || before.empty()) return;
+    undo_.beginMacro(text);
+    for (const auto& [id, transform] : before) commitTransform(id, text, transform);
+    undo_.endMacro();
 }
 
 void EditorContext::setEnvironment(const QString& setting, const std::function<void(EnvironmentSettings&)>& mutate) {

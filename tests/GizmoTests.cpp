@@ -137,3 +137,68 @@ TEST_F(GizmoFixture, OverlayRendersOnTopOfTheScene) {
         }
     }
 }
+
+#include "editor/EditorContext.hpp"
+#include "editor/EditorViewportClient.hpp"
+
+TEST(MultiSelection, GizmoMovesTheGroupAndEditsApplyToAll) {
+    Scene scene;
+    const entt::entity a = scene.createEntity("A");
+    const entt::entity b = scene.createEntity("B");
+    const entt::entity child = scene.createEntity("Child", Uuid::generate(), b);
+    for (entt::entity e : {a, b, child}) scene.registry().emplace<MeshRendererComponent>(e);
+    scene.registry().get<TransformComponent>(b).position = {3.0f, 0.0f, 0.0f};
+    scene.registry().get<TransformComponent>(child).position = {0.0f, 1.0f, 0.0f};
+    scene.updateWorldTransforms();
+    EditorContext ctx;
+    ctx.setScene(&scene, false);
+    const Uuid ia = scene.uuidOf(a), ib = scene.uuidOf(b), ic = scene.uuidOf(child);
+
+    ctx.setSelection({ib, ic, ia});  // A primary (last)
+    EXPECT_EQ(ctx.selectedUuid(), ia);
+    EXPECT_EQ(ctx.selectedRoots().size(), 2u) << "the child moves with its selected parent";
+    ctx.toggleSelected(ic);
+    EXPECT_FALSE(ctx.isSelected(ic));
+    EXPECT_EQ(ctx.selectedUuid(), ia);
+
+    // Drag A's X arrow by 2 m: B follows, its child with it.
+    EditorViewportClient client(ctx);
+    client.camera().setPosition({2.0f, 3.0f, 8.0f});
+    client.camera().lookAt({0.0f, 0.0f, 0.0f});
+    const CameraView view = client.viewportCamera(16.0f / 9.0f);
+    auto ndcOf = [&](const glm::vec3& world) {
+        const glm::vec4 clip = view.projection * view.view * glm::vec4(world, 1.0f);
+        return glm::vec2(clip) / clip.w;
+    };
+    const float s = glm::length(view.position) * std::tan(view.fovYRadians * 0.5f) * TransformGizmo::kScreenSize;
+    ASSERT_TRUE(client.viewportMousePressed(ndcOf({s * 0.5f, 0, 0}), Qt::LeftButton, Qt::NoModifier));
+    client.viewportMouseMoved(ndcOf({s * 0.5f + 2.0f, 0, 0}), Qt::NoModifier);
+    client.viewportMouseReleased(ndcOf({s * 0.5f + 2.0f, 0, 0}), Qt::LeftButton);
+    EXPECT_NEAR(scene.registry().get<TransformComponent>(a).position.x, 2.0f, 1e-2f);
+    EXPECT_NEAR(scene.registry().get<TransformComponent>(b).position.x, 5.0f, 1e-2f) << "moved with the primary";
+    EXPECT_NEAR(scene.registry().get<TransformComponent>(child).position.y, 1.0f, 1e-4f) << "local, unchanged";
+    ctx.undoStack().undo();
+    EXPECT_NEAR(scene.registry().get<TransformComponent>(a).position.x, 0.0f, 1e-4f);
+    EXPECT_NEAR(scene.registry().get<TransformComponent>(b).position.x, 3.0f, 1e-4f) << "one undo step for the group";
+
+    // One field on all selected: one undo step.
+    const ComponentDesc* mesh = ComponentRegistry::builtin().find("MeshRenderer");
+    ASSERT_NE(mesh, nullptr);
+    const FieldDesc* color = mesh->findField("baseColor");
+    ctx.setFieldOnSelection(*mesh, *color, FieldValue(glm::vec3(1.0f, 0.0f, 0.0f)));
+    EXPECT_EQ(scene.registry().get<MeshRendererComponent>(a).baseColor, glm::vec3(1, 0, 0));
+    EXPECT_EQ(scene.registry().get<MeshRendererComponent>(b).baseColor, glm::vec3(1, 0, 0));
+    EXPECT_NE(scene.registry().get<MeshRendererComponent>(child).baseColor, glm::vec3(1, 0, 0)) << "not selected";
+    ctx.undoStack().undo();
+    EXPECT_EQ(scene.registry().get<MeshRendererComponent>(b).baseColor, glm::vec3(0.8f));
+
+    // Duplicate and delete work on the whole selection.
+    ctx.duplicateSelected();
+    EXPECT_EQ(scene.entityCount(), 6u) << "A and B (with its child) copied";
+    EXPECT_EQ(ctx.selection().size(), 2u) << "the copies are selected";
+    ctx.deleteSelected();
+    EXPECT_EQ(scene.entityCount(), 3u);
+    EXPECT_TRUE(ctx.selection().empty());
+    ctx.undoStack().undo();
+    EXPECT_EQ(scene.entityCount(), 6u) << "deleting both was one step";
+}

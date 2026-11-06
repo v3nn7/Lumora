@@ -1,5 +1,7 @@
 #include "renderer/SceneRenderer.hpp"
 
+#include "assets/GltfImporter.hpp"
+
 #include "assets/AssetLibrary.hpp"
 #include "assets/MeshLod.hpp"
 
@@ -350,6 +352,27 @@ SceneRenderer::~SceneRenderer() {
     if (spriteAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(spriteAtlasIndex_);
     if (vsmPoolIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(vsmPoolIndex_);
     if (vsmPageTableIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(vsmPageTableIndex_);
+}
+
+SceneRenderer::ModelSurface SceneRenderer::modelSurface(AssetLibrary& assets, const std::string& meshAsset) {
+    if (&assets != surfaceAssets_) {
+        modelSurfaces_.clear();
+        surfaceAssets_ = &assets;
+    }
+    if (const auto it = modelSurfaces_.find(meshAsset); it != modelSurfaces_.end()) return it->second;
+    ModelSurface surface;
+    if (auto ref = assets.resolveMeshKey(meshAsset)) {
+        if (auto model = assets.model(ref->file); model && ref->index >= 0 &&
+                                                  static_cast<std::size_t>(ref->index) < (*model)->meshes.size()) {
+            const int material = (*model)->meshes[static_cast<std::size_t>(ref->index)].material;
+            if (material >= 0 && static_cast<std::size_t>(material) < (*model)->materials.size()) {
+                const ImportedMaterial& m = (*model)->materials[static_cast<std::size_t>(material)];
+                surface = {importedAlphaCutoff(m), m.doubleSided};
+            }
+        }
+    }
+    modelSurfaces_.emplace(meshAsset, surface);
+    return surface;
 }
 
 nvrhi::IGraphicsPipeline* SceneRenderer::outputPipeline(std::unordered_map<int, nvrhi::GraphicsPipelineHandle>& cache,
@@ -748,9 +771,16 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             }
         }
         const MeshRendererComponent& look = *candidates[i].mesh;
-        const bool masked = look.alphaCutoff > 0.0f && obj.textures.x != kNoTexture;
-        obj.surface = glm::vec4(masked ? look.alphaCutoff : 0.0f, look.doubleSided ? 1.0f : 0.0f, 0.0f, 0.0f);
-        const auto variant = static_cast<std::uint8_t>((masked ? kMasked : 0) | (look.doubleSided ? kTwoSided : 0));
+        float cutoff = look.alphaCutoff;
+        bool twoSided = look.doubleSided;
+        if (!look.meshAsset.empty() && settings.assets != nullptr) {
+            const ModelSurface surface = modelSurface(*settings.assets, look.meshAsset);
+            if (cutoff < 0.0f) cutoff = surface.alphaCutoff;
+            twoSided = twoSided || surface.twoSided;
+        }
+        const bool masked = cutoff > 0.0f && obj.textures.x != kNoTexture;
+        obj.surface = glm::vec4(masked ? cutoff : 0.0f, twoSided ? 1.0f : 0.0f, 0.0f, 0.0f);
+        const auto variant = static_cast<std::uint8_t>((masked ? kMasked : 0) | (twoSided ? kTwoSided : 0));
         const Draw draw{drawn,
                         static_cast<std::uint32_t>(objects.size()),
                         p.center,

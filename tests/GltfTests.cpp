@@ -410,25 +410,24 @@ TEST(GltfMaterials, CutOutTwoSidedAndTheModelsOwnUnits) {
     Scene scene;
     const entt::entity root = instantiateModel(scene, *model, "Content/Models/masked.gltf", "M");
     const entt::entity box = scene.childrenOf(scene.childrenOf(root)[0])[0];
-    const auto& mesh = scene.registry().get<MeshRendererComponent>(box);
-    EXPECT_FLOAT_EQ(mesh.alphaCutoff, 0.3f);
-    EXPECT_TRUE(mesh.doubleSided);
+    auto& mesh = scene.registry().get<MeshRendererComponent>(box);
+    EXPECT_FLOAT_EQ(mesh.alphaCutoff, -1.0f) << "from the model's material (also for scenes saved before)";
+    EXPECT_FLOAT_EQ(importedAlphaCutoff(model->materials[0]), 0.3f);
     EXPECT_EQ(scene.registry().get<TransformComponent>(root).scale, glm::vec3(1.0f));
-    // Both survive saving.
+    // An override survives saving.
+    mesh.alphaCutoff = 0.7f;
+    mesh.doubleSided = true;
     auto copy = SceneSerializer::clone(scene);
     ASSERT_TRUE(copy.has_value());
     const auto& copied = (*copy)->registry().get<MeshRendererComponent>((*copy)->findByUuid(scene.uuidOf(box)));
-    EXPECT_FLOAT_EQ(copied.alphaCutoff, 0.3f);
+    EXPECT_FLOAT_EQ(copied.alphaCutoff, 0.7f);
     EXPECT_TRUE(copied.doubleSided);
 
     // BLEND (leaf cards) is cut out at a half.
     const auto blended = editedCube(dir.path(), "blend.gltf", [](nlohmann::json& doc) { doc["materials"][0]["alphaMode"] = "BLEND"; });
     auto blend = importGltf(blended);
     ASSERT_TRUE(blend.has_value());
-    Scene blendScene;
-    const entt::entity blendRoot = instantiateModel(blendScene, *blend, "Content/Models/blend.gltf", "B");
-    EXPECT_FLOAT_EQ(blendScene.registry().get<MeshRendererComponent>(blendScene.childrenOf(blendScene.childrenOf(blendRoot)[0])[0]).alphaCutoff,
-                    0.5f);
+    EXPECT_FLOAT_EQ(importedAlphaCutoff(blend->materials[0]), 0.5f);
 
     // A SketchUp model (inches written as metres) comes in at its real size, both sides drawn.
     const auto sketchUp = editedCube(dir.path(), "sketchup.gltf", [](nlohmann::json& doc) { doc["nodes"][0]["name"] = "SketchUp"; });

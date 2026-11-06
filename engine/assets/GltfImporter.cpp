@@ -227,6 +227,13 @@ int imageIndexOf(const cgltf_data& data, const cgltf_texture_view& view, std::ve
 
 } // namespace
 
+float importedAlphaCutoff(const ImportedMaterial& m) {
+    if (m.baseColorTexture < 0) return 0.0f;
+    if (m.alphaMode == ImportedMaterial::AlphaMode::Mask) return std::clamp(m.alphaCutoff, 0.01f, 1.0f);
+    if (m.alphaMode == ImportedMaterial::AlphaMode::Blend || m.baseColorHasAlpha) return 0.5f;
+    return 0.0f;
+}
+
 Result<ImportedModel> importGltf(const std::filesystem::path& file) {
     auto parsed = parse(file, true);
     if (!parsed) return std::unexpected(parsed.error());

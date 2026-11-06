@@ -30,10 +30,7 @@ void addMeshRenderer(Scene& scene, entt::entity e, const ImportedModel& model, s
     renderer.metallicRoughnessTexture = texture(m.metallicRoughnessTexture);
     renderer.normalTexture = texture(m.normalTexture);
     renderer.emissiveTexture = texture(m.emissiveTexture);
-    if (m.baseColorTexture >= 0 && (m.alphaMode != ImportedMaterial::AlphaMode::Opaque || m.baseColorHasAlpha)) {
-        renderer.alphaCutoff = m.alphaMode == ImportedMaterial::AlphaMode::Mask ? std::clamp(m.alphaCutoff, 0.01f, 1.0f) : 0.5f;
-    }
-    renderer.doubleSided = m.doubleSided;
+    // Alpha cutoff and two-sidedness stay "from the model" (see MeshRendererComponent).
     // Emissive maps multiply the factor; make sure a map alone still shows up.
     if (m.emissiveTexture >= 0 && renderer.emissiveStrength == 0.0f) renderer.emissiveStrength = 1.0f;
 }

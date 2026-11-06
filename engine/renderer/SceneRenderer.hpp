@@ -115,6 +115,14 @@ public:
                          double timeSeconds);
 
 private:
+    /// What an imported mesh's material says about cut-out and two-sidedness (cached per key).
+    struct ModelSurface {
+        float alphaCutoff = 0.0f;
+        bool twoSided = false;
+    };
+    [[nodiscard]] ModelSurface modelSurface(AssetLibrary& assets, const std::string& meshAsset);
+    std::unordered_map<std::string, ModelSurface> modelSurfaces_;
+    const AssetLibrary* surfaceAssets_ = nullptr;
     [[nodiscard]] const struct GpuMesh* meshFor(const MeshRendererComponent& mesh, AssetLibrary* assets, bool block);
     /// Pipelines that draw into the output image, one per output format.
     nvrhi::IGraphicsPipeline* outputPipeline(std::unordered_map<int, nvrhi::GraphicsPipelineHandle>& cache,

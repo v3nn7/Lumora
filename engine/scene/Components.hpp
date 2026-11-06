@@ -65,9 +65,11 @@ struct MeshRendererComponent {
     std::string material;
     bool visible = true;
     /// Cut-out surfaces (leaves, fences, hair cards): where the base colour map's alpha is below
-    /// this, nothing is drawn and no shadow is cast. 0 = opaque.
-    float alphaCutoff = 0.0f;
-    /// Drawn from behind too (thin things: leaves, cloth, paper).
+    /// this, nothing is drawn and no shadow is cast. 0 = opaque; -1 = what the model's material
+    /// says (glTF alphaMode), the default.
+    float alphaCutoff = -1.0f;
+    /// Drawn from behind too (thin things: leaves, cloth, paper). Imported models' two-sided
+    /// materials are always drawn so.
     bool doubleSided = false;
 };
 

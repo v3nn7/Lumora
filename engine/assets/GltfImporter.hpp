@@ -118,6 +118,10 @@ struct ImportedModel {
 
 [[nodiscard]] Result<ImportedModel> importGltf(const std::filesystem::path& file);
 
+/// The alpha cutoff a model's material asks for: its MASK cutoff, 0.5 for BLEND or a base map
+/// with transparency, 0 = opaque.
+[[nodiscard]] float importedAlphaCutoff(const ImportedMaterial& material);
+
 /// Files a model depends on (external buffers and images referenced by relative URI), so an
 /// importer can copy them next to the model. Data URIs and .glb chunks are not listed.
 [[nodiscard]] Result<std::vector<std::filesystem::path>> gltfDependencies(const std::filesystem::path& file);

@@ -330,8 +330,7 @@ Planned, in rough order: KTX2/Basis and HDR/EXR textures with an asset database 
 background loading; multiple materials per mesh; virtual shadow maps; a render
 thread; clustered lighting; TAA and
 temporal upscaling; GPU-driven culling, meshlets and mesh shaders (the capabilities are already
-detected); hardware ray tracing (RT GI and reflections); skeletal
-Tracy integration; world streaming.
+detected); hardware ray tracing (RT GI and reflections); Tracy integration; world streaming.
 
 Only items in "What works today" are implemented.
 

@@ -104,6 +104,14 @@ private:
     std::uint32_t shadowCompareIndex_ = 0;
     std::uint32_t materialSamplerIndex_ = 0;
     nvrhi::Format depthFormat_ = nvrhi::Format::D32;
+    /// Device-local heaps static buffers are placed in (one allocation for many buffers:
+    /// drivers allow only a few thousand allocations).
+    struct BufferHeap {
+        nvrhi::HeapHandle heap;
+        std::uint64_t used = 0;
+    };
+    std::vector<BufferHeap> bufferHeaps_;
+    [[nodiscard]] bool placeInHeap(nvrhi::IBuffer* buffer);
     std::unique_ptr<MeshCache> meshes_;
     std::unique_ptr<TextureCache> textures_;
     std::unique_ptr<EnvironmentCache> environments_;

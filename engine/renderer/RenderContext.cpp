@@ -173,6 +173,7 @@ RenderContext::~RenderContext() {
     textures_.reset();
     meshes_.reset();
     uploadList_ = nullptr;
+    bufferHeaps_.clear();
     if (gpu_ != nullptr) gpu_->runGarbageCollection();
     // NVRHI objects go before the Vulkan device they live on (members below the device).
     samplers_ = {};
@@ -241,10 +242,39 @@ nvrhi::BufferHandle RenderContext::createBuffer(std::span<const std::byte> bytes
     desc.initialState = vertex ? nvrhi::ResourceStates::VertexBuffer
                                : index ? nvrhi::ResourceStates::IndexBuffer : nvrhi::ResourceStates::ShaderResource;
     desc.keepInitialState = true;
+    desc.isVirtual = true;  // memory from a shared heap
     nvrhi::BufferHandle buffer = gpu_->createBuffer(desc);
+    if (buffer && !placeInHeap(buffer)) buffer = nullptr;
+    if (!buffer) {  // e.g. larger than a heap: a buffer of its own
+        desc.isVirtual = false;
+        buffer = gpu_->createBuffer(desc);
+    }
     if (!buffer) throw rhi::VulkanError(std::string("could not create buffer ") + name, VK_ERROR_OUT_OF_DEVICE_MEMORY);
     if (!bytes.empty()) upload([&](nvrhi::ICommandList* cmd) { cmd->writeBuffer(buffer, bytes.data(), bytes.size()); });
     return buffer;
+}
+
+bool RenderContext::placeInHeap(nvrhi::IBuffer* buffer) {
+    constexpr std::uint64_t kHeapSize = 64ull << 20;
+    const nvrhi::MemoryRequirements req = gpu_->getBufferMemoryRequirements(buffer);
+    if (req.size == 0 || req.size > kHeapSize) return false;
+    const std::uint64_t alignment = std::max<std::uint64_t>(req.alignment, 1);
+    for (BufferHeap& h : bufferHeaps_) {
+        const std::uint64_t offset = (h.used + alignment - 1) / alignment * alignment;
+        if (offset + req.size <= kHeapSize && gpu_->bindBufferMemory(buffer, h.heap, offset)) {
+            h.used = offset + req.size;
+            return true;
+        }
+    }
+    nvrhi::HeapDesc desc;
+    desc.capacity = kHeapSize;
+    desc.type = nvrhi::HeapType::DeviceLocal;
+    desc.debugName = "MeshHeap";
+    BufferHeap heap{gpu_->createHeap(desc), 0};
+    if (!heap.heap || !gpu_->bindBufferMemory(buffer, heap.heap, 0)) return false;
+    heap.used = req.size;
+    bufferHeaps_.push_back(std::move(heap));
+    return true;
 }
 
 nvrhi::TextureHandle RenderContext::createTexture(std::span<const std::span<const std::byte>> levels, std::uint32_t width,

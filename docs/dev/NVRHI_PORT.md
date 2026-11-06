@@ -40,7 +40,8 @@ buffers bound at offsets).
 1. [x] NVRHI and Vulkan-Headers 1.4.352 pinned in the build.
 2. [x] `RenderContext` creates the NVRHI device over our VkDevice; binding layouts, samplers,
        bindless table, shader library, pipeline creation on NVRHI.
-3. [x] Resources and uploads: mesh cache (heaps), texture cache, environment cache, HUD atlas.
+3. [x] Resources and uploads: mesh cache (static buffers in shared 64 MB heaps), texture cache,
+       environment cache, HUD atlas.
 4. [x] Render graph on NVRHI command lists (transients, framebuffers, clears, timer queries,
        parallel passes).
 5. [x] Scene renderer passes: depth prepass, shadows, SSAO, sky, opaque, grid, particles, bloom,

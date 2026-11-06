@@ -1,0 +1,78 @@
+name: CI
+
+# Builds and tests every pull request (and pushes to branches other than main) on Linux. GPU
+# tests run on Mesa's software Vulkan (lavapipe); nothing is packaged or published.
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: "6.8.2"
+  VULKAN_SDK_VERSION: "1.4.304.0"
+
+jobs:
+  linux:
+    name: Build and test (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++-14 libwayland-dev libxkbcommon-dev libgl1-mesa-dev \
+            libxcb-cursor0 libxkbcommon-x11-0 mesa-vulkan-drivers
+
+      - name: Vulkan SDK cache
+        id: vulkan-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vulkan
+          key: vulkan-sdk-Linux-${{ env.VULKAN_SDK_VERSION }}
+
+      - name: Vulkan SDK
+        env:
+          CACHED: ${{ steps.vulkan-cache.outputs.cache-hit }}
+        run: |
+          if [[ "$CACHED" != "true" ]]; then
+            curl -sSLf -o "$RUNNER_TEMP/vulkan.tar.xz" \
+              "https://sdk.lunarg.com/sdk/download/$VULKAN_SDK_VERSION/linux/vulkansdk-linux-x86_64-$VULKAN_SDK_VERSION.tar.xz"
+            mkdir -p "$RUNNER_TEMP/vulkan" && tar -xJf "$RUNNER_TEMP/vulkan.tar.xz" -C "$RUNNER_TEMP/vulkan"
+          fi
+          sdk="$RUNNER_TEMP/vulkan/$VULKAN_SDK_VERSION/x86_64"
+          echo "VULKAN_SDK=$sdk" >> "$GITHUB_ENV"
+          echo "$sdk/bin" >> "$GITHUB_PATH"
+
+      - name: Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+
+      - name: Compiler cache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ci-linux
+          max-size: 1G
+
+      - name: Configure
+        run: |
+          cmake --preset release -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14 \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build --preset release
+
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --preset release --output-on-failure

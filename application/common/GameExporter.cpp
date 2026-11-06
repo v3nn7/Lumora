@@ -69,9 +69,14 @@ Result<fs::path> exportGame(const GameExport& request) {
 
     // The project, without editor state: Saved/ holds caches, thumbnails and the script build
     // tree; only the built game library goes along.
-    auto copied = copyTree(request.projectRoot, request.output / "Game", [](const fs::path& relative) {
+    // C++ sources stay behind (the built library goes along); Lua scripts run from source.
+    auto copied = copyTree(request.projectRoot, request.output / "Game", [&](const fs::path& relative) {
         const std::string first = relative.begin()->string();
-        return first == "Saved" || first == ".git" || first == "Scripts";
+        if (first == "Saved" || first == ".git") return true;
+        if (first != "Scripts") return false;
+        std::error_code e;
+        if (fs::is_directory(request.projectRoot / relative, e)) return false;
+        return relative.extension() != ".lua";
     });
     if (!copied) return std::unexpected(copied.error());
     const fs::path library = request.projectRoot / "Saved" / "ScriptBuild" / "bin";

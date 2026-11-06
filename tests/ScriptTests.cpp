@@ -237,6 +237,9 @@ TEST(GameExport, WritesARunnableStandaloneGame) {
     std::ofstream(dir.path() / "Demo" / "Saved" / "Cache" / "junk.bin") << "editor state";
     std::filesystem::create_directories(dir.path() / "Demo" / "Saved" / "ScriptBuild" / "bin");
     std::ofstream(dir.path() / "Demo" / "Saved" / "ScriptBuild" / "bin" / "game.so") << "library";
+    std::filesystem::create_directories(dir.path() / "Demo" / "Scripts" / "ai");
+    std::ofstream(dir.path() / "Demo" / "Scripts" / "Player.cpp") << "// C++ source";
+    std::ofstream(dir.path() / "Demo" / "Scripts" / "ai" / "Enemy.lua") << "return {}";
 
     const std::filesystem::path out = dir.path() / "Export";
     auto launcher = app::exportGame({dir.path() / "Demo", "Demo", out, {}});
@@ -246,6 +249,8 @@ TEST(GameExport, WritesARunnableStandaloneGame) {
     EXPECT_TRUE(std::filesystem::exists(out / "Game" / "Content" / "Scenes" / "Main.lscene"));
     EXPECT_FALSE(std::filesystem::exists(out / "Game" / "Saved" / "Cache")) << "editor state stays behind";
     EXPECT_TRUE(std::filesystem::exists(out / "Game" / "Saved" / "ScriptBuild" / "bin" / "game.so"));
+    EXPECT_TRUE(std::filesystem::exists(out / "Game" / "Scripts" / "ai" / "Enemy.lua")) << "Lua runs from source";
+    EXPECT_FALSE(std::filesystem::exists(out / "Game" / "Scripts" / "Player.cpp")) << "C++ sources stay behind";
     EXPECT_FALSE(app::exportGame({dir.path() / "Demo", "Demo", out, {}}).has_value()) << "never overwrites";
 
     // The exported runtime opens the exported game on its own.

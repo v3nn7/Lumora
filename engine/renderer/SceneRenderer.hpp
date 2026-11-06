@@ -58,6 +58,7 @@ struct SceneDrawStats {
     std::uint32_t visibleObjects = 0;
     std::uint32_t culledObjects = 0;
     std::uint32_t lights = 0;
+    std::uint32_t particles = 0;
     bool parallelRecording = false;  // a pass was set up to record on several threads
     bool shadowsRendered = false;
     bool environmentLit = false;  // an HDR environment lit the frame
@@ -111,6 +112,8 @@ private:
     rhi::UniquePipeline sky_;
     rhi::UniquePipeline opaque_;
     rhi::UniquePipeline grid_;
+    rhi::UniquePipeline particlesAlpha_;
+    rhi::UniquePipeline particlesAdditive_;
     rhi::UniquePipeline shadow_;
     rhi::UniquePipeline depthPrepass_;
     rhi::UniquePipeline opaqueSkinned_;

@@ -48,6 +48,10 @@ constexpr ScriptApiEntry kApi[] = {
     {S::Behaviour, "setMaterial", "bool setMaterial(path)", "Use a .lmat material (\"\" = own settings)"},
     {S::Behaviour, "setMaterialOf", "bool setMaterialOf(Entity e, path)", "Another entity's material"},
     {S::Behaviour, "setColor", "bool setColor(Vec3 rgb)", "Mesh Renderer base colour (0..1)"},
+    // Particles
+    {S::Behaviour, "emitParticles", "void emitParticles(int count)", "Particle Emitter: a burst now"},
+    {S::Behaviour, "setParticlesPlaying", "void setParticlesPlaying(bool playing)", "Start or stop emitting"},
+    {S::Behaviour, "particleCount", "int particleCount()", "Particles alive"},
     // Game UI and input edges
     {S::Behaviour, "button", "bool button(text, x, y, w, h)", "Game UI button: true when clicked"},
     {S::Behaviour, "checkbox", "bool checkbox(text, bool& value, x, y, w = 260, h = 40)", "Flips value when clicked"},

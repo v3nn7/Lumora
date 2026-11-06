@@ -57,6 +57,7 @@ struct GraphicsPipelineDesc {
     bool skinVertexInput = false;  // with meshVertexInput: binding 1 = lumora::SkinVertex (locations 4, 5)
     bool overlayVertexInput = false;  // render::OverlayVertex: float3 position + RGBA8 colour
     bool hudVertexInput = false;      // render::HudVertex: float2 position, float2 uv, float4 colour
+    bool particleVertexInput = false; // render::ParticleVertex: float3 position, float2 corner, float4 colour
     VkCullModeFlags cullMode = VK_CULL_MODE_NONE;
     bool depthTest = false;
     bool depthWrite = false;

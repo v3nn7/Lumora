@@ -52,6 +52,14 @@ struct FrameConstants {
 
 inline constexpr std::uint32_t kNoTexture = 0xffffffffu;
 
+/// One corner of a particle quad (see particle.hlsl).
+struct ParticleVertex {
+    glm::vec3 position;
+    glm::vec2 corner;  // [-1, 1]
+    glm::vec4 color;   // linear HDR rgb + alpha
+};
+static_assert(sizeof(ParticleVertex) == 36);
+
 struct GpuObject {
     glm::mat4 world{1.0f};
     glm::mat4 normalMatrix{1.0f};

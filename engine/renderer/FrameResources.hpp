@@ -27,6 +27,7 @@ struct FrameResources {
     std::uint32_t lightGridCapacity = 0;
     rhi::Buffer overlayVertices;     // render::OverlayVertex[] (host-visible vertex buffer)
     rhi::Buffer hudVertices;         // render::HudVertex[]
+    rhi::Buffer particleVertices;    // ParticleVertex[] (alpha-blended first, then additive)
     VkDescriptorSet set = VK_NULL_HANDLE;
     std::unique_ptr<TransientImagePool> transients;
     std::unique_ptr<GpuProfiler> profiler;

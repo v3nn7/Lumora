@@ -201,6 +201,23 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     grid.debugName = "EditorGrid";
     grid_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), grid);
 
+    rhi::GraphicsPipelineDesc particles;
+    particles.vertexShader = shaders.get("particle.vert");
+    particles.fragmentShader = shaders.get("particle.frag");
+    particles.particleVertexInput = true;
+    particles.depthTest = true;
+    particles.depthWrite = false;
+    particles.depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;
+    particles.blend = rhi::BlendMode::Alpha;
+    particles.colorFormats = {hdr};
+    particles.depthFormat = ctx_.depthFormat();
+    particles.layout = ctx_.pipelineLayout();
+    particles.debugName = "ParticlesAlpha";
+    particlesAlpha_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), particles);
+    particles.blend = rhi::BlendMode::Additive;
+    particles.debugName = "ParticlesAdditive";
+    particlesAdditive_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), particles);
+
     rhi::GraphicsPipelineDesc shadow;
     shadow.vertexShader = shaders.get("shadow.vert");
     shadow.meshVertexInput = true;
@@ -813,6 +830,94 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 bindSets(ctx.cmd);
                 vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
             });
+    }
+
+    // ---- Particles: camera-facing quads, alpha-blended ones far to near, then additive ones.
+    {
+        struct Quad {
+            glm::vec3 center;
+            float size;
+            glm::vec4 color;
+            float depth;
+        };
+        std::vector<Quad> alpha;
+        std::vector<Quad> additive;
+        const glm::vec3 right(camera.view[0][0], camera.view[1][0], camera.view[2][0]);
+        const glm::vec3 up(camera.view[0][1], camera.view[1][1], camera.view[2][1]);
+        const glm::vec3 forward(-camera.view[0][2], -camera.view[1][2], -camera.view[2][2]);
+        auto linear = [](const glm::vec3& srgb) { return glm::pow(glm::max(srgb, glm::vec3(0.0f)), glm::vec3(2.2f)); };
+        for (auto [e, emitter, state] : reg.view<ParticleEmitterComponent, ParticleStateComponent>().each()) {
+            if (state.particles.empty()) continue;
+            const auto* worldTransform = reg.try_get<WorldTransformComponent>(e);
+            const glm::mat4 world = worldTransform != nullptr ? worldTransform->matrix : glm::mat4(1.0f);
+            const glm::vec3 c0 = linear(emitter.startColor) * emitter.intensity;
+            const glm::vec3 c1 = linear(emitter.endColor) * emitter.intensity;
+            auto& out = emitter.blend == ParticleBlend::Additive ? additive : alpha;
+            for (const auto& p : state.particles) {
+                const float t = std::clamp(p.age / p.life, 0.0f, 1.0f);
+                const glm::vec3 position = emitter.worldSpace ? p.position : glm::vec3(world * glm::vec4(p.position, 1.0f));
+                const float a = glm::mix(emitter.startAlpha, emitter.endAlpha, t);
+                if (a <= 0.0f) continue;
+                out.push_back({position, glm::mix(emitter.startSize, emitter.endSize, t) * 0.5f,
+                               glm::vec4(glm::mix(c0, c1, t), a), glm::dot(position - camera.position, forward)});
+            }
+        }
+        std::ranges::sort(alpha, std::greater<>{}, &Quad::depth);  // far first
+        const std::size_t alphaCount = alpha.size();
+        const std::size_t total = alphaCount + additive.size();
+        stats.particles = static_cast<std::uint32_t>(total);
+        if (total > 0) {
+            std::vector<ParticleVertex> vertices;
+            vertices.reserve(total * 6);
+            auto emit = [&](const Quad& q) {
+                const glm::vec3 r = right * q.size;
+                const glm::vec3 u = up * q.size;
+                const ParticleVertex v00{q.center - r - u, {-1.0f, -1.0f}, q.color};
+                const ParticleVertex v10{q.center + r - u, {1.0f, -1.0f}, q.color};
+                const ParticleVertex v11{q.center + r + u, {1.0f, 1.0f}, q.color};
+                const ParticleVertex v01{q.center - r + u, {-1.0f, 1.0f}, q.color};
+                vertices.insert(vertices.end(), {v00, v10, v11, v00, v11, v01});
+            };
+            for (const Quad& q : alpha) emit(q);
+            for (const Quad& q : additive) emit(q);
+            const VkDeviceSize bytes = vertices.size() * sizeof(ParticleVertex);
+            if (frame.particleVertices.size() < bytes) {
+                VkDeviceSize capacity = std::max<VkDeviceSize>(256 * 1024, frame.particleVertices.size());
+                while (capacity < bytes) capacity *= 2;
+                frame.particleVertices = rhi::Buffer(ctx_.device(), {capacity, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                                                     rhi::MemoryUsage::CpuToGpu, "ParticleVertices"});
+            }
+            frame.particleVertices.write(std::as_bytes(std::span(vertices)));
+            const VkBuffer vb = frame.particleVertices.handle();
+            const auto alphaVertices = static_cast<std::uint32_t>(alphaCount * 6);
+            const auto additiveVertices = static_cast<std::uint32_t>((total - alphaCount) * 6);
+            graph.addRasterPass(
+                "Particles",
+                [&](PassBuilder& b) {
+                    b.writeColor(hdr, LoadOp::Load);
+                    b.readDepth(depth);
+                },
+                [this, bindSets, layout, vb, alphaVertices, additiveVertices](PassContext& ctx) {
+                    const VkDeviceSize offset = 0;
+                    bindSets(ctx.cmd);
+                    vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
+                    PushConstants pc;
+                    if (alphaVertices > 0) {
+                        vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, particlesAlpha_.get());
+                        pc.flags = 0u;
+                        vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                           sizeof(pc), &pc);
+                        vkCmdDraw(ctx.cmd, alphaVertices, 1, 0, 0);
+                    }
+                    if (additiveVertices > 0) {
+                        vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, particlesAdditive_.get());
+                        pc.flags = 1u;
+                        vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                           sizeof(pc), &pc);
+                        vkCmdDraw(ctx.cmd, additiveVertices, 1, alphaVertices, 0);
+                    }
+                });
+        }
     }
 
     // ---- Bloom: downsample chain, then additive tent upsample back to the half-res level.

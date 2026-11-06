@@ -20,7 +20,8 @@ add_executable(lumora_tests
     EnvironmentTests.cpp
     AudioTests.cpp
     MaterialTests.cpp
-    GameUiTests.cpp)
+    GameUiTests.cpp
+    ParticleTests.cpp)
 target_link_libraries(lumora_tests PRIVATE
     lumora_core lumora_scene lumora_project lumora_runtime lumora_renderer lumora_cli
     GTest::gtest lumora_compile_options)

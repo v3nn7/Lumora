@@ -16,6 +16,7 @@
 #include "editor/EntityFactory.hpp"
 #include "editor/InspectorPanel.hpp"
 #include "assets/Material.hpp"
+#include "scene/Particles.hpp"
 #include "scene/Picking.hpp"
 #include "editor/ProfilerPanel.hpp"
 #include "editor/SceneHierarchyPanel.hpp"
@@ -134,6 +135,10 @@ EditorWindow::EditorWindow(app::AppContext& app, Project project, QWidget* paren
                 ctx_.setScene(playScene_.get(), true);
                 log::info("Editor", "play mode: now in {}", simulation_->loadedScene().generic_string());
             }
+        }
+        if (!simulation_ && editScene_ && !editScene_->registry().view<ParticleEmitterComponent>().empty()) {
+            // Particle effects run in the editor too, so they can be tuned without playing.
+            updateParticles(*editScene_, std::min(dt, 0.1f));
         }
         if (simulation_) {
             // The HUD is laid out in the viewport's pixels.

@@ -144,7 +144,7 @@ Hover over the viewport or click it, then:
   Hold <kbd>Ctrl</kbd> while dragging to snap (0.25 m, 15°, 0.1×). Gizmos work in the parent's
   space, so child entities move as expected.
 - **Edit** values in the Inspector. **Add Component** adds any of: Transform, Mesh Renderer,
-  Light, Camera, Rigid Body, Collider, Character Controller, Script, Audio Source, Animator, Rotator, Oscillator. A new Collider starts out fitted to the entity's
+  Light, Camera, Rigid Body, Collider, Character Controller, Script, Audio Source, Animator, Rotator, Oscillator, Particle Emitter. A new Collider starts out fitted to the entity's
   mesh.
 - **Undo** everything with <kbd>Ctrl</kbd>+<kbd>Z</kbd> and redo with
   <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>. <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicates,
@@ -239,6 +239,17 @@ reflections, ambient light and fog all take their colour from it. Free, high-qua
 - **Ambient** (Sky and Ambient) still scales the environment's ambient light: 1 is physically
   correct.
 
+### Particle effects
+
+*Create → Effects* adds ready-made **Smoke**, **Sparks** and **Fire**; any entity can get a
+**Particle Emitter** component. Particles leave along the entity's +Y axis within the **Spread**
+cone, from a point, sphere or box, at **Rate** per second (plus a **Burst** at the start), fall
+with **Gravity** (negative rises), slow with **Drag**, and blend from the start to the end size,
+colour and alpha over their **Lifetime**. **Additive** blending with an **Intensity** above 1
+glows with bloom (sparks, fire); **Alpha** suits smoke and dust. Effects run in the editor as
+well, so they can be tuned without playing. Scripts call `emitParticles(30)` for a burst and
+`setParticlesPlaying(false)` to stop one.
+
 ### Physics
 
 Give an entity a **Collider** (box, sphere or capsule) to make it solid. Add a **Rigid Body** to
@@ -330,6 +341,7 @@ What a behaviour can do:
 | `button(text, x, y, w, h)`, `checkbox(text, value, x, y)`, `slider(text, value, min, max, x, y)`, `panel(x, y, w, h)`, `uiStyle(accent)` | Game UI: menus and settings drawn over the game; a button returns true when clicked |
 | `mousePosition()`, `mousePressed(b)`, `mouseReleased(b)`, `keyPressed(key)` | Mouse in HUD pixels; presses since the last step (once each) |
 | `drawTextCentered(text, x, y)`, `drawTextRight(text, x, y)` | Aligned HUD text |
+| `emitParticles(n)`, `setParticlesPlaying(on)`, `particleCount()` | The entity's Particle Emitter |
 | `setMaterial("Content/Materials/Glow.lmat")`, `setMaterialOf(e, path)`, `setColor(v)` | Change how a Mesh Renderer looks |
 | `loadScene("Content/Scenes/Level2.lscene")` | Switch to another scene at the end of the step (menus, levels); `time()` starts again from 0. In the editor, Stop returns to the scene you were editing |
 | `move(velocity)`, `jump(speed)`, `grounded()` | Character Controller: walk, jump, stand |

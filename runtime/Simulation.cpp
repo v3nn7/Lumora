@@ -6,6 +6,7 @@
 #include "runtime/Scripting.hpp"
 #include "core/Log.hpp"
 #include "scene/Scene.hpp"
+#include "scene/Particles.hpp"
 #include "scene/SceneSerializer.hpp"
 
 #include <nlohmann/json.hpp>
@@ -127,6 +128,7 @@ void Simulation::step() {
         scene_.updateWorldTransforms();
         if (scripts_) scripts_->dispatchCollisions(physics_->takeContacts());
     }
+    updateParticles(scene_, dt);  // after physics: emitters on moving bodies emit from where they are
     if (audio_) audio_->update();
     ++steps_;
     if (scripts_) {

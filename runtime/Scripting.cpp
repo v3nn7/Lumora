@@ -7,6 +7,7 @@
 #include "runtime/PhysicsWorld.hpp"
 #include "assets/Material.hpp"
 #include "scene/Hud.hpp"
+#include "scene/Particles.hpp"
 #include "scene/Prefab.hpp"
 #include "scene/Scene.hpp"
 
@@ -405,6 +406,23 @@ void apiDrawTextAligned(void* c, const char* text, const float* box, int align, 
     hud->addText({box[0], box[1]}, box[3], {rgba[0], rgba[1], rgba[2], rgba[3]}, text, a, box[2]);
 }
 
+int apiParticles(void* c, script::Entity entity, int command, int count) {
+    const entt::entity e = liveEntity(c, entity);
+    if (e == entt::null) return 0;
+    Scene& scene = *context(c).scene;
+    auto* emitter = scene.registry().try_get<ParticleEmitterComponent>(e);
+    if (emitter == nullptr) return 0;
+    switch (command) {
+        case 0: emitter->playing = false; return 1;
+        case 1: emitter->playing = true; return 1;
+        case 2: requestParticles(scene, static_cast<unsigned>(entt::to_integral(e)), count); return 1;
+        default: {
+            const auto* state = scene.registry().try_get<ParticleStateComponent>(e);
+            return state != nullptr ? static_cast<int>(state->particles.size()) : 0;
+        }
+    }
+}
+
 /// "speed=4, jump = 6.5; name=2" -> the number for `key`, or `fallback`.
 double apiParameter(void* c, script::Entity entity, const char* key, double fallback) {
     const entt::entity e = liveEntity(c, entity);
@@ -538,6 +556,7 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.ui = apiUi;
     api_.uiStyle = apiUiStyle;
     api_.drawTextAligned = apiDrawTextAligned;
+    api_.particles = apiParticles;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }

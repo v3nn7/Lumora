@@ -95,6 +95,52 @@ struct CharacterControllerComponent {
     float gravityFactor = 1.0f;
 };
 
+enum class ParticleShape : std::int32_t { Point = 0, Sphere = 1, Box = 2 };
+enum class ParticleBlend : std::int32_t { Alpha = 0, Additive = 1 };
+
+/// Emits camera-facing particles (smoke, sparks, fire, dust). They leave along the entity's
+/// local +Y axis within a cone, fall with gravity, slow with drag, and fade from the start to
+/// the end size and colour over their life. Simulated in play mode and previewed in the editor.
+struct ParticleEmitterComponent {
+    bool playing = true;          // emitting continuously at `rate`
+    float rate = 20.0f;           // particles per second
+    std::int32_t burst = 0;       // particles emitted at once when it starts
+    std::int32_t maxParticles = 500;
+    float lifetime = 2.0f;        // seconds
+    float lifetimeVariation = 0.3f;  // +- fraction
+    float speed = 2.0f;           // m/s at emission
+    float speedVariation = 0.3f;
+    float spreadDeg = 25.0f;      // half-angle of the emission cone around +Y
+    ParticleShape shape = ParticleShape::Point;
+    float shapeSize = 0.2f;       // sphere radius / box half-size
+    float gravity = 0.0f;         // multiples of 9.81 m/s^2 downwards (negative: rise)
+    float drag = 0.0f;            // per second
+    float startSize = 0.25f;      // metres
+    float endSize = 0.6f;
+    glm::vec3 startColor{1.0f};
+    glm::vec3 endColor{1.0f};
+    float startAlpha = 1.0f;
+    float endAlpha = 0.0f;
+    float intensity = 1.0f;       // brightness (> 1 glows with bloom)
+    ParticleBlend blend = ParticleBlend::Alpha;
+    bool worldSpace = true;       // false: particles move with the entity
+};
+
+/// Run-time state of an emitter (not saved): the live particles.
+struct ParticleStateComponent {
+    struct Particle {
+        glm::vec3 position;  // world (or emitter-local when not worldSpace)
+        glm::vec3 velocity;
+        float age;
+        float life;
+    };
+    std::vector<Particle> particles;
+    float pending = 0.0f;     // fractional particles owed by the rate
+    std::uint32_t rng = 0x9e3779b9u;
+    bool started = false;     // burst done
+    std::int32_t requested = 0;  // extra particles asked for (scripts)
+};
+
 /// Moves the entity back and forth: position = start + offset * sin(2 pi t / period), while the
 /// simulation runs. With a kinematic Rigid Body and a Collider it is a moving platform that
 /// carries characters standing on it.

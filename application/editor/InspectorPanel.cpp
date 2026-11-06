@@ -40,7 +40,7 @@ QFormLayout* makeForm(QWidget* body) {
 QIcon componentIcon(const std::string& id) {
     static const std::pair<const char*, const char*> kIcons[] = {
         {"Transform", "entity"}, {"MeshRenderer", "cube"}, {"Light", "light"}, {"Camera", "camera"}, {"Rotator", "rotate"},
-        {"RigidBody", "sparkle"}, {"Collider", "grid"}};
+        {"RigidBody", "sparkle"}, {"Collider", "grid"}, {"ParticleEmitter", "sparkle"}};
     for (const auto& [component, icon] : kIcons) {
         if (id == component) return app::theme::icon(QString::fromLatin1(icon));
     }

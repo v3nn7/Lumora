@@ -106,6 +106,64 @@ void populateCreateMenu(QMenu& menu, EditorContext& ctx, bool asChild) {
             scene.registry().get<TransformComponent>(e).position.y = 2.0f;
         }, asChild);
     });
+    QMenu* effects = menu.addMenu(icon(QStringLiteral("sparkle")), QObject::tr("Effects"));
+    effects->addAction(icon(QStringLiteral("sparkle")), QObject::tr("Smoke"), [&ctx, asChild] {
+        ctx.createEntity(QObject::tr("Smoke"), [](Scene& scene, entt::entity e) {
+            auto& p = scene.registry().emplace<ParticleEmitterComponent>(e);
+            p.rate = 14.0f;
+            p.lifetime = 4.0f;
+            p.speed = 0.8f;
+            p.spreadDeg = 15.0f;
+            p.shape = ParticleShape::Sphere;
+            p.shapeSize = 0.2f;
+            p.gravity = -0.03f;
+            p.drag = 0.3f;
+            p.startSize = 0.4f;
+            p.endSize = 2.2f;
+            p.startColor = {0.55f, 0.55f, 0.57f};
+            p.endColor = {0.35f, 0.35f, 0.37f};
+            p.startAlpha = 0.55f;
+            p.endAlpha = 0.0f;
+        }, asChild);
+    });
+    effects->addAction(icon(QStringLiteral("sparkle")), QObject::tr("Sparks"), [&ctx, asChild] {
+        ctx.createEntity(QObject::tr("Sparks"), [](Scene& scene, entt::entity e) {
+            auto& p = scene.registry().emplace<ParticleEmitterComponent>(e);
+            p.rate = 60.0f;
+            p.lifetime = 0.9f;
+            p.speed = 5.0f;
+            p.speedVariation = 0.5f;
+            p.spreadDeg = 40.0f;
+            p.gravity = 1.0f;
+            p.startSize = 0.06f;
+            p.endSize = 0.02f;
+            p.startColor = {1.0f, 0.8f, 0.4f};
+            p.endColor = {1.0f, 0.3f, 0.05f};
+            p.intensity = 6.0f;
+            p.blend = ParticleBlend::Additive;
+            p.endAlpha = 0.2f;
+        }, asChild);
+    });
+    effects->addAction(icon(QStringLiteral("sparkle")), QObject::tr("Fire"), [&ctx, asChild] {
+        ctx.createEntity(QObject::tr("Fire"), [](Scene& scene, entt::entity e) {
+            auto& p = scene.registry().emplace<ParticleEmitterComponent>(e);
+            p.rate = 70.0f;
+            p.lifetime = 0.8f;
+            p.speed = 1.6f;
+            p.spreadDeg = 12.0f;
+            p.shape = ParticleShape::Sphere;
+            p.shapeSize = 0.25f;
+            p.gravity = -0.2f;
+            p.startSize = 0.6f;
+            p.endSize = 0.15f;
+            p.startColor = {1.0f, 0.55f, 0.15f};
+            p.endColor = {0.9f, 0.15f, 0.02f};
+            p.intensity = 3.0f;
+            p.blend = ParticleBlend::Additive;
+            p.startAlpha = 0.8f;
+            p.endAlpha = 0.0f;
+        }, asChild);
+    });
     menu.addAction(icon(QStringLiteral("light")), QObject::tr("Spot Light"), [&ctx, asChild] {
         ctx.createEntity(QObject::tr("Spot Light"), [](Scene& scene, entt::entity e) {
             auto& light = scene.registry().emplace<LightComponent>(e);

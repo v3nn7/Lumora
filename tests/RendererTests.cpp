@@ -135,6 +135,7 @@ TEST_F(RendererTest, CaptureRejectsInvalidSize) {
 #include "GltfTestUtils.hpp"
 #include "TestUtils.hpp"
 #include "assets/AssetLibrary.hpp"
+#include "scene/Particles.hpp"
 #include "scene/ModelInstance.hpp"
 
 TEST_F(RendererTest, RendersImportedGltfModel) {
@@ -765,6 +766,63 @@ TEST_F(RendererTest, MaterialAssetsColourEveryObjectUsingThem) {
     ASSERT_TRUE(grey.has_value());
     const auto g = pixel(*grey, left.x, left.y);
     EXPECT_LT(std::abs(int(g.r) - int(g.b)), 20) << "grey again";
+}
+
+TEST_F(RendererTest, ParticlesGlowBlendAndHideBehindGeometry) {
+    // Dark scene; a cloud of additive orange particles on the left lights the image there; the
+    // same cloud on the right sits behind a black wall and does not show.
+    auto scene = std::make_unique<Scene>("Particles");
+    scene->environment().ambientIntensity = 0.0f;
+    scene->environment().fogDensity = 0.0f;
+    scene->environment().skyZenithColor = glm::vec3(0.0f);
+    scene->environment().skyHorizonColor = glm::vec3(0.0f);
+    scene->environment().groundColor = glm::vec3(0.0f);
+    ParticleEmitterComponent sparks;
+    sparks.playing = false;
+    sparks.burst = 200;
+    sparks.maxParticles = 200;
+    sparks.speed = 0.0f;
+    sparks.shape = ParticleShape::Sphere;
+    sparks.shapeSize = 0.4f;
+    sparks.lifetime = 100.0f;
+    sparks.startSize = sparks.endSize = 0.3f;
+    sparks.startColor = sparks.endColor = {1.0f, 0.5f, 0.1f};
+    sparks.startAlpha = sparks.endAlpha = 1.0f;
+    sparks.intensity = 2.0f;
+    sparks.blend = ParticleBlend::Additive;
+    for (float x : {-1.5f, 1.5f}) {
+        const auto e = scene->createEntity("Sparks");
+        scene->registry().emplace<ParticleEmitterComponent>(e, sparks);
+        scene->registry().get<TransformComponent>(e).position = {x, 0.0f, 0.0f};
+    }
+    const auto wall = scene->createEntity("Wall");
+    auto& mesh = scene->registry().emplace<MeshRendererComponent>(wall);
+    mesh.baseColor = glm::vec3(0.0f);
+    mesh.roughness = 1.0f;
+    auto& t = scene->registry().get<TransformComponent>(wall);
+    t.position = {1.5f, 0.0f, 1.2f};
+    t.scale = {1.6f, 1.6f, 0.1f};
+    scene->updateWorldTransforms();
+    updateParticles(*scene, 0.001f);
+    ASSERT_EQ(particleCount(*scene), 400u);
+
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.0f, 5.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const glm::uvec2 size(160, 80);
+    const CameraView view = cam.view(2.0f);
+    RenderSettings settings;
+    settings.bloom = false;
+    auto image = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(image.has_value()) << image.error().message;
+    EXPECT_EQ(renderer_->stats().scene.particles, 400u);
+    const glm::ivec2 left = toPixel(view, glm::vec3(-1.5f, 0.0f, 0.0f), size);
+    const glm::ivec2 right = toPixel(view, glm::vec3(1.5f, 0.0f, 0.0f), size);
+    const auto lit = pixel(*image, left.x, left.y);
+    const auto hidden = pixel(*image, right.x, right.y);
+    EXPECT_GT(lit.r, 150) << "additive particles add up";
+    EXPECT_GT(lit.r, lit.b + 60) << "in their colour";
+    EXPECT_LT(luminance(hidden), 20.0f) << "behind the wall";
 }
 
 // ---- HUD ------------------------------------------------------------------------------------

@@ -122,6 +122,18 @@ UniquePipeline createGraphicsPipeline(const Device& device, const PipelineCache&
         {1, 0, VK_FORMAT_R32G32_SFLOAT, 8},
         {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 16},
     };
+    const VkVertexInputBindingDescription particleBinding{0, 36, VK_VERTEX_INPUT_RATE_VERTEX};
+    const VkVertexInputAttributeDescription particleAttributes[3] = {
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
+        {1, 0, VK_FORMAT_R32G32_SFLOAT, 12},
+        {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 20},
+    };
+    if (d.particleVertexInput) {
+        vertexInput.vertexBindingDescriptionCount = 1;
+        vertexInput.pVertexBindingDescriptions = &particleBinding;
+        vertexInput.vertexAttributeDescriptionCount = 3;
+        vertexInput.pVertexAttributeDescriptions = particleAttributes;
+    }
     if (d.hudVertexInput) {
         vertexInput.vertexBindingDescriptionCount = 1;
         vertexInput.pVertexBindingDescriptions = &hudBinding;

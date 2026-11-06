@@ -175,6 +175,35 @@ ComponentRegistry makeBuiltin() {
         reg.add(std::move(d));
     }
     {
+        auto d = R::describe<ParticleEmitterComponent>("ParticleEmitter", "Particle Emitter");
+        using P = ParticleEmitterComponent;
+        d.fields = {
+            R::field(&P::playing, "playing", "Playing", FieldKind::Bool),
+            ranged(R::field(&P::rate, "rate", "Rate (/s)", FieldKind::Float), 0.0f, 100000.0f, 1.0f),
+            ranged(R::field(&P::burst, "burst", "Burst", FieldKind::Int), 0.0f, 100000.0f, 1.0f),
+            ranged(R::field(&P::maxParticles, "maxParticles", "Max Particles", FieldKind::Int), 1.0f, 100000.0f, 10.0f),
+            ranged(R::field(&P::lifetime, "lifetime", "Lifetime (s)", FieldKind::Float), 0.01f, 120.0f, 0.05f),
+            ranged(R::field(&P::lifetimeVariation, "lifetimeVariation", "Lifetime Variation", FieldKind::Float), 0.0f, 1.0f, 0.01f),
+            ranged(R::field(&P::speed, "speed", "Speed", FieldKind::Float), 0.0f, 1000.0f, 0.05f),
+            ranged(R::field(&P::speedVariation, "speedVariation", "Speed Variation", FieldKind::Float), 0.0f, 1.0f, 0.01f),
+            ranged(R::field(&P::spreadDeg, "spread", "Spread", FieldKind::Float), 0.0f, 180.0f, 0.5f),
+            enumerated(R::field(&P::shape, "shape", "Shape", FieldKind::Enum), {"Point", "Sphere", "Box"}),
+            ranged(R::field(&P::shapeSize, "shapeSize", "Shape Size", FieldKind::Float), 0.0f, 1000.0f, 0.01f),
+            ranged(R::field(&P::gravity, "gravity", "Gravity", FieldKind::Float), -10.0f, 10.0f, 0.01f),
+            ranged(R::field(&P::drag, "drag", "Drag", FieldKind::Float), 0.0f, 100.0f, 0.01f),
+            ranged(R::field(&P::startSize, "startSize", "Start Size", FieldKind::Float), 0.0f, 1000.0f, 0.01f),
+            ranged(R::field(&P::endSize, "endSize", "End Size", FieldKind::Float), 0.0f, 1000.0f, 0.01f),
+            R::field(&P::startColor, "startColor", "Start Color", FieldKind::Color),
+            R::field(&P::endColor, "endColor", "End Color", FieldKind::Color),
+            ranged(R::field(&P::startAlpha, "startAlpha", "Start Alpha", FieldKind::Float), 0.0f, 1.0f, 0.01f),
+            ranged(R::field(&P::endAlpha, "endAlpha", "End Alpha", FieldKind::Float), 0.0f, 1.0f, 0.01f),
+            ranged(R::field(&P::intensity, "intensity", "Intensity", FieldKind::Float), 0.0f, 1000.0f, 0.05f),
+            enumerated(R::field(&P::blend, "blend", "Blend", FieldKind::Enum), {"Alpha", "Additive"}),
+            R::field(&P::worldSpace, "worldSpace", "World Space", FieldKind::Bool),
+        };
+        reg.add(std::move(d));
+    }
+    {
         auto d = R::describe<OscillatorComponent>("Oscillator", "Oscillator");
         d.fields = {
             R::field(&OscillatorComponent::offset, "offset", "Offset", FieldKind::Vec3),

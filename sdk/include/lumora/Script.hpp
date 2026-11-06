@@ -115,6 +115,7 @@ struct EngineApi {
     int (*ui)(void* context, int kind, const char* label, const float* rect, float* value, const float* range);
     void (*uiStyle)(void* context, const float* accentRgb, float fontSize);
     void (*drawTextAligned)(void* context, const char* utf8, const float* xyWidthSize, int align, const float* rgba);
+    int (*particles)(void* context, Entity entity, int command, int count);  // 0 stop, 1 play, 2 burst, 3 alive
 };
 
 class Behaviour;
@@ -325,6 +326,13 @@ protected:
         const float c[3] = {rgb.x, rgb.y, rgb.z};
         return api_->setColor(api_->context, entity_, c) != 0;
     }
+
+    // Particles (the entity's Particle Emitter).
+    /// Emits `count` particles at once (an explosion, a hit).
+    void emitParticles(int count) const { api_->particles(api_->context, entity_, 2, count); }
+    /// Starts or stops continuous emission (live particles finish their life).
+    void setParticlesPlaying(bool playing) const { api_->particles(api_->context, entity_, playing ? 1 : 0, 0); }
+    [[nodiscard]] int particleCount() const { return api_->particles(api_->context, entity_, 3, 0); }
 
     // Sound (the entity's Audio Source component).
     void playSound() const { api_->sound(api_->context, entity_, 1); }

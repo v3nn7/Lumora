@@ -50,4 +50,35 @@ bool isImageFile(const std::filesystem::path& file) {
     return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga" || ext == ".bmp";
 }
 
+Result<HdrImage> loadHdrFile(const std::filesystem::path& file) {
+    auto bytes = fs::readBinaryFile(file);
+    if (!bytes) return std::unexpected(bytes.error());
+    if (bytes->empty() || bytes->size() > static_cast<std::size_t>(INT32_MAX)) {
+        return makeError("{}: file is empty or too large", file.filename().string());
+    }
+    const auto* data = reinterpret_cast<const stbi_uc*>(bytes->data());
+    const int length = static_cast<int>(bytes->size());
+    if (stbi_is_hdr_from_memory(data, length) == 0) {
+        return makeError("{}: not a Radiance HDR image", file.filename().string());
+    }
+    int w = 0, h = 0, channels = 0;
+    std::unique_ptr<float, decltype(&stbi_image_free)> pixels(stbi_loadf_from_memory(data, length, &w, &h, &channels, 3),
+                                                              &stbi_image_free);
+    if (!pixels) return makeError("{}: HDR decode failed ({})", file.filename().string(), stbi_failure_reason());
+    if (w <= 0 || h <= 0 || w > 16384 || h > 16384) {
+        return makeError("{}: image size {}x{} is out of range", file.filename().string(), w, h);
+    }
+    HdrImage image;
+    image.width = static_cast<std::uint32_t>(w);
+    image.height = static_cast<std::uint32_t>(h);
+    image.rgb.assign(pixels.get(), pixels.get() + static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 3);
+    return image;
+}
+
+bool isHdrFile(const std::filesystem::path& file) {
+    std::string ext = file.extension().string();
+    std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return ext == ".hdr";
+}
+
 } // namespace lumora

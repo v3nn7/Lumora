@@ -74,6 +74,7 @@ lumora_engine_module(renderer
         renderer/TransientImagePool.cpp
         renderer/MeshCache.cpp
         renderer/TextureCache.cpp
+        renderer/EnvironmentMap.cpp
         renderer/RenderContext.cpp
         renderer/Renderer.cpp
         renderer/SceneRenderer.cpp

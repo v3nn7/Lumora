@@ -22,4 +22,15 @@ struct ImageData {
 [[nodiscard]] Result<ImageData> loadImageFile(const std::filesystem::path& file);
 [[nodiscard]] bool isImageFile(const std::filesystem::path& file);
 
+/// High dynamic range image: linear RGB radiance, 3 floats per pixel (rows top to bottom).
+struct HdrImage {
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::vector<float> rgb;
+};
+
+/// Loads a Radiance .hdr file (equirectangular environment maps).
+[[nodiscard]] Result<HdrImage> loadHdrFile(const std::filesystem::path& file);
+[[nodiscard]] bool isHdrFile(const std::filesystem::path& file);
+
 } // namespace lumora

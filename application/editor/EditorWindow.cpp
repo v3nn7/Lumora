@@ -10,6 +10,7 @@
 #include "core/Log.hpp"
 #include "core/Version.hpp"
 #include "editor/ConsolePanel.hpp"
+#include "editor/CodeEditorPanel.hpp"
 #include "editor/ContentBrowserPanel.hpp"
 #include "editor/EditorViewportClient.hpp"
 #include "editor/EntityFactory.hpp"
@@ -228,7 +229,7 @@ void EditorWindow::buildActions() {
     delete_ = make(tr("Delete"), QStringLiteral("trash"), QKeySequence::Delete);
     frame_ = make(tr("Frame Selection"), QString(), QKeySequence(Qt::Key_F));
     savePrefab_ = make(tr("Save Selection as Prefab…"), QStringLiteral("save"));
-    connect(savePrefab_, &QAction::triggered, this, &EditorWindow::saveSelectionAsPrefab);
+    connect(savePrefab_, &QAction::triggered, this, [this] { saveSelectionAsPrefab(); });
     play_ = make(tr("Play"), QStringLiteral("play"), QKeySequence(Qt::Key_F5));
     pause_ = make(tr("Pause"), QStringLiteral("pause"), QKeySequence(Qt::Key_F6));
     stop_ = make(tr("Stop"), QStringLiteral("stop"), QKeySequence(Qt::SHIFT | Qt::Key_F5));
@@ -350,9 +351,12 @@ void EditorWindow::buildDocks() {
                      if (field.id == "audioClip") return pickAudioAsset(parent);
                      return field.id.ends_with("Texture") ? pickTextureAsset(parent) : pickMeshAsset(parent);
                  }));
-    auto* content = new ContentBrowserPanel(app::toQString(project_.contentDir()));
+    auto* content = new ContentBrowserPanel(app::toQString(project_.rootDir()));
+    content_ = content;
     auto* contentDock = makeDock(this, tr("Content Browser"), QStringLiteral("dock.content"), QStringLiteral("folder"), content);
     auto* console = makeDock(this, tr("Console"), QStringLiteral("dock.console"), QStringLiteral("console"), new ConsolePanel(app_.logBridge()));
+    code_ = new CodeEditorPanel;
+    codeDock_ = makeDock(this, tr("Code"), QStringLiteral("dock.code"), QStringLiteral("console"), code_);
     profiler_ = new ProfilerPanel(app_.renderContext(), [this]() -> const render::FrameStats* {
         render::Renderer* r = app_.renderer();
         return r ? &r->stats() : nullptr;
@@ -367,6 +371,8 @@ void EditorWindow::buildDocks() {
     addDockWidget(Qt::BottomDockWidgetArea, contentDock);
     addDockWidget(Qt::BottomDockWidgetArea, console);
     tabifyDockWidget(contentDock, console);
+    addDockWidget(Qt::BottomDockWidgetArea, codeDock_);
+    tabifyDockWidget(contentDock, codeDock_);
     contentDock->raise();
     resizeDocks({hierarchy, inspector}, {280, 360}, Qt::Horizontal);
     resizeDocks({contentDock}, {230}, Qt::Vertical);
@@ -388,6 +394,14 @@ void EditorWindow::buildDocks() {
     connect(content, &ContentBrowserPanel::openSceneRequested, this, [this](const QString& path) { openScene(path); });
     connect(content, &ContentBrowserPanel::addModelRequested, this, [this](const QString& path) { addModelToScene(path); });
     connect(content, &ContentBrowserPanel::importRequested, this, &EditorWindow::importModels);
+    connect(content, &ContentBrowserPanel::openCodeRequested, this, [this](const QString& path) { openCode(path); });
+    connect(content, &ContentBrowserPanel::newBehaviourRequested, this, &EditorWindow::newBehaviour);
+    connect(content, &ContentBrowserPanel::newSceneRequested, this, &EditorWindow::createSceneFile);
+    connect(content, &ContentBrowserPanel::prefabFromSelectionRequested, this,
+            [this](const QString& folder) { saveSelectionAsPrefab(folder); });
+    connect(code_, &CodeEditorPanel::buildRequested, this, [this] {
+        if (scripts_) scripts_->build();
+    });
     connect(viewport_, &app::VulkanViewport::frameRendered, this,
             [this] { profiler_->onFrame(viewport_->frameIntervalMs()); });
 }
@@ -620,21 +634,31 @@ void EditorWindow::importModelDialog() {
 }
 
 void EditorWindow::importModels(const QStringList& files, const QString& targetDir) {
+    // Files land in the folder they were dropped on (when it is inside the project), else in the
+    // usual place for their kind. Models and prefabs are also placed in the scene, HDR images
+    // become the sky; other files (textures, sounds, scripts) are only copied.
+    const std::filesystem::path target = app::toPath(targetDir);
+    const bool targetInProject = !targetDir.isEmpty() && !project_.relativePath(target).starts_with("..");
+    auto destination = [&](const char* fallback) { return targetInProject ? target : project_.contentDir() / fallback; };
     for (const QString& file : files) {
-        if (isPrefabFile(app::toPath(file))) {
-            auto copied = importFile(app::toPath(file), project_.contentDir() / "Prefabs");
+        const std::filesystem::path source = app::toPath(file);
+        auto fail = [&](const std::string& message) {
+            QMessageBox::critical(this, tr("Import failed"), QString::fromStdString(message));
+        };
+        if (isPrefabFile(source)) {
+            auto copied = importFile(source, destination("Prefabs"));
             if (!copied) {
-                QMessageBox::critical(this, tr("Import failed"), QString::fromStdString(copied.error().message));
+                fail(copied.error().message);
                 continue;
             }
             addPrefabToScene(*copied);
             continue;
         }
-        if (isHdrFile(app::toPath(file))) {
+        if (isHdrFile(source)) {
             // An HDR environment becomes the scene's sky (undoable like any environment edit).
-            auto copied = importFile(app::toPath(file), project_.contentDir() / "Textures");
+            auto copied = importFile(source, destination("Textures"));
             if (!copied) {
-                QMessageBox::critical(this, tr("Import failed"), QString::fromStdString(copied.error().message));
+                fail(copied.error().message);
                 continue;
             }
             const std::string key = project_.relativePath(*copied);
@@ -642,14 +666,43 @@ void EditorWindow::importModels(const QStringList& files, const QString& targetD
             log::info("Editor", "sky set to {}", key);
             continue;
         }
-        auto imported = importModelFile(app::toPath(file), app::toPath(targetDir));
-        if (!imported) {
-            QMessageBox::critical(this, tr("Import failed"), QString::fromStdString(imported.error().message));
+        if (isModelFile(source)) {
+            auto imported = importModelFile(source, destination("Models"));
+            if (!imported) {
+                fail(imported.error().message);
+                continue;
+            }
+            log::info("Editor", "imported {} -> {}", file.toStdString(), imported->string());
+            addModelToScene(app::toQString(*imported));
             continue;
         }
-        log::info("Editor", "imported {} -> {}", file.toStdString(), imported->string());
-        addModelToScene(app::toQString(*imported));
+        // Scripts belong in Scripts/ (only those are compiled).
+        const std::string ext = source.extension().string();
+        const bool script = ext == ".cpp" || ext == ".hpp" || ext == ".h";
+        const bool inScripts = targetInProject && project_.relativePath(target).starts_with("Scripts");
+        auto copied = importFile(source, script && !inScripts ? project_.rootDir() / "Scripts" : destination("Textures"));
+        if (!copied) {
+            fail(copied.error().message);
+            continue;
+        }
+        log::info("Editor", "imported {} -> {}", file.toStdString(), copied->string());
     }
+}
+
+void EditorWindow::createSceneFile(const QString& path) {
+    auto scene = createTemplateScene(ProjectTemplate::Empty);
+    scene->setName(QFileInfo(path).completeBaseName().toStdString());
+    if (auto saved = SceneSerializer::save(*scene, app::toPath(path)); !saved) {
+        QMessageBox::critical(this, tr("New Scene"), QString::fromStdString(saved.error().message));
+        return;
+    }
+    openScene(path);
+}
+
+void EditorWindow::openCode(const QString& path, int line) {
+    code_->openFile(path, line);
+    codeDock_->show();
+    codeDock_->raise();
 }
 
 entt::entity EditorWindow::addModelToScene(const QString& absolutePath) {
@@ -1017,6 +1070,14 @@ void EditorWindow::closeEvent(QCloseEvent* event) {
         event->ignore();
         return;
     }
+    if (code_->hasUnsavedChanges()) {
+        const auto answer = QMessageBox::question(this, tr("Unsaved Code"), tr("Save the changed code files?"),
+                                                  QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+        if (answer == QMessageBox::Cancel || (answer == QMessageBox::Save && !code_->saveAll())) {
+            event->ignore();
+            return;
+        }
+    }
     leaveSession();
     stop();
     saveLayout();
@@ -1183,8 +1244,11 @@ void EditorWindow::updateRemoteMarkers() {
 
 void EditorWindow::setUpScripts() {
     scripts_ = std::make_unique<app::ScriptBuilder>(app::toQString(project_.rootDir()), this);
-    connect(scripts_.get(), &app::ScriptBuilder::buildStarted, this,
-            [this] { statusBar()->showMessage(tr("Building scripts…")); });
+    connect(scripts_.get(), &app::ScriptBuilder::buildStarted, this, [this] {
+        statusBar()->showMessage(tr("Building scripts…"));
+        code_->setBuilding();
+    });
+    connect(scripts_.get(), &app::ScriptBuilder::buildFinished, code_, &CodeEditorPanel::setBuildResult);
     connect(scripts_.get(), &app::ScriptBuilder::buildFinished, this, &EditorWindow::onScriptsBuilt);
     scripts_->setWatching(true);  // saving a script rebuilds and reloads the game
     if (!scripts_->hasScripts()) return;
@@ -1235,7 +1299,7 @@ void EditorWindow::newBehaviour() {
     }
     const QString file = QDir(scripts_->scriptsDir()).filePath(name + QStringLiteral(".cpp"));
     log::info("Script", "created {}", file.toStdString());
-    QDesktopServices::openUrl(QUrl::fromLocalFile(file));  // the user's code editor
+    openCode(file);
     scripts_->build();
 }
 
@@ -1262,15 +1326,16 @@ void EditorWindow::exportGameDialog() {
 
 // ---- Prefabs ---------------------------------------------------------------------------------
 
-void EditorWindow::saveSelectionAsPrefab() {
+void EditorWindow::saveSelectionAsPrefab(const QString& folder) {
     const entt::entity selected = ctx_.selectedEntity();
     if (ctx_.scene() == nullptr || selected == entt::null) {
         QMessageBox::information(this, tr("Save as Prefab"), tr("Select the entity to save (its children come along)."));
         return;
     }
     const QString name = QString::fromStdString(ctx_.scene()->nameOf(selected));
-    const QString suggested = app::toQString(project_.contentDir() / "Prefabs" / (name.toStdString() + ".lprefab"));
-    QDir().mkpath(app::toQString(project_.contentDir() / "Prefabs"));
+    const QString dir = folder.isEmpty() ? app::toQString(project_.contentDir() / "Prefabs") : folder;
+    const QString suggested = QDir(dir).filePath(name + QStringLiteral(".lprefab"));
+    QDir().mkpath(dir);
     const QString file = QFileDialog::getSaveFileName(this, tr("Save as Prefab"), suggested, tr("Lumora prefabs (*.lprefab)"));
     if (file.isEmpty()) return;
     std::filesystem::path path = app::toPath(file);

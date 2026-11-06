@@ -467,3 +467,91 @@ TEST_F(EditorUiTest, PointerPassThroughReachesTheViewport) {
     QKeyEvent wUp(QEvent::KeyRelease, Qt::Key_W, Qt::NoModifier);
     QCoreApplication::sendEvent(editor->windowHandle(), &wUp);
 }
+
+// ---- Content Browser and code editor ---------------------------------------------------------
+
+#include "editor/CodeEditorPanel.hpp"
+#include "editor/ContentBrowserPanel.hpp"
+
+#include <QListView>
+#include <QListWidget>
+#include <QTreeView>
+
+#include <fstream>
+
+TEST(ContentBrowser, ShowsTheWholeProjectAndOpensFiles) {
+    test::TempDir dir;
+    const auto root = dir.path();
+    std::filesystem::create_directories(root / "Content" / "Models");
+    std::filesystem::create_directories(root / "Scripts");
+    std::filesystem::create_directories(root / "Saved" / "Cache");
+    std::ofstream(root / "Scripts" / "Game.cpp") << "int x;\n";
+    editor::ContentBrowserPanel browser(QString::fromStdString(root.string()));
+    EXPECT_EQ(browser.currentFolder(), QString::fromStdString((root / "Content").string())) << "starts in Content";
+    browser.navigate(QString::fromStdString((root / "Content" / "Models").string()));
+    EXPECT_TRUE(browser.currentFolder().endsWith(QStringLiteral("Content/Models")));
+    browser.navigate(QStringLiteral("/"));  // outside the project
+    EXPECT_EQ(browser.currentFolder(), QString::fromStdString(root.string())) << "never leaves the project";
+
+    // Double-clicking a script asks for the code editor.
+    QStringList code;
+    QObject::connect(&browser, &editor::ContentBrowserPanel::openCodeRequested, [&](const QString& p) { code << p; });
+    browser.navigate(QString::fromStdString((root / "Scripts").string()));
+    auto* view = browser.findChild<QListView*>();
+    ASSERT_NE(view, nullptr);
+    QModelIndex script;
+    for (int i = 0; i < 50 && !script.isValid(); ++i) {  // the file model fills in asynchronously
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        const QModelIndex rootIndex = view->rootIndex();
+        for (int r = 0; r < view->model()->rowCount(rootIndex); ++r) {
+            const QModelIndex idx = view->model()->index(r, 0, rootIndex);
+            if (idx.data().toString() == QStringLiteral("Game.cpp")) script = idx;
+        }
+    }
+    ASSERT_TRUE(script.isValid());
+    emit view->activated(script);
+    ASSERT_EQ(code.size(), 1);
+    EXPECT_TRUE(code.front().endsWith(QStringLiteral("Scripts/Game.cpp")));
+
+    // The folder tree hides the editor's Saved/ folder.
+    auto* tree = browser.findChild<QTreeView*>();
+    ASSERT_NE(tree, nullptr);
+    bool sawSaved = false;
+    for (int i = 0; i < 50; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    for (int r = 0; r < tree->model()->rowCount(tree->rootIndex()); ++r) {
+        if (tree->model()->index(r, 0, tree->rootIndex()).data().toString() == QStringLiteral("Saved")) sawSaved = true;
+    }
+    EXPECT_FALSE(sawSaved);
+}
+
+TEST(CodeEditor, EditsSavesAndJumpsToCompilerErrors) {
+    test::TempDir dir;
+    const auto file = dir.path() / "Game.cpp";
+    std::ofstream(file) << "int main() {\n    return 0;\n}\n";
+    editor::CodeEditorPanel panel;
+    editor::CodeEdit* edit = panel.openFile(QString::fromStdString(file.string()));
+    ASSERT_NE(edit, nullptr);
+    EXPECT_EQ(panel.openFile(QString::fromStdString(file.string())), edit) << "a file opens once";
+    EXPECT_EQ(panel.openFileCount(), 1);
+    EXPECT_TRUE(edit->toPlainText().contains(QStringLiteral("return 0;")));
+
+    edit->moveCursor(QTextCursor::End);
+    edit->insertPlainText(QStringLiteral("// changed\n"));
+    EXPECT_TRUE(panel.hasUnsavedChanges());
+    QKeyEvent save(QEvent::KeyPress, Qt::Key_S, Qt::ControlModifier);
+    QCoreApplication::sendEvent(edit, &save);
+    EXPECT_FALSE(panel.hasUnsavedChanges());
+    std::ifstream in(file);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    EXPECT_NE(text.find("// changed"), std::string::npos) << "Ctrl+S wrote the file";
+
+    // GCC and MSVC messages become diagnostics; activating one jumps to the line.
+    panel.setBuildResult(false, QString::fromStdString(file.string()) + QStringLiteral(":2:5: error: expected ';'\n") +
+                                    QString::fromStdString(file.string()) + QStringLiteral("(3): warning C4100: unused\n") +
+                                    QStringLiteral("ninja: build stopped\n"));
+    EXPECT_EQ(panel.diagnosticCount(), 2);
+    auto* list = panel.findChild<QListWidget*>();
+    ASSERT_NE(list, nullptr);
+    emit list->itemActivated(list->item(0));
+    EXPECT_EQ(edit->textCursor().blockNumber(), 1) << "line 2";
+}

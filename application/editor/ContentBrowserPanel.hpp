@@ -5,37 +5,65 @@
 #include <QWidget>
 
 class QFileSystemModel;
+class QHBoxLayout;
 class QLabel;
 class QListView;
+class QSortFilterProxyModel;
 class QToolButton;
+class QTreeView;
 
 namespace lumora::editor {
 
-/// File browser rooted at the project's Content directory.
+/// The project's files: a folder tree on the left, the open folder's contents on the right, a
+/// clickable path above. Rooted at the project folder (editor state in Saved/ is hidden), so
+/// Content/ and Scripts/ are both here.
+///
+/// Double-click opens: folders, scenes (in the editor), models and prefabs (placed in the scene),
+/// HDR images (as the sky), scripts and text files (in the code editor). The context menu and the
+/// New button create folders, scenes, scripts and prefabs, import files, and rename, duplicate or
+/// delete (to the system trash).
 class LUMORA_EDITOR_API ContentBrowserPanel final : public QWidget {
     Q_OBJECT
 public:
-    ContentBrowserPanel(const QString& contentRoot, QWidget* parent = nullptr);
+    explicit ContentBrowserPanel(const QString& projectRoot, QWidget* parent = nullptr);
+
+    [[nodiscard]] QString currentFolder() const { return current_; }
+    void navigate(const QString& dir);
 
 signals:
     void openSceneRequested(const QString& path);
-    /// A model inside the project should be placed in the scene.
+    /// A model or prefab inside the project should be placed in the scene.
     void addModelRequested(const QString& path);
-    /// External model files were dropped onto the browser (to be imported into `targetDir`).
+    /// Files from outside (dropped or chosen with Import) to bring into `targetDir`.
     void importRequested(const QStringList& files, const QString& targetDir);
+    void newSceneRequested(const QString& path);
+    void newBehaviourRequested();
+    void prefabFromSelectionRequested(const QString& folder);
+    void openCodeRequested(const QString& path);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
-    void navigate(const QString& dir);
     void showContextMenu(const QPoint& pos);
+    void populateNewMenu(class QMenu& menu);
+    void activate(const QString& path);
+    void newFolder();
+    void newScene();
+    void importFiles();
+    void duplicate(const QString& path);
+    void remove(const QStringList& paths);
+    void rebuildBreadcrumbs();
+    [[nodiscard]] QStringList selectedPaths() const;
 
     QString root_;
     QString current_;
     QFileSystemModel* model_ = nullptr;
+    QFileSystemModel* folders_ = nullptr;
+    QSortFilterProxyModel* folderFilter_ = nullptr;
+    QTreeView* tree_ = nullptr;
     QListView* view_ = nullptr;
-    QLabel* path_ = nullptr;
+    QHBoxLayout* crumbs_ = nullptr;
     QToolButton* up_ = nullptr;
 };
 

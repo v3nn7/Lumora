@@ -90,6 +90,7 @@ lumora_qt_module(editor
         editor/PropertyWidgets.cpp
         editor/InspectorPanel.cpp
         editor/ContentBrowserPanel.cpp
+        editor/CodeEditorPanel.cpp
         editor/ConsolePanel.cpp
         editor/ProfilerPanel.cpp
     DEPS lumora_appcommon lumora_collab)

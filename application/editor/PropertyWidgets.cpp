@@ -290,7 +290,7 @@ QWidget* createFieldEditor(const FieldDesc& d, FieldGetter get, FieldSetter set,
             layout->setSpacing(4);
             auto* label = new QLineEdit;
             label->setReadOnly(true);
-            label->setPlaceholderText(QObject::tr("None (built-in mesh)"));
+            label->setPlaceholderText(d.id == "meshAsset" ? QObject::tr("None (built-in mesh)") : QObject::tr("None"));
             auto show = [label, get] {
                 const QString value = QString::fromStdString(std::get<std::string>(get()));
                 label->setText(value);

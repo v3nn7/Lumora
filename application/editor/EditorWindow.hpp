@@ -131,7 +131,9 @@ private:
     void onScriptsBuilt(bool ok, const QString& output);
     void newBehaviour();
     void exportGameDialog();
-    void saveSelectionAsPrefab();
+    void saveSelectionAsPrefab(const QString& folder = {});
+    void createSceneFile(const QString& path);
+    void openCode(const QString& path, int line = 0);
     entt::entity addPrefabToScene(const std::filesystem::path& path);
 
     app::AppContext& app_;
@@ -188,6 +190,9 @@ private:
     QLabel* statusCollab_ = nullptr;
 
     QAction* exportGame_ = nullptr;
+    class ContentBrowserPanel* content_ = nullptr;
+    class CodeEditorPanel* code_ = nullptr;
+    QDockWidget* codeDock_ = nullptr;
     QAction* savePrefab_ = nullptr;
     QAction* newBehaviour_ = nullptr;
     QAction* buildScripts_ = nullptr;

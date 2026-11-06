@@ -129,6 +129,7 @@ struct EngineApi {
     void (*drawTextAligned)(void* context, const char* utf8, const float* xyWidthSize, int align, const float* rgba);
     int (*particles)(void* context, Entity entity, int command, int count);  // 0 stop, 1 play, 2 burst, 3 alive
     void (*debugDraw)(void* context, int kind, const float* a, const float* b, const float* rgba);  // 0 line, 1 box, 2 sphere
+    int (*animationBlend)(void* context, Entity entity, const char* clip, float seconds);
     // kind: 0 action down, 1 action pressed, 2 axis, 3 gamepad connected, 4 pad button down,
     // 5 pad button pressed, 6 pad axis (code = button or axis, name = action or axis)
     float (*input)(void* context, int kind, int code, const char* name);
@@ -333,6 +334,10 @@ protected:
         return api_->animation(api_->context, entity_, std::string(clip).c_str(), 1) != 0;
     }
     void stopAnimation() const { api_->animation(api_->context, entity_, nullptr, 0); }
+    /// Blends from the current clip into `clip` over `seconds` (walk to run without a pop).
+    bool crossfadeAnimation(std::string_view clip, float seconds = 0.25f) const {
+        return api_->animationBlend(api_->context, entity_, std::string(clip).c_str(), seconds) != 0;
+    }
     [[nodiscard]] bool animationPlaying() const { return api_->animation(api_->context, entity_, nullptr, 2) != 0; }
 
     // Looks (the entity's Mesh Renderer).

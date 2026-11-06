@@ -341,3 +341,34 @@ TEST(GltfMaterials, SplitsAMeshPerMaterial) {
     EXPECT_EQ(second.meshAsset, "sign.gltf#1");
     EXPECT_EQ(second.baseColor, glm::vec3(0, 0, 1));
 }
+
+TEST(GltfAnimation, CrossfadeBlendsFromTheOldClipToTheNew) {
+    test::TempDir dir;
+    test::writeAnimatedGltf(dir.path() / "Content" / "Models" / "arm.gltf");
+    AssetLibrary assets(dir.path());
+    auto model = assets.model(dir.path() / "Content" / "Models" / "arm.gltf");
+    ASSERT_TRUE(model.has_value());
+    Scene scene("Blend");
+    const entt::entity root = instantiateModel(scene, **model, "Content/Models/arm.gltf", "Robot");
+    entt::entity arm = entt::null;
+    for (auto [e, n] : scene.registry().view<NameComponent>().each()) {
+        if (n.name == "Arm") arm = e;
+    }
+    Simulation sim(scene, 1.0 / 60.0);
+    sim.setProjectRoot(dir.path());
+    for (int i = 0; i < 15; ++i) sim.step();  // Slide at 0.25 s: x = 0.5
+    const auto& t = scene.registry().get<TransformComponent>(arm);
+    EXPECT_NEAR(t.position.x, 0.5f, 0.02f);
+
+    ASSERT_TRUE(sim.animation()->crossfade(root, "Lift", 1.0f));
+    EXPECT_NEAR(sim.animation()->blendWeight(root), 0.0f, 1e-6f);
+    EXPECT_NEAR(t.position.x, 0.5f, 0.02f) << "no pop when the fade starts";
+    for (int i = 0; i < 30; ++i) sim.step();  // half way: Slide at 0.75 (x 1.5), Lift at 0.5 (y 0.75)
+    EXPECT_NEAR(sim.animation()->blendWeight(root), 0.5f, 0.02f);
+    EXPECT_NEAR(t.position.x, 0.75f, 0.05f) << "between the clips";
+    EXPECT_NEAR(t.position.y, 0.375f, 0.03f);
+    for (int i = 0; i < 36; ++i) sim.step();  // fade over; Lift at 1.1 s
+    EXPECT_FLOAT_EQ(sim.animation()->blendWeight(root), 1.0f);
+    EXPECT_NEAR(t.position.x, 0.0f, 1e-4f) << "the new clip alone";
+    EXPECT_NEAR(t.position.y, 1.65f, 0.03f);
+}

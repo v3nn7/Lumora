@@ -7,6 +7,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/euler_angles.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <unordered_map>
@@ -29,6 +30,13 @@ struct AnimationSystem::Impl {
         std::vector<entt::entity> nodeEntities;  // by model node index
         std::vector<NodePose> poses;
         std::vector<std::uint8_t> animated;  // per node: bit0 translation, bit1 rotation, bit2 scale
+        // Crossfade: the clip being left, still advancing, and how far the blend is.
+        const ImportedAnimation* previous = nullptr;
+        float previousTime = 0.0f;
+        bool previousLoop = true;
+        float blendDuration = 0.0f;
+        float blendElapsed = 0.0f;
+        std::vector<NodePose> previousPoses;
     };
     std::unordered_map<entt::entity, State> states;
 
@@ -75,16 +83,42 @@ struct AnimationSystem::Impl {
         collectNodes(state, e);
         state.poses.assign(nodes, NodePose{});
         state.animated.assign(nodes, 0);
-        for (const AnimationChannel& ch : state.clip->channels) {
-            if (ch.node < 0 || static_cast<std::size_t>(ch.node) >= nodes) continue;
-            state.animated[static_cast<std::size_t>(ch.node)] |= static_cast<std::uint8_t>(1u << static_cast<int>(ch.path));
-        }
+        markAnimated(state, *state.clip);
+        if (state.previous != nullptr) markAnimated(state, *state.previous);
         state.failed = false;
         return true;
     }
 
+    static void markAnimated(State& state, const ImportedAnimation& clip) {
+        for (const AnimationChannel& ch : clip.channels) {
+            if (ch.node < 0 || static_cast<std::size_t>(ch.node) >= state.animated.size()) continue;
+            state.animated[static_cast<std::size_t>(ch.node)] |= static_cast<std::uint8_t>(1u << static_cast<int>(ch.path));
+        }
+    }
+
+    /// Rest pose of every node, then the clip's channels on top.
+    void samplePose(const State& state, const ImportedAnimation& clip, float time, std::vector<NodePose>& out) const {
+        out.resize(state.model->nodes.size());
+        for (std::size_t i = 0; i < out.size(); ++i) {
+            const ImportedNode& n = state.model->nodes[i];
+            out[i] = {n.translation, n.rotation, n.scale};
+        }
+        sampleAnimation(clip, time, out);
+    }
+
     void apply(State& state) {
-        sampleAnimation(*state.clip, state.time, state.poses);
+        samplePose(state, *state.clip, state.time, state.poses);
+        if (state.previous != nullptr && state.blendDuration > 0.0f) {
+            samplePose(state, *state.previous, state.previousTime, state.previousPoses);
+            const float w = std::clamp(state.blendElapsed / state.blendDuration, 0.0f, 1.0f);
+            for (std::size_t i = 0; i < state.poses.size(); ++i) {
+                NodePose& p = state.poses[i];
+                const NodePose& from = state.previousPoses[i];
+                p.translation = glm::mix(from.translation, p.translation, w);
+                p.rotation = glm::slerp(from.rotation, p.rotation, w);
+                p.scale = glm::mix(from.scale, p.scale, w);
+            }
+        }
         auto& reg = scene.registry();
         for (std::size_t i = 0; i < state.nodeEntities.size(); ++i) {
             const entt::entity e = state.nodeEntities[i];
@@ -124,6 +158,16 @@ void AnimationSystem::update(float dt) {
             }
         }
         if (!state.playing) continue;
+        if (state.previous != nullptr) {
+            state.blendElapsed += dt;
+            const float duration = state.previous->duration;
+            state.previousTime += dt * animator.speed;
+            if (duration > 0.0f) {
+                state.previousTime = state.previousLoop ? std::fmod(std::max(state.previousTime, 0.0f), duration)
+                                                        : std::clamp(state.previousTime, 0.0f, duration);
+            }
+            if (state.blendElapsed >= state.blendDuration) state.previous = nullptr;  // the new clip alone
+        }
         state.time += dt * animator.speed;
         const float duration = state.clip->duration;
         if (duration > 0.0f) {
@@ -140,17 +184,57 @@ void AnimationSystem::update(float dt) {
 }
 
 bool AnimationSystem::play(entt::entity animator, std::string_view clip) {
+    if (auto it = impl_->states.find(animator); it != impl_->states.end()) it->second.previous = nullptr;
+    return start(animator, clip);
+}
+
+bool AnimationSystem::start(entt::entity animator, std::string_view clip) {
     Impl& w = *impl_;
     auto* component = w.scene.registry().try_get<AnimatorComponent>(animator);
     if (component == nullptr) return false;
     if (!clip.empty()) component->clip = std::string(clip);
     Impl::State& state = w.states[animator];
+    // Rebinding (a new clip) rebuilds which nodes are animated, the fading clip's ones included.
+    state.clipName.clear();
     if (!w.bind(animator, *component, state)) return false;
     state.started = true;
     state.playing = true;
     state.time = component->speed < 0.0f ? state.clip->duration : 0.0f;
     w.apply(state);
     return true;
+}
+
+bool AnimationSystem::crossfade(entt::entity animator, std::string_view clip, float seconds) {
+    Impl& w = *impl_;
+    auto it = w.states.find(animator);
+    const bool canBlend = seconds > 0.0f && it != w.states.end() && it->second.clip != nullptr && it->second.playing;
+    const ImportedAnimation* from = canBlend ? it->second.clip : nullptr;
+    const float fromTime = canBlend ? it->second.time : 0.0f;
+    const auto* component = w.scene.registry().try_get<AnimatorComponent>(animator);
+    const bool fromLoop = component != nullptr ? component->loop : true;
+    if (canBlend) {
+        // Bind sees the previous clip so its channels stay animated during the fade.
+        it->second.previous = from;
+    }
+    if (!start(animator, clip)) {
+        if (canBlend) it->second.previous = nullptr;
+        return false;
+    }
+    Impl::State& state = w.states[animator];
+    state.previous = from;
+    state.previousTime = fromTime;
+    state.previousLoop = fromLoop;
+    state.blendDuration = canBlend ? seconds : 0.0f;
+    state.blendElapsed = 0.0f;
+    if (from == state.clip) state.previous = nullptr;  // same clip: just restart it
+    w.apply(state);
+    return true;
+}
+
+float AnimationSystem::blendWeight(entt::entity animator) const {
+    const auto it = impl_->states.find(animator);
+    if (it == impl_->states.end() || it->second.previous == nullptr || it->second.blendDuration <= 0.0f) return 1.0f;
+    return std::clamp(it->second.blendElapsed / it->second.blendDuration, 0.0f, 1.0f);
 }
 
 void AnimationSystem::stop(entt::entity animator) {

@@ -379,6 +379,7 @@ What a behaviour can do:
 | `saveNumber(key, v)`, `loadNumber(key, fallback)`, `saveText`, `loadText`, `hasSave`, `deleteSave` | Saved game data, kept between runs |
 | `after(2.0f, [this] { ... })`, `every(0.5f, [this] { ... })`, `cancelTimer(id)` | Run code later or repeatedly, in game time |
 | `debugLine(a, b)`, `debugBox(center, half)`, `debugSphere(center, r)` | Debug shapes on top of the scene for this step (editor while playing; player after <kbd>F3</kbd>) |
+| `crossfadeAnimation("Run", 0.25f)` | Blend from the current clip into another (no pop) |
 | `emitParticles(n)`, `setParticlesPlaying(on)`, `particleCount()` | The entity's Particle Emitter |
 | `setMaterial("Content/Materials/Glow.lmat")`, `setMaterialOf(e, path)`, `setColor(v)` | Change how a Mesh Renderer looks |
 | `loadScene("Content/Scenes/Level2.lscene")` | Switch to another scene at the end of the step (menus, levels); `time()` starts again from 0. In the editor, Stop returns to the scene you were editing |

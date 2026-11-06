@@ -24,6 +24,11 @@ public:
     void update(float dt);
     /// Starts a clip (by name; empty = the first) from the beginning. False if there is none.
     bool play(entt::entity animator, std::string_view clip);
+    /// Starts a clip and blends into it from the current pose over `seconds` (the old clip keeps
+    /// moving while it fades out): walk to run, idle to jump without a pop.
+    bool crossfade(entt::entity animator, std::string_view clip, float seconds);
+    /// 0..1 while a crossfade runs, 1 when the current clip plays alone.
+    [[nodiscard]] float blendWeight(entt::entity animator) const;
     void stop(entt::entity animator);
     [[nodiscard]] bool isPlaying(entt::entity animator) const;
     /// Seconds into the current clip.
@@ -32,6 +37,7 @@ public:
     [[nodiscard]] static bool sceneHasAnimators(const Scene& scene);
 
 private:
+    bool start(entt::entity animator, std::string_view clip);  // play, keeping a crossfade's source
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

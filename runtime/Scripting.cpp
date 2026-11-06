@@ -278,6 +278,13 @@ int apiAnimation(void* c, script::Entity entity, const char* clip, int command) 
     }
 }
 
+int apiAnimationBlend(void* c, script::Entity entity, const char* clip, float seconds) {
+    AnimationSystem* animation = context(c).animation;
+    const entt::entity e = liveEntity(c, entity);
+    if (animation == nullptr || e == entt::null || clip == nullptr) return 0;
+    return animation->crossfade(e, clip, seconds) ? 1 : 0;
+}
+
 int apiCharacter(void* c, script::Entity entity, int command, const float* xyz) {
     PhysicsWorld* physics = context(c).physics;
     const entt::entity e = liveEntity(c, entity);
@@ -632,6 +639,7 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.drawTextAligned = apiDrawTextAligned;
     api_.particles = apiParticles;
     api_.debugDraw = apiDebugDraw;
+    api_.animationBlend = apiAnimationBlend;
     api_.input = apiInput;
     api_.save = apiSave;
 }

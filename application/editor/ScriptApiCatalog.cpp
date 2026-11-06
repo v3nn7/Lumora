@@ -90,6 +90,7 @@ constexpr ScriptApiEntry kApi[] = {
     // Animation and sound
     {S::Behaviour, "playAnimation", "bool playAnimation(clip = \"\")", "Start an Animator clip"},
     {S::Behaviour, "stopAnimation", "void stopAnimation()", "Stop the Animator"},
+    {S::Behaviour, "crossfadeAnimation", "bool crossfadeAnimation(clip, float seconds = 0.25)", "Blend into another clip"},
     {S::Behaviour, "animationPlaying", "bool animationPlaying()", "Is a clip playing"},
     {S::Behaviour, "playSound", "void playSound()", "Play this entity's Audio Source"},
     {S::Behaviour, "stopSound", "void stopSound()", "Stop this entity's Audio Source"},

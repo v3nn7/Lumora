@@ -291,7 +291,7 @@ LUMORA_BEHAVIOUR(Rise);
         Scene source("Prefab source");
         const entt::entity rocket = source.createEntity("Rocket");
         source.registry().emplace<ScriptComponent>(rocket).behaviour = "Rise";
-        source.createEntity("Flame", Uuid::generate(), rocket);
+        (void)source.createEntity("Flame", Uuid::generate(), rocket);
         ASSERT_TRUE(savePrefab(source, rocket, project / "Content" / "Prefabs" / "Rocket.lprefab").has_value());
     }
     app::ScriptBuilder builder(QString::fromStdString(project.string()));

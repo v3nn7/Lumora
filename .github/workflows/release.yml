@@ -108,11 +108,14 @@ jobs:
             libxcb-cursor0 libxkbcommon-x11-0 mesa-vulkan-drivers
 
       # The SDK is downloaded once per version and restored from the Actions cache afterwards.
+      # Linux only: on Windows the installer also puts the Vulkan loader (vulkan-1.dll) into
+      # System32, which a restored C:\VulkanSDK would lack, so Windows always runs the installer.
       - name: Vulkan SDK cache
+        if: runner.os == 'Linux'
         id: vulkan-cache
         uses: actions/cache@v4
         with:
-          path: ${{ runner.os == 'Windows' && 'C:\VulkanSDK' || format('{0}/vulkan', runner.temp) }}
+          path: ${{ runner.temp }}/vulkan
           key: vulkan-sdk-${{ runner.os }}-${{ env.VULKAN_SDK_VERSION }}
 
       - name: Vulkan SDK (Linux)

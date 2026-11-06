@@ -448,6 +448,8 @@ void EditorWindow::buildDocks() {
                      if (field.id == "audioClip") return pickAudioAsset(parent);
                      if (field.id == "material") return pickMaterialAsset(parent);
                      if (field.id == "timeline") return pickContentFile(parent, tr("Choose Timeline"), tr("Timelines (*.ltimeline)"));
+                     if (field.id == "controller")
+                         return pickContentFile(parent, tr("Choose Animator Controller"), tr("Animator Controllers (*.lanim)"));
                      const bool image = field.id.ends_with("Texture") || field.id == "texture" || field.id == "heightmap";
                      return image ? pickTextureAsset(parent) : pickMeshAsset(parent);
                  });
@@ -1452,7 +1454,7 @@ void EditorWindow::play() {
             log::warn("Editor", "{} - playing without sound", audio.error().message);
         }
     }
-    if (gameModule_) simulation_->setScripts(gameModule_, &viewport_->input());
+    simulation_->setScripts(gameModule_, &viewport_->input());  // C++ library (if any), Lua and graphs
     client_->hud = &simulation_->hud();
     client_->debug = &simulation_->debugDraw();
     paused_ = false;

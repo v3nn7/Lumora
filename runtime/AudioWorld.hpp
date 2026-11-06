@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <string_view>
 
 namespace lumora {
 
@@ -40,6 +41,13 @@ public:
     void setListenerFromView(const glm::mat4& view);
     /// Volume of everything (the game's settings), 0..1.
     void setMasterVolume(float volume);
+    /// Mixer buses by name: "Master", "Music", "SFX", "UI", "Voice", "Ambience" (case-insensitive).
+    /// False for an unknown name.
+    bool setBusVolume(std::string_view bus, float volume);
+    [[nodiscard]] float busVolume(std::string_view bus) const;  // -1 for an unknown bus
+    bool setBusMuted(std::string_view bus, bool muted);
+    [[nodiscard]] bool busMuted(std::string_view bus) const;
+
     /// Pauses or resumes every sound (play mode paused).
     void setPaused(bool paused);
 

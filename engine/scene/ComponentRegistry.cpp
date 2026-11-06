@@ -148,6 +148,7 @@ ComponentRegistry makeBuiltin() {
             ranged(R::field(&AnimatorComponent::speed, "speed", "Speed", FieldKind::Float), -10.0f, 10.0f, 0.05f),
             R::field(&AnimatorComponent::loop, "loop", "Loop", FieldKind::Bool),
             R::field(&AnimatorComponent::playOnStart, "playOnStart", "Play on Start", FieldKind::Bool),
+            R::field(&AnimatorComponent::controller, "controller", "Controller (.lanim)", FieldKind::Asset),
         };
         reg.add(std::move(d));
     }
@@ -176,6 +177,7 @@ ComponentRegistry makeBuiltin() {
             R::field(&AudioSourceComponent::spatial, "spatial", "3D", FieldKind::Bool),
             ranged(R::field(&AudioSourceComponent::minDistance, "minDistance", "Min Distance", FieldKind::Float), 0.01f, 1000.0f, 0.1f),
             ranged(R::field(&AudioSourceComponent::maxDistance, "maxDistance", "Max Distance", FieldKind::Float), 0.1f, 10000.0f, 0.5f),
+            enumerated(R::field(&AudioSourceComponent::bus, "bus", "Bus", FieldKind::Enum), {"Music", "SFX", "UI", "Voice", "Ambience"}),
         };
         reg.add(std::move(d));
     }

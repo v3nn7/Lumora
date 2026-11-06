@@ -115,3 +115,34 @@ TEST(Audio, SpatialSoundsFadeWithDistance) {
     EXPECT_GT(near, 0.2f);
     EXPECT_LT(far, near * 0.25f) << "inverse attenuation: 20 m away is much quieter than 1 m";
 }
+
+TEST(Audio, MixerBusesScaleAndMuteTheirSounds) {
+    test::TempDir project;
+    writeTone(project.path() / "Sounds" / "tone.wav", 2.0f);
+    Scene scene("Buses");
+    const entt::entity music = scene.createEntity("Music");
+    auto src = source("Sounds/tone.wav", true, false);
+    src.bus = AudioBus::Music;
+    src.loop = true;
+    scene.registry().emplace<AudioSourceComponent>(music, src);
+    scene.updateWorldTransforms();
+    auto audio = AudioWorld::create(scene, {project.path(), false});
+    ASSERT_TRUE(audio.has_value()) << audio.error().message;
+    AudioWorld* world = audio->get();
+    Simulation sim(scene);
+    sim.setAudio(std::move(*audio));
+    sim.step();
+    const float full = world->mix(4800);
+    ASSERT_GT(full, 0.5f);
+    EXPECT_TRUE(world->setBusVolume("music", 0.25f));
+    EXPECT_FLOAT_EQ(world->busVolume("Music"), 0.25f);
+    world->mix(4800);  // let the volume settle
+    EXPECT_NEAR(world->mix(4800), full * 0.25f, full * 0.05f);
+    EXPECT_TRUE(world->setBusVolume("SFX", 0.0f));
+    EXPECT_GT(world->mix(4800), full * 0.2f) << "other buses do not affect it";
+    EXPECT_TRUE(world->setBusMuted("Master", true));
+    world->mix(4800);
+    EXPECT_LT(world->mix(4800), 1e-4f) << "Master mutes everything";
+    EXPECT_FALSE(world->setBusVolume("Nope", 1.0f));
+    EXPECT_FLOAT_EQ(world->busVolume("Nope"), -1.0f);
+}

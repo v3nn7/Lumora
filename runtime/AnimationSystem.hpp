@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <string>
 #include <string_view>
 
 namespace lumora {
@@ -33,6 +34,12 @@ public:
     [[nodiscard]] bool isPlaying(entt::entity animator) const;
     /// Seconds into the current clip.
     [[nodiscard]] float time(entt::entity animator) const;
+
+    /// Animator controller parameter (kind 0 float, 1 bool, 2 trigger). False without a
+    /// controller or such a parameter.
+    bool setParameter(entt::entity animator, int kind, std::string_view name, float value);
+    /// Name of the controller's current state; empty without a controller.
+    [[nodiscard]] std::string currentState(entt::entity animator) const;
 
     [[nodiscard]] static bool sceneHasAnimators(const Scene& scene);
 

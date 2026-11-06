@@ -164,14 +164,16 @@ int runHeadless(const AppOptions& o) {
     if (o.simulateSeconds > 0.0) {
         Simulation sim(**scene);
         sim.setProjectRoot(project->rootDir());
+        std::shared_ptr<ScriptModule> gameLibrary;
         if (std::filesystem::exists(app::toPath(scripts.libraryPath()))) {
             auto module = ScriptModule::load(app::toPath(scripts.libraryPath()), app::toPath(scripts.loadDir()));
             if (!module) {
                 log::error("Headless", "{}", module.error().message);
                 return 1;
             }
-            sim.setScripts(*module, nullptr);
+            gameLibrary = *module;
         }
+        sim.setScripts(gameLibrary, nullptr);  // also runs Lua and visual scripts
         const auto steps = static_cast<std::uint64_t>(std::ceil(o.simulateSeconds / sim.fixedStep()));
         Stopwatch timer;
         for (std::uint64_t i = 0; i < steps; ++i) sim.step();

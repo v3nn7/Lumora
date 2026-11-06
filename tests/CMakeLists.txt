@@ -26,7 +26,9 @@ add_executable(lumora_tests
     NavigationTests.cpp
     LandscapeTests.cpp
     LocalizationTests.cpp
-    TimelineTests.cpp)
+    TimelineTests.cpp
+    LuaScriptTests.cpp
+    VisualScriptTests.cpp)
 target_link_libraries(lumora_tests PRIVATE
     lumora_core lumora_scene lumora_project lumora_runtime lumora_renderer lumora_cli
     GTest::gtest lumora_compile_options)

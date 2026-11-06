@@ -211,6 +211,10 @@ Device::Device(const Instance& instance, const DeviceSelection& selection) : ins
     enable.core.features.samplerAnisotropy = supported.core.features.samplerAnisotropy;
     enable.core.features.fillModeNonSolid = supported.core.features.fillModeNonSolid;
     enable.core.features.shaderInt64 = supported.core.features.shaderInt64;
+    // Compute passes write storage images declared without a format (glslc's HLSL has no
+    // format qualifier); supported by every current desktop driver.
+    enable.core.features.shaderStorageImageWriteWithoutFormat = supported.core.features.shaderStorageImageWriteWithoutFormat;
+    enable.core.features.shaderStorageImageReadWithoutFormat = supported.core.features.shaderStorageImageReadWithoutFormat;
     enable.v11.shaderDrawParameters = supported.v11.shaderDrawParameters;
     enable.v12.timelineSemaphore = VK_TRUE;
     enable.v12.descriptorIndexing = VK_TRUE;

@@ -140,6 +140,12 @@ Transient images come from a per-frame-slot pool. An image is reused only after 
 has signalled, which removes cross-frame hazards without extra barriers. Sampled transients are
 registered in the bindless table automatically.
 
+Compute passes (`addComputePass`) declare their storage images with `writeStorage`; the graph
+binds them in order as set 2 (`RenderGraph::kStorageSlots` slots, unused ones filled with a 1x1
+stand-in) and `PassContext::storageBindings()` / `frameBindings()` hand the sets to the pass.
+A transient used that way is created with `storage = true` (unordered access). Shaders name the
+storage format with glslang's `[[spv::format_rgba16f]]` style attribute.
+
 Not yet implemented: pass culling, resource aliasing and async-compute scheduling.
 
 ### Uploads

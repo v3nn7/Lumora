@@ -29,10 +29,10 @@ void TransientImagePool::beginFrame() {
 }
 
 const PooledImage& TransientImagePool::acquire(nvrhi::Format format, std::uint32_t width, std::uint32_t height,
-                                               const char* name) {
+                                               const char* name, bool storage) {
     for (const auto& image : images_) {
         const nvrhi::TextureDesc& d = image->texture->getDesc();
-        if (!image->inUse && d.format == format && d.width == width && d.height == height) {
+        if (!image->inUse && d.format == format && d.width == width && d.height == height && d.isUAV == storage) {
             image->inUse = true;
             return *image;
         }
@@ -44,6 +44,7 @@ const PooledImage& TransientImagePool::acquire(nvrhi::Format format, std::uint32
     desc.format = format;
     desc.debugName = name;
     desc.isRenderTarget = true;
+    desc.isUAV = storage;
     desc.setClearValue(depth ? nvrhi::Color(0.0f) : nvrhi::Color(0.0f));
     // Every command list starts and ends with transients sampleable; render passes move them
     // to attachment states and back.

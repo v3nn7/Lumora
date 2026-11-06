@@ -1,5 +1,7 @@
 #include "renderer/RenderContext.hpp"
 
+#include "renderer/RenderGraph.hpp"
+
 #include "assets/MeshData.hpp"
 #include "core/Log.hpp"
 #include "platform/Paths.hpp"
@@ -142,6 +144,26 @@ RenderContext::RenderContext(const RenderContextConfig& config) {
                       nvrhi::BindingLayoutItem::PushConstants(1, sizeof(PushConstants))};  // b1: b0 is the frame CB
     frameLayout_ = gpu_->createBindingLayout(frame);
     if (!frameLayout_) throw rhi::VulkanError("could not create the frame binding layout", VK_ERROR_INITIALIZATION_FAILED);
+    // Set 2 (compute): storage images u0..u3.
+    nvrhi::BindingLayoutDesc storage;
+    storage.visibility = nvrhi::ShaderType::Compute;
+    storage.registerSpace = 2;
+    storage.registerSpaceIsDescriptorSet = true;
+    storage.bindingOffsets.setShaderResourceOffset(0).setSamplerOffset(0).setConstantBufferOffset(0).setUnorderedAccessViewOffset(0);
+    for (std::uint32_t slot = 0; slot < RenderGraph::kStorageSlots; ++slot) {
+        storage.bindings.push_back(nvrhi::BindingLayoutItem::Texture_UAV(slot));
+    }
+    storageLayout_ = gpu_->createBindingLayout(storage);
+    if (!storageLayout_) throw rhi::VulkanError("could not create the storage binding layout", VK_ERROR_INITIALIZATION_FAILED);
+    nvrhi::TextureDesc fallback;
+    fallback.width = fallback.height = 1;
+    fallback.format = nvrhi::Format::RGBA16_FLOAT;
+    fallback.isUAV = true;
+    fallback.debugName = "StorageFallback";
+    fallback.initialState = nvrhi::ResourceStates::UnorderedAccess;
+    fallback.keepInitialState = true;
+    storageFallback_ = gpu_->createTexture(fallback);
+    if (!storageFallback_) throw rhi::VulkanError("could not create the storage fallback image", VK_ERROR_OUT_OF_DEVICE_MEMORY);
     uploadList_ = gpu_->createCommandList();
 
     auto linear = nvrhi::SamplerDesc().setAllFilters(true).setAllAddressModes(nvrhi::SamplerAddressMode::Clamp);
@@ -177,6 +199,8 @@ RenderContext::~RenderContext() {
     if (gpu_ != nullptr) gpu_->runGarbageCollection();
     // NVRHI objects go before the Vulkan device they live on (members below the device).
     samplers_ = {};
+    storageFallback_ = nullptr;
+    storageLayout_ = nullptr;
     frameLayout_ = nullptr;
     shaders_.reset();
     bindless_.reset();
@@ -234,6 +258,15 @@ nvrhi::GraphicsPipelineHandle RenderContext::createPipeline(const PipelineDesc& 
     info.depthFormat = d.depthFormat;
     nvrhi::GraphicsPipelineHandle pipeline = gpu_->createGraphicsPipeline(desc, info);
     if (!pipeline) throw rhi::VulkanError("could not create pipeline " + d.name, VK_ERROR_INITIALIZATION_FAILED);
+    return pipeline;
+}
+
+nvrhi::ComputePipelineHandle RenderContext::createComputePipeline(const std::string& shader, const char* entry) {
+    nvrhi::ComputePipelineDesc desc;
+    desc.CS = shaders_->get(shader, entry);
+    desc.bindingLayouts = {frameLayout_, bindless_->layout(), storageLayout_};
+    nvrhi::ComputePipelineHandle pipeline = gpu_->createComputePipeline(desc);
+    if (!pipeline) throw rhi::VulkanError("could not create compute pipeline " + shader, VK_ERROR_INITIALIZATION_FAILED);
     return pipeline;
 }
 

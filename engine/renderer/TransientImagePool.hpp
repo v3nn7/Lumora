@@ -30,7 +30,8 @@ public:
 
     /// Start of a frame (after the slot's frame completed): frees textures idle for too long.
     void beginFrame();
-    const PooledImage& acquire(nvrhi::Format format, std::uint32_t width, std::uint32_t height, const char* name);
+    const PooledImage& acquire(nvrhi::Format format, std::uint32_t width, std::uint32_t height, const char* name,
+                               bool storage = false);
     void clear();
     [[nodiscard]] std::size_t size() const noexcept { return images_.size(); }
 

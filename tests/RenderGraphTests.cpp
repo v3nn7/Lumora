@@ -35,3 +35,16 @@ TEST(RenderGraph, RejectsInvalidHandles) {
     EXPECT_THROW(graph.addPass("Bad", [](PassBuilder& b) { b.sample(RGImage{42}); }, [](PassContext&) {}),
                  lumora::rhi::VulkanError);
 }
+
+TEST(RenderGraph, ComputePassesDeclareStorageImages) {
+    RenderGraph graph;
+    const RGImage a = graph.createImage("A", {nvrhi::Format::RGBA16_FLOAT, 8, 8, true});
+    graph.addComputePass("Fill", [&](PassBuilder& b) { b.writeStorage(a); }, [](PassContext&) {});
+    EXPECT_EQ(graph.passCount(), 1u);
+    // More storage images than set 2 has slots is refused when the pass is declared.
+    std::vector<RGImage> many;
+    for (std::uint32_t i = 0; i <= RenderGraph::kStorageSlots; ++i) many.push_back(graph.createImage("I", {nvrhi::Format::R8_UNORM, 4, 4, true}));
+    EXPECT_THROW(graph.addComputePass(
+                     "TooMany", [&](PassBuilder& b) { for (RGImage i : many) b.writeStorage(i); }, [](PassContext&) {}),
+                 lumora::rhi::VulkanError);
+}

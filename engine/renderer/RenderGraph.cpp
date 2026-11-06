@@ -42,6 +42,7 @@ void PassBuilder::writeDepth(RGImage image, LoadOp load, float clearDepth) {
 
 void PassBuilder::readDepth(RGImage image) { graph_.addAccess(pass_, {image, ImageUsage::DepthReadOnly}); }
 void PassBuilder::sample(RGImage image) { graph_.addAccess(pass_, {image, ImageUsage::Sampled}); }
+void PassBuilder::writeStorage(RGImage image) { graph_.addAccess(pass_, {image, ImageUsage::Storage}); }
 void PassBuilder::copyFrom(RGImage image) { graph_.addAccess(pass_, {image, ImageUsage::CopySource}); }
 void PassBuilder::copyTo(RGImage image) { graph_.addAccess(pass_, {image, ImageUsage::CopyDestination, LoadOp::DontCare}); }
 void PassBuilder::recordInParallel(bool parallel) { graph_.passes_.at(pass_).parallel = parallel; }
@@ -127,15 +128,27 @@ RGImage RenderGraph::createImage(std::string name, const TransientImageDesc& des
 }
 
 void RenderGraph::addRasterPass(std::string name, const SetupFn& setup, ExecuteFn execute) {
-    passes_.push_back({std::move(name), true, false, {}, std::move(execute)});
+    passes_.push_back({std::move(name), true, false, false, {}, std::move(execute)});
     PassBuilder builder(*this, static_cast<std::uint32_t>(passes_.size() - 1));
     setup(builder);
 }
 
 void RenderGraph::addPass(std::string name, const SetupFn& setup, ExecuteFn execute) {
-    passes_.push_back({std::move(name), false, false, {}, std::move(execute)});
+    passes_.push_back({std::move(name), false, false, false, {}, std::move(execute)});
     PassBuilder builder(*this, static_cast<std::uint32_t>(passes_.size() - 1));
     setup(builder);
+}
+
+void RenderGraph::addComputePass(std::string name, const SetupFn& setup, ExecuteFn execute) {
+    passes_.push_back({std::move(name), false, false, true, {}, std::move(execute)});
+    PassBuilder builder(*this, static_cast<std::uint32_t>(passes_.size() - 1));
+    setup(builder);
+    std::uint32_t storage = 0;
+    for (const Access& a : passes_.back().accesses) storage += a.usage == ImageUsage::Storage ? 1 : 0;
+    if (storage > kStorageSlots) {
+        throw rhi::VulkanError("render graph: compute pass '" + passes_.back().name + "' has more storage images than slots",
+                               VK_ERROR_UNKNOWN);
+    }
 }
 
 void RenderGraph::addAccess(std::uint32_t pass, const Access& access) {
@@ -155,7 +168,8 @@ std::vector<nvrhi::CommandListHandle> RenderGraph::execute(nvrhi::CommandListHan
     // Transients come from the pool (recycled per frame slot).
     for (Resource& r : resources_) {
         if (r.imported) continue;
-        const PooledImage& image = runtime.pool->acquire(r.desc.format, r.desc.width, r.desc.height, r.name.c_str());
+        const PooledImage& image =
+            runtime.pool->acquire(r.desc.format, r.desc.width, r.desc.height, r.name.c_str(), r.desc.storage);
         r.physical.texture = image.texture;
         r.physical.bindlessIndex = image.bindlessIndex;
     }
@@ -202,6 +216,22 @@ std::vector<nvrhi::CommandListHandle> RenderGraph::execute(nvrhi::CommandListHan
             } else {
                 ctx.framebuffer = runtime.framebuffers->get(runtime.device, fb, runtime.frame);
             }
+        }
+        if (pass.compute) {
+            // Set 2: the declared storage images in order, empty slots filled with a stand-in.
+            nvrhi::BindingSetDesc set;
+            std::uint32_t slot = 0;
+            for (const Access& a : pass.accesses) {
+                if (a.usage != ImageUsage::Storage) continue;
+                set.addItem(nvrhi::BindingSetItem::Texture_UAV(slot++, resource(a.image).physical.texture));
+            }
+            for (; slot < kStorageSlots; ++slot) {
+                set.addItem(nvrhi::BindingSetItem::Texture_UAV(slot, runtime.storageFallback));
+            }
+            nvrhi::BindingSetHandle handle = runtime.device->createBindingSet(set, runtime.storageLayout);
+            if (!handle) throw rhi::VulkanError("could not create the storage bindings of '" + pass.name + "'", VK_ERROR_INITIALIZATION_FAILED);
+            ownedBindingSets_.push_back(handle);
+            ctx.storageSet_ = handle;
         }
         ctx.cmd = cmd;
         ctx.prepareSampled(cmd);

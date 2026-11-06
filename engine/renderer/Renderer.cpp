@@ -165,6 +165,9 @@ std::vector<nvrhi::CommandListHandle> Renderer::record(FrameResources& frame, co
     runtime.pool = frame.transients.get();
     runtime.profiler = frame.profiler.get();
     runtime.framebuffers = &framebuffers_;
+    runtime.frameBindings = frame.bindingSet(gpu, ctx_.frameLayout(), ctx_.samplers());
+    runtime.storageLayout = ctx_.storageLayout();
+    runtime.storageFallback = ctx_.storageFallback();
     runtime.frame = frameNumber_;
     runtime.newList = [&frame, gpu] { return frame.nextList(gpu); };
     runtime.maxThreads = std::min(JobSystem::global().workerCount() + 1, kMaxRecordingThreads);
@@ -230,7 +233,8 @@ FrameResult Renderer::render(PresentTarget& target, const Scene& scene, const Ca
 }
 
 Result<CapturedImage> Renderer::capture(const Scene& scene, const CameraView& camera, VkExtent2D extent,
-                                        const RenderSettings& settings) {
+                                        const RenderSettings& settings,
+                                        const std::function<void(RenderGraph&, RGImage)>& extraPasses) {
     if (extent.width == 0 || extent.height == 0 || extent.width > 16384 || extent.height > 16384) {
         return makeError("invalid capture size {}x{}", extent.width, extent.height);
     }
@@ -252,6 +256,7 @@ Result<CapturedImage> Renderer::capture(const Scene& scene, const CameraView& ca
     output.texture = target;
     std::vector<nvrhi::CommandListHandle> lists =
         record(frame, scene, camera, settings, output, [&](RenderGraph& graph, RGImage out) {
+            if (extraPasses) extraPasses(graph, out);
             graph.addPass(
                 "Readback", [&](PassBuilder& b) { b.copyFrom(out); },
                 [&readback, out](PassContext& ctx) {  // `out` by value: this runs after the setup returned

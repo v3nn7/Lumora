@@ -1432,3 +1432,43 @@ TEST(MipChain, CutOutTexturesKeepTheirColourAndCoverage) {
     EXPECT_LT(mips[0][0], 60);
     EXPECT_EQ(mips[0][3], 0) << "full-size alpha unchanged";
 }
+
+TEST_F(RendererTest, ComputePassesWriteStorageImagesThatLaterPassesUse) {
+    auto scene = sceneWithSun();
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    constexpr std::uint32_t w = 64, h = 32;
+    nvrhi::ComputePipelineHandle pattern = context_->createComputePipeline("pattern.comp");
+    ASSERT_TRUE(pattern);
+    nvrhi::IDescriptorTable* bindless = context_->bindless().table();
+    auto image = renderer_->capture(*scene, cam.view(2.0f), {w, h}, {}, [&](RenderGraph& graph, RGImage out) {
+        const RGImage target = graph.createImage("Pattern", {nvrhi::Format::RGBA8_UNORM, w, h, true});
+        graph.addComputePass("Pattern", [&](PassBuilder& b) { b.writeStorage(target); },
+                             [&, target](PassContext& ctx) {
+                                 nvrhi::ComputeState state;
+                                 state.pipeline = pattern;
+                                 state.bindings = {ctx.frameBindings(), bindless, ctx.storageBindings()};
+                                 ctx.cmd->setComputeState(state);
+                                 PushConstants pc;
+                                 pc.index0 = w;
+                                 pc.index1 = h;
+                                 pc.param0 = 0.25f;
+                                 ctx.cmd->setPushConstants(&pc, sizeof(pc));
+                                 ctx.cmd->dispatch((w + 7) / 8, (h + 7) / 8, 1);
+                             });
+        graph.addPass(
+            "CopyPattern",
+            [&](PassBuilder& b) {
+                b.copyFrom(target);
+                b.copyTo(out);
+            },
+            [target, out](PassContext& ctx) { ctx.cmd->copyTexture(ctx.texture(out), {}, ctx.texture(target), {}); });
+    });
+    ASSERT_TRUE(image.has_value()) << image.error().message;
+    for (const glm::uvec2 p : {glm::uvec2(0, 0), glm::uvec2(32, 16), glm::uvec2(63, 31)}) {
+        const auto c = pixel(*image, p.x, p.y);
+        EXPECT_NEAR(c.r, 255.0f * static_cast<float>(p.x) / w, 1.5f) << p.x << "," << p.y;
+        EXPECT_NEAR(c.g, 255.0f * static_cast<float>(p.y) / h, 1.5f);
+        EXPECT_NEAR(c.b, 64.0f, 1.5f);
+    }
+}

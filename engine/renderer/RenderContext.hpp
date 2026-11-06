@@ -53,6 +53,13 @@ public:
     /// (t4) and 32 bytes of push constants.
     [[nodiscard]] nvrhi::IBindingLayout* frameLayout() const noexcept { return frameLayout_; }
     [[nodiscard]] nvrhi::GraphicsPipelineHandle createPipeline(const PipelineDesc& desc);
+    /// Set 2 of compute pipelines: RenderGraph::kStorageSlots storage images (u0..u3), and a
+    /// 1x1 image that fills the slots a pass does not use.
+    [[nodiscard]] nvrhi::IBindingLayout* storageLayout() const noexcept { return storageLayout_; }
+    [[nodiscard]] nvrhi::ITexture* storageFallback() const noexcept { return storageFallback_; }
+    /// Compute pipeline over sets 0 (frame), 1 (bindless textures) and 2 (storage images).
+    /// `shader` is e.g. "taa.comp".
+    [[nodiscard]] nvrhi::ComputePipelineHandle createComputePipeline(const std::string& shader, const char* entry = "CSMain");
 
     /// A command list for uploads, executed at once (in queue order before later frames).
     template <class Fn>
@@ -100,6 +107,8 @@ private:
     std::unique_ptr<BindlessTable> bindless_;
     std::unique_ptr<ShaderLibrary> shaders_;
     nvrhi::BindingLayoutHandle frameLayout_;
+    nvrhi::BindingLayoutHandle storageLayout_;
+    nvrhi::TextureHandle storageFallback_;
     nvrhi::CommandListHandle uploadList_;
     std::array<nvrhi::SamplerHandle, 4> samplers_;
     std::uint32_t linearClampIndex_ = 0;

@@ -22,6 +22,7 @@ enum class ImageUsage : std::uint8_t {
     DepthAttachment,  // depth test + write
     DepthReadOnly,    // depth test, no write
     Sampled,          // read in shaders through its bindless index
+    Storage,          // read and written by a compute pass (unordered access)
     CopySource,
     CopyDestination,
 };
@@ -43,6 +44,7 @@ struct TransientImageDesc {
     nvrhi::Format format = nvrhi::Format::UNKNOWN;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
+    bool storage = false;  // compute passes write it (unordered access)
 };
 
 class RenderGraph;
@@ -55,6 +57,8 @@ public:
     void writeDepth(RGImage image, LoadOp load, float clearDepth = 0.0f);
     void readDepth(RGImage image);
     void sample(RGImage image);
+    /// A compute pass reads and writes it (set 2 of the compute pipeline, in the order declared).
+    void writeStorage(RGImage image);
     void copyFrom(RGImage image);
     void copyTo(RGImage image);
     /// The pass records its draws with PassContext::recordParallel, possibly into several
@@ -90,6 +94,12 @@ struct GraphRuntime {
     GpuProfiler* profiler = nullptr;
     FramebufferCache* framebuffers = nullptr;
     std::uint64_t frame = 0;
+    /// Set 0 of every pipeline (frame constants, objects, lights, samplers) for this frame.
+    nvrhi::IBindingSet* frameBindings = nullptr;
+    /// Compute passes: the layout of their storage images (set 2) and a 1x1 image that fills
+    /// the slots a pass leaves empty.
+    nvrhi::IBindingLayout* storageLayout = nullptr;
+    nvrhi::ITexture* storageFallback = nullptr;
     /// An open command list for work recorded after a parallel pass or on worker threads.
     std::function<nvrhi::CommandListHandle()> newList;
     bool allowParallel = true;
@@ -108,6 +118,10 @@ public:
     [[nodiscard]] std::uint32_t bindlessIndex(RGImage h) const;
     /// Viewport and scissor covering the framebuffer.
     [[nodiscard]] nvrhi::ViewportState viewport() const;
+    /// Compute passes: the binding set of their storage images (set 2), in declaration order.
+    [[nodiscard]] nvrhi::IBindingSet* storageBindings() const noexcept { return storageSet_; }
+    /// Set 0 of this frame.
+    [[nodiscard]] nvrhi::IBindingSet* frameBindings() const noexcept { return runtime_.frameBindings; }
     /// Records items [0, count) of a raster pass. In a pass declared with recordInParallel(),
     /// chunks of at least `grain` items are recorded into separate command lists on the job
     /// system's threads and executed in order; otherwise fn(cmd, 0, count) records inline.
@@ -125,6 +139,7 @@ private:
     GraphRuntime& runtime_;
     std::uint32_t pass_;
     std::uint32_t lastChunks_ = 0;
+    nvrhi::IBindingSet* storageSet_ = nullptr;
 };
 
 /// Frame render graph: passes are declared each frame in execution order; the graph realises
@@ -144,6 +159,11 @@ public:
     void addRasterPass(std::string name, const SetupFn& setup, ExecuteFn execute);
     /// Transfer passes (copies) record outside a framebuffer.
     void addPass(std::string name, const SetupFn& setup, ExecuteFn execute);
+    /// Compute passes dispatch outside a framebuffer; PassContext::storageBindings() holds the
+    /// images they declared with writeStorage.
+    void addComputePass(std::string name, const SetupFn& setup, ExecuteFn execute);
+    /// Storage image slots in a compute pass's set 2.
+    static constexpr std::uint32_t kStorageSlots = 4;
 
     /// Records every pass, starting in `first` (open). Returns the command lists in execution
     /// order: all closed except the last one, which stays open for the caller.
@@ -169,6 +189,7 @@ private:
         std::string name;
         bool raster = false;
         bool parallel = false;
+        bool compute = false;
         std::vector<Access> accesses;
         ExecuteFn execute;
     };
@@ -186,6 +207,7 @@ private:
     std::vector<Resource> resources_;
     std::vector<nvrhi::CommandListHandle> lists_;  // during execute
     std::vector<nvrhi::FramebufferHandle> ownedFramebuffers_;
+    std::vector<nvrhi::BindingSetHandle> ownedBindingSets_;
     std::uint32_t parallelChunks_ = 0;
 };
 

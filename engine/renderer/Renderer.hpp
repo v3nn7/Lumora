@@ -76,9 +76,11 @@ public:
     /// Renders and presents one frame. Throws rhi::DeviceLostError if the GPU is lost.
     FrameResult render(PresentTarget& target, const Scene& scene, const CameraView& camera,
                        const RenderSettings& settings);
-    /// Renders offscreen and reads the tonemapped result back (blocking).
+    /// Renders offscreen and reads the tonemapped result back (blocking). `extraPasses` adds
+    /// passes after the scene's (they may write the output image).
     [[nodiscard]] Result<CapturedImage> capture(const Scene& scene, const CameraView& camera, VkExtent2D extent,
-                                                const RenderSettings& settings);
+                                                const RenderSettings& settings,
+                                                const std::function<void(RenderGraph&, RGImage)>& extraPasses = {});
 
     [[nodiscard]] const FrameStats& stats() const noexcept { return stats_; }
     [[nodiscard]] RenderContext& context() noexcept { return ctx_; }

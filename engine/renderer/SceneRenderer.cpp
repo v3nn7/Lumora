@@ -783,7 +783,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, overlay);
                 bindSets(ctx.cmd);
                 PushConstants pc;
-                pc.flags = shaderSrgb ? 1u : 0u;
+                pc.flags = rhi::isSrgbFormat(outputFormat) ? 0u : 1u;  // the overlay draws into the output itself
                 vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                    sizeof(pc), &pc);
                 const VkDeviceSize offset = 0;

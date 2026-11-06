@@ -41,6 +41,10 @@ struct RenderSettings {
     /// Passes with at least this many draws record on several threads (secondary command
     /// buffers); fewer are cheaper to record on one. 0 = always, UINT32_MAX = never.
     std::uint32_t parallelRecordingMinDraws = 256;
+    /// Screen-space ambient occlusion: darkens ambient light where geometry meets.
+    bool ambientOcclusion = true;
+    float aoRadius = 0.6f;     // metres
+    float aoIntensity = 1.6f;  // exponent applied to the visibility
 };
 
 struct SceneDrawStats {
@@ -52,6 +56,7 @@ struct SceneDrawStats {
     bool parallelRecording = false;  // a pass was set up to record on several threads
     bool shadowsRendered = false;
     bool environmentLit = false;  // an HDR environment lit the frame
+    bool ambientOcclusion = false;
 };
 
 /// Orthographic sun transform covering the camera frustum up to `distance` (one cascade),
@@ -93,6 +98,9 @@ private:
     rhi::UniquePipeline opaque_;
     rhi::UniquePipeline grid_;
     rhi::UniquePipeline shadow_;
+    rhi::UniquePipeline depthPrepass_;
+    rhi::UniquePipeline ssao_;
+    rhi::UniquePipeline ssaoBlur_;
     std::unordered_map<int, rhi::UniquePipeline> bloom_;  // 0 = downsample, 1 = upsample
     std::unordered_map<VkFormat, rhi::UniquePipeline> tonemap_;
     std::unordered_map<VkFormat, rhi::UniquePipeline> overlay_;

@@ -167,7 +167,8 @@ and strength, an optional procedural grid or checker pattern, and optional base-
 based (GGX), so metallic and roughness behave as in other PBR tools.
 
 Lights are directional (the sun) or point lights. The directional light casts soft cascaded
-shadows across the whole view.
+shadows across the whole view. Screen-space ambient occlusion darkens ambient light where surfaces meet
+(corners, contacts, under objects).
 
 Select nothing to edit the **scene environment** in the Inspector:
 

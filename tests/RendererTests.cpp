@@ -447,3 +447,41 @@ TEST_F(RendererTest, HdrEnvironmentLightsTheSceneAndDrawsTheSky) {
     EXPECT_GT(skyBelow.b, 150);
     EXPECT_LT(skyBelow.r, 40);
 }
+
+TEST_F(RendererTest, AmbientOcclusionDarkensContactsOnly) {
+    // Ambient light only (no sun): a cube resting on the ground. With SSAO the ground right at
+    // the cube's base gets darker; open ground far from it stays as it was.
+    auto scene = shadowScene();
+    scene->destroyEntity(scene->registry().view<LightComponent>().front());
+    scene->environment().ambientIntensity = 2.0f;
+    const auto box = scene->createEntity("Box");
+    scene->registry().emplace<MeshRendererComponent>(box).baseColor = glm::vec3(0.8f);
+    scene->registry().get<TransformComponent>(box).position = glm::vec3(0.0f, 0.5f, 0.0f);
+    scene->updateWorldTransforms();
+
+    FlyCameraController cam;
+    cam.setPosition({2.5f, 1.6f, 2.5f});
+    cam.lookAt({0.0f, 0.2f, 0.0f});
+    const glm::uvec2 size(160, 120);
+    const CameraView view = cam.view(static_cast<float>(size.x) / size.y);
+    RenderSettings off;
+    off.ambientOcclusion = false;
+    off.bloom = false;
+    RenderSettings on = off;
+    on.ambientOcclusion = true;
+    auto plain = renderer_->capture(*scene, view, {size.x, size.y}, off);
+    ASSERT_TRUE(plain.has_value()) << plain.error().message;
+    EXPECT_FALSE(renderer_->stats().scene.ambientOcclusion);
+    auto occluded = renderer_->capture(*scene, view, {size.x, size.y}, on);
+    ASSERT_TRUE(occluded.has_value()) << occluded.error().message;
+    EXPECT_TRUE(renderer_->stats().scene.ambientOcclusion);
+
+    const glm::ivec2 contact = toPixel(view, glm::vec3(0.6f, 0.0f, 0.2f), size);  // ground at the cube's foot
+    const glm::ivec2 open = toPixel(view, glm::vec3(2.0f, 0.0f, -1.5f), size);   // ground far from it
+    ASSERT_TRUE(contact.x >= 0 && contact.y >= 0 && contact.x < 160 && contact.y < 120);
+    ASSERT_TRUE(open.x >= 0 && open.y >= 0 && open.x < 160 && open.y < 120);
+    EXPECT_LT(luminance(pixel(*occluded, contact.x, contact.y)), luminance(pixel(*plain, contact.x, contact.y)) * 0.92f)
+        << "the crease where cube meets ground is occluded";
+    EXPECT_NEAR(luminance(pixel(*occluded, open.x, open.y)), luminance(pixel(*plain, open.x, open.y)), 6.0f)
+        << "flat open ground is not darkened";
+}

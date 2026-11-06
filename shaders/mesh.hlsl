@@ -211,6 +211,10 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     s.roughness = antialiasedRoughness(clamp(s.roughness, 0.02, 1.0), ddx(s.normal), ddy(s.normal));
 
     float3 color = evaluateAmbient(s);
+    if ((gPush.flags & 4u) != 0u) {
+        // Screen-space ambient occlusion (index2) darkens light from the sky in creases.
+        color *= gTextures[gPush.index2].Load(int3(int2(input.position.xy), 0)).r;
+    }
     uint lightCount = min(gFrame.counts.x, (uint)MAX_LIGHTS);
     for (uint i = 0; i < lightCount; ++i) {
         GpuLight light = gFrame.lights[i];

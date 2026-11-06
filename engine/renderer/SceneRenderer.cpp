@@ -100,6 +100,10 @@ std::array<float, kShadowCascades> cascadeSplits(float nearPlane, float distance
     return splits;
 }
 
+namespace {
+constexpr VkFormat kAoFormat = VK_FORMAT_R8_UNORM;
+} // namespace
+
 SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     auto& shaders = ctx_.shaders();
     const VkFormat hdr = ctx_.hdrFormat();
@@ -118,8 +122,8 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     opaque.meshVertexInput = true;
     opaque.cullMode = VK_CULL_MODE_BACK_BIT;
     opaque.depthTest = true;
-    opaque.depthWrite = true;
-    opaque.depthCompare = VK_COMPARE_OP_GREATER;
+    opaque.depthWrite = false;  // the depth prepass already wrote the nearest surfaces
+    opaque.depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;
     opaque.colorFormats = {hdr};
     opaque.depthFormat = ctx_.depthFormat();
     opaque.layout = ctx_.pipelineLayout();
@@ -154,6 +158,30 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     shadow.layout = ctx_.pipelineLayout();
     shadow.debugName = "SunShadow";
     shadow_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), shadow);
+
+    rhi::GraphicsPipelineDesc prepass;
+    prepass.vertexShader = shaders.get("depth.vert");
+    prepass.meshVertexInput = true;
+    prepass.positionOnly = true;
+    prepass.cullMode = VK_CULL_MODE_BACK_BIT;
+    prepass.depthTest = true;
+    prepass.depthWrite = true;
+    prepass.depthCompare = VK_COMPARE_OP_GREATER;
+    prepass.depthFormat = ctx_.depthFormat();
+    prepass.layout = ctx_.pipelineLayout();
+    prepass.debugName = "DepthPrepass";
+    depthPrepass_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), prepass);
+
+    for (int blur = 0; blur < 2; ++blur) {
+        rhi::GraphicsPipelineDesc ao;
+        ao.vertexShader = shaders.get("ssao.vert");
+        ao.fragmentShader = shaders.get(blur ? "ssao.blur.frag" : "ssao.frag");
+        ao.fragmentEntry = blur ? "PSBlur" : "PSOcclusion";
+        ao.colorFormats = {kAoFormat};
+        ao.layout = ctx_.pipelineLayout();
+        ao.debugName = blur ? "SSAOBlur" : "SSAO";
+        (blur ? ssaoBlur_ : ssao_) = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), ao);
+    }
 
     for (int up = 0; up < 2; ++up) {
         rhi::GraphicsPipelineDesc bloom;
@@ -386,7 +414,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     for (const Draw& d : draws) {
         stats.triangles += d.mesh->indexCount / 3;
     }
-    stats.drawCalls = static_cast<std::uint32_t>(draws.size()) + 2 + (settings.showGrid ? 1u : 0u);
+    stats.drawCalls = static_cast<std::uint32_t>(draws.size()) * 2 + 2 + (settings.showGrid ? 1u : 0u);  // prepass + shading
 
     // ---- Render graph ----------------------------------------------------------------------
     const RGImage hdr = graph.createImage("SceneColorHDR", {ctx_.hdrFormat(), extent});
@@ -457,6 +485,84 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             });
     }
 
+    // ---- Depth prepass, then ambient occlusion from it ---------------------------------------
+    const bool parallelPrepass = draws.size() >= settings.parallelRecordingMinDraws;
+    graph.addRasterPass(
+        "DepthPrepass",
+        [&](PassBuilder& b) {
+            b.writeDepth(depth, LoadOp::Clear, 0.0f);  // reversed-Z: 0 is the far plane
+            b.recordInParallel(parallelPrepass);
+        },
+        [this, bindSets, layout, draws](PassContext& ctx) {  // a copy: runs after build() returns
+            if (draws.empty()) return;
+            ctx.recordParallel(draws.size(), 64, [&](VkCommandBuffer cmd, std::size_t begin, std::size_t end) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, depthPrepass_.get());
+                bindSets(cmd);
+                const GpuMesh* mesh = nullptr;
+                for (std::size_t i = begin; i < end; ++i) {
+                    const Draw& d = draws[i];
+                    if (d.mesh != mesh) {
+                        mesh = d.mesh;
+                        const VkBuffer vb = mesh->vertices.handle();
+                        const VkDeviceSize offset = 0;
+                        vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &offset);
+                        vkCmdBindIndexBuffer(cmd, mesh->indices.handle(), 0, VK_INDEX_TYPE_UINT32);
+                    }
+                    PushConstants pc;
+                    pc.index0 = d.object;
+                    vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                       sizeof(pc), &pc);
+                    vkCmdDrawIndexed(cmd, mesh->indexCount, 1, 0, 0, 0);
+                }
+            });
+        });
+
+    RGImage ao{};
+    const bool ambientOcclusion = settings.ambientOcclusion && !draws.empty() && extent.width >= 8 && extent.height >= 8;
+    if (ambientOcclusion) {
+        const VkExtent2D half{std::max(extent.width / 2, 1u), std::max(extent.height / 2, 1u)};
+        const RGImage aoRaw = graph.createImage("SSAORaw", {kAoFormat, half});
+        ao = graph.createImage("SSAO", {kAoFormat, extent});
+        const std::uint32_t linear = ctx_.linearClampSampler();
+        graph.addRasterPass(
+            "SSAO",
+            [&](PassBuilder& b) {
+                b.writeColor(aoRaw, LoadOp::DontCare);
+                b.sample(depth);
+            },
+            [this, bindSets, layout, depth, radius = settings.aoRadius, intensity = settings.aoIntensity](PassContext& ctx) {
+                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, ssao_.get());
+                bindSets(ctx.cmd);
+                PushConstants pc;
+                pc.index0 = ctx.bindlessIndex(depth);
+                pc.param0 = radius;
+                pc.param1 = intensity;
+                pc.param2 = 0.02f;
+                vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(pc), &pc);
+                vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
+            });
+        graph.addRasterPass(
+            "SSAOBlur",
+            [&](PassBuilder& b) {
+                b.writeColor(ao, LoadOp::DontCare);
+                b.sample(aoRaw);
+                b.sample(depth);
+            },
+            [this, bindSets, layout, depth, aoRaw, linear](PassContext& ctx) {
+                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, ssaoBlur_.get());
+                bindSets(ctx.cmd);
+                PushConstants pc;
+                pc.index0 = ctx.bindlessIndex(depth);
+                pc.index1 = ctx.bindlessIndex(aoRaw);
+                pc.index2 = linear;
+                vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(pc), &pc);
+                vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
+            });
+        stats.ambientOcclusion = true;
+    }
+
     graph.addRasterPass(
         "Sky", [&](PassBuilder& b) { b.writeColor(hdr, LoadOp::DontCare); },
         [this, bindSets](PassContext& ctx) {
@@ -471,15 +577,18 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         "Opaque",
         [&](PassBuilder& b) {
             b.writeColor(hdr, LoadOp::Load);
-            b.writeDepth(depth, LoadOp::Clear, 0.0f);  // reversed-Z: 0 is the far plane
+            b.readDepth(depth);  // from the prepass; the opaque pass only tests against it
             if (shadows) b.sample(shadowMap);
+            if (ambientOcclusion) b.sample(ao);
             b.recordInParallel(parallelOpaque);
         },
-        [this, bindSets, layout, shadows, shadowMap, debugCascades = settings.debugCascades,
+        [this, bindSets, layout, shadows, shadowMap, ambientOcclusion, ao, debugCascades = settings.debugCascades,
          draws = std::move(draws)](PassContext& ctx) {
             if (draws.empty()) return;
             const std::uint32_t shadowIndex = shadows ? ctx.bindlessIndex(shadowMap) : 0u;
-            const std::uint32_t flags = (shadows ? 1u : 0u) | (shadows && debugCascades ? 2u : 0u);
+            const std::uint32_t aoIndex = ambientOcclusion ? ctx.bindlessIndex(ao) : 0u;
+            const std::uint32_t flags =
+                (shadows ? 1u : 0u) | (shadows && debugCascades ? 2u : 0u) | (ambientOcclusion ? 4u : 0u);
             // Draws are sorted by mesh, so each chunk rebinds buffers only where meshes change.
             ctx.recordParallel(draws.size(), 64, [&](VkCommandBuffer cmd, std::size_t begin, std::size_t end) {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, opaque_.get());
@@ -497,6 +606,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     PushConstants pc;
                     pc.index0 = d.object;
                     pc.index1 = shadowIndex;
+                    pc.index2 = aoIndex;
                     pc.flags = flags;
                     vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                        sizeof(pc), &pc);

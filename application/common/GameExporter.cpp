@@ -63,7 +63,7 @@ Result<fs::path> exportGame(const GameExport& request) {
         if (!fs::is_directory(runtime / dir, ec)) continue;
         if (auto copied = copyTree(runtime / dir, request.output / dir, {}); !copied) return std::unexpected(copied.error());
     }
-    for (const char* file : {"LICENSE", "THIRD_PARTY.md"}) {
+    for (const char* file : {"LICENSE", "THIRD_PARTY.md", "LICENSE-DejaVu.txt"}) {
         if (fs::is_regular_file(runtime / file, ec)) fs::copy_file(runtime / file, request.output / file, ec);
     }
 

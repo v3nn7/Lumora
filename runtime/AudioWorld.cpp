@@ -157,6 +157,10 @@ void AudioWorld::setListenerFromView(const glm::mat4& view) {
     setListener(glm::vec3(camera[3]), -glm::vec3(camera[2]), glm::vec3(camera[1]));
 }
 
+void AudioWorld::setMasterVolume(float volume) {
+    ma_engine_set_volume(&impl_->engine, std::clamp(volume, 0.0f, 1.0f));
+}
+
 void AudioWorld::setPaused(bool paused) {
     if (!impl_->device) return;
     if (paused) {

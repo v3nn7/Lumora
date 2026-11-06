@@ -3,6 +3,7 @@
 #include "runtime/AnimationSystem.hpp"
 #include "runtime/AudioWorld.hpp"
 #include "runtime/PhysicsWorld.hpp"
+#include "runtime/Localization.hpp"
 #include "runtime/Navigation.hpp"
 #include "runtime/SaveData.hpp"
 #include "runtime/Scripting.hpp"
@@ -60,7 +61,7 @@ void Simulation::runOscillators(float dt) {
 
 Simulation::Simulation(Scene& scene, double fixedStep)
     : scene_(scene), fixedStep_(fixedStep > 0.0 ? fixedStep : kDefaultFixedStep),
-      navigation_(std::make_unique<NavigationWorld>(scene)) {
+      navigation_(std::make_unique<NavigationWorld>(scene)), localization_(std::make_unique<Localization>()) {
     if (PhysicsWorld::sceneHasColliders(scene_)) physics_ = std::make_unique<PhysicsWorld>(scene_);
 }
 
@@ -92,7 +93,14 @@ void Simulation::setScripts(std::shared_ptr<ScriptModule> module, const InputSta
         scripts_->setAnimation(animation_.get());
         scripts_->setSaveData(save_.get());
         scripts_->setNavigation(navigation_.get());
+        scripts_->setLocalization(localization_.get());
     }
+}
+
+int Simulation::takeGameMenuRequest() { return scripts_ ? scripts_->takeMenuRequest() : 0; }
+
+void Simulation::setGameMenuOpen(bool open) {
+    if (scripts_) scripts_->setMenuOpen(open);
 }
 
 void Simulation::setSaveFile(std::filesystem::path file) {
@@ -105,6 +113,7 @@ void Simulation::setProjectRoot(std::filesystem::path root) {
     if (scripts_) scripts_->setProjectRoot(projectRoot_);
     if (physics_) physics_->setProjectRoot(projectRoot_);
     navigation_->setProjectRoot(projectRoot_);
+    localization_->load(projectRoot_);
     if (AnimationSystem::sceneHasAnimators(scene_)) {
         animation_ = std::make_unique<AnimationSystem>(scene_, projectRoot_);
         if (scripts_) scripts_->setAnimation(animation_.get());

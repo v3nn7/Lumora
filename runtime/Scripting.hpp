@@ -95,6 +95,10 @@ public:
     void setProjectRoot(std::filesystem::path root);
     void setSaveData(SaveData* save) noexcept { context_.save = save; }
     void setNavigation(class NavigationWorld* navigation) noexcept { context_.navigation = navigation; }
+    void setLocalization(class Localization* localization) noexcept { context_.localization = localization; }
+    /// 1 if a behaviour asked for the game menu since the last call, 2 for its settings page, else 0.
+    [[nodiscard]] int takeMenuRequest() noexcept { return std::exchange(context_.menuRequested, 0); }
+    void setMenuOpen(bool open) noexcept { context_.menuOpen = open; }
     [[nodiscard]] std::size_t instanceCount() const noexcept { return instances_.size(); }
     /// The scene a behaviour asked for with loadScene() (project-relative), once; empty if none.
     [[nodiscard]] std::string takeSceneRequest() { return std::exchange(context_.pendingScene, {}); }
@@ -119,6 +123,9 @@ public:
         InputActions actions = InputActions::defaults();
         SaveData* save = nullptr;
         class NavigationWorld* navigation = nullptr;
+        class Localization* localization = nullptr;
+        int menuRequested = 0;  // 1 openGameMenu(), 2 openGameSettings(); handled by the host
+        bool menuOpen = false;       // set by the host
         double time = 0.0;
         std::string nameScratch;
     };

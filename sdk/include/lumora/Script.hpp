@@ -143,6 +143,11 @@ struct EngineApi {
     int (*vehicle)(void* context, Entity entity, int command, const float* input, float* out);
     // command: 0 off, 1 on, 2 query (the entity's Ragdoll component)
     int (*ragdoll)(void* context, Entity entity, int command);
+    // command: 0 text of `key`, 1 set language (key = code; 1 if it exists), 2 current language,
+    // 3 languages (comma-separated). Text goes into out; returns its length (-1: none).
+    int (*localize)(void* context, int command, const char* key, char* out, int capacity);
+    // command: 0 open the built-in game menu (pause, settings), 1 is it open, 2 open on settings
+    int (*gameMenu)(void* context, int command);
 };
 
 class Behaviour;
@@ -444,6 +449,33 @@ protected:
     void stopMoving() const { api_->navigation(api_->context, entity_, 2, nullptr, nullptr, nullptr, 0); }
     [[nodiscard]] bool isMoving() const { return api_->navigation(api_->context, entity_, 3, nullptr, nullptr, nullptr, 0) != 0; }
 
+    // Languages (Content/Localization/<code>.json: {"key": "text"}).
+    /// The text of `key` in the player's language (English, then the key, if missing).
+    [[nodiscard]] std::string tr(std::string_view key) const { return localized(0, key); }
+    /// Switches the language ("pl", "en", ...); false if the game has no such file.
+    bool setLanguage(std::string_view code) const {
+        return api_->localize(api_->context, 1, std::string(code).c_str(), nullptr, 0) > 0;
+    }
+    [[nodiscard]] std::string language() const { return localized(2, {}); }
+    [[nodiscard]] std::vector<std::string> languages() const {
+        std::vector<std::string> out;
+        const std::string all = localized(3, {});
+        std::size_t start = 0;
+        while (start < all.size()) {
+            const std::size_t comma = all.find(',', start);
+            out.push_back(all.substr(start, comma == std::string::npos ? std::string::npos : comma - start));
+            if (comma == std::string::npos) break;
+            start = comma + 1;
+        }
+        return out;
+    }
+    /// Opens the player's built-in pause menu (Resume, Settings: volume, graphics, language;
+    /// Quit). The game is paused while it is open.
+    void openGameMenu() const { api_->gameMenu(api_->context, 0); }
+    /// The same menu, straight on its settings page (for a main menu's "Options").
+    void openGameSettings() const { api_->gameMenu(api_->context, 2); }
+    [[nodiscard]] bool gameMenuOpen() const { return api_->gameMenu(api_->context, 1) != 0; }
+
     // Vehicles (the entity's Vehicle component) and ragdolls.
     /// throttle -1..1 (negative = reverse), steering -1..1 (positive = right), brakes 0..1.
     /// Call every update: the input holds until changed.
@@ -494,6 +526,16 @@ protected:
     void warn(std::string_view message) const { api_->log(api_->context, 1, std::string(message).c_str()); }
 
 private:
+    [[nodiscard]] std::string localized(int command, std::string_view key) const {
+        const std::string k(key);
+        const int length = api_->localize(api_->context, command, k.c_str(), nullptr, 0);
+        if (length < 0) return k;
+        std::string out(static_cast<std::size_t>(length) + 1, '\0');
+        api_->localize(api_->context, command, k.c_str(), out.data(), length + 1);
+        out.resize(static_cast<std::size_t>(length));
+        return out;
+    }
+
     friend struct detail::Access;
     [[nodiscard]] Vec3 get(Entity e, int which) const {
         float v[3] = {0.0f, 0.0f, 0.0f};

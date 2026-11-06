@@ -4,6 +4,7 @@
 #include "input/InputState.hpp"
 #include "runtime/AnimationSystem.hpp"
 #include "runtime/AudioWorld.hpp"
+#include "runtime/Localization.hpp"
 #include "runtime/Navigation.hpp"
 #include "runtime/PhysicsWorld.hpp"
 #include "assets/Material.hpp"
@@ -326,6 +327,39 @@ int apiRagdoll(void* c, script::Entity entity, int command) {
     if (ragdoll == nullptr) return 0;
     if (command == 0 || command == 1) ragdoll->active = command == 1;
     return ragdoll->active ? 1 : 0;
+}
+
+int copyOut(std::string_view text, char* out, int capacity) {
+    if (out != nullptr && capacity > 0) {
+        const auto n = std::min<std::size_t>(text.size(), static_cast<std::size_t>(capacity - 1));
+        std::copy_n(text.data(), n, out);
+        out[n] = '\0';
+    }
+    return static_cast<int>(text.size());
+}
+
+int apiLocalize(void* c, int command, const char* key, char* out, int capacity) {
+    Localization* texts = context(c).localization;
+    const std::string_view k = key != nullptr ? key : "";
+    if (texts == nullptr) return command == 0 ? copyOut(k, out, capacity) : (command == 1 ? 0 : copyOut({}, out, capacity));
+    switch (command) {
+        case 0: return copyOut(texts->text(k), out, capacity);
+        case 1: return texts->setLanguage(k) ? 1 : 0;
+        case 2: return copyOut(texts->language(), out, capacity);
+        default: {
+            std::string all;
+            for (const std::string& code : texts->languages()) all += (all.empty() ? "" : ",") + code;
+            return copyOut(all, out, capacity);
+        }
+    }
+}
+
+int apiGameMenu(void* c, int command) {
+    if (command == 0 || command == 2) {
+        context(c).menuRequested = command == 0 ? 1 : 2;
+        return 1;
+    }
+    return context(c).menuOpen ? 1 : 0;
 }
 
 int apiCharacter(void* c, script::Entity entity, int command, const float* xyz) {
@@ -688,6 +722,8 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.save = apiSave;
     api_.vehicle = apiVehicle;
     api_.ragdoll = apiRagdoll;
+    api_.localize = apiLocalize;
+    api_.gameMenu = apiGameMenu;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }

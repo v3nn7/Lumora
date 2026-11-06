@@ -24,6 +24,7 @@ class ScriptModule;
 class ScriptRunner;
 class SaveData;
 class NavigationWorld;
+class Localization;
 
 /// Drives gameplay systems at a fixed timestep, decoupled from the render frame rate.
 /// Given the same sequence of step counts the result is deterministic.
@@ -79,6 +80,13 @@ public:
     [[nodiscard]] HudCanvas& hud() noexcept { return hud_; }
     /// Debug shapes the behaviours drew in the latest step (cleared at every step).
     [[nodiscard]] DebugDraw& debugDraw() noexcept { return debug_; }
+    /// The game's texts (Content/Localization), read with the project root.
+    [[nodiscard]] Localization& localization() noexcept { return *localization_; }
+    /// 1 if a behaviour asked for the built-in game menu since the last call (the host shows
+    /// it), 2 for its settings page, 0 if not.
+    [[nodiscard]] int takeGameMenuRequest();
+    /// Tells behaviours whether the host's game menu is open (gameMenuOpen()).
+    void setGameMenuOpen(bool open);
     /// Behaviour instances currently running (0 before the first step).
     [[nodiscard]] std::size_t scriptInstances() const noexcept;
 
@@ -94,6 +102,7 @@ private:
     bool audioDevice_ = true;  // whether sound for a loaded scene goes to the audio device
     std::unique_ptr<SaveData> save_;
     std::unique_ptr<NavigationWorld> navigation_;
+    std::unique_ptr<Localization> localization_;
     std::unique_ptr<PhysicsWorld> physics_;
     std::unique_ptr<AudioWorld> audio_;
     std::unique_ptr<AnimationSystem> animation_;

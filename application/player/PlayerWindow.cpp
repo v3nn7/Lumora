@@ -6,12 +6,14 @@
 #include "common/Theme.hpp"
 #include "core/Log.hpp"
 #include "runtime/AudioWorld.hpp"
+#include "runtime/Localization.hpp"
 #include "runtime/Scripting.hpp"
 #include "runtime/Simulation.hpp"
 #include "scene/Scene.hpp"
 
 #include <QEvent>
 #include <QFileInfo>
+#include <QLocale>
 #include <QMessageBox>
 #include <QStandardPaths>
 
@@ -26,6 +28,9 @@ PlayerWindow::PlayerWindow(AppContext& app, Project project, std::unique_ptr<Sce
     const QString saves = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
                           QStringLiteral("/LumoraGames/") + QString::fromStdString(project_.name());
     simulation_->setSaveFile(toPath(saves) / "save.json");
+    settingsFile_ = toPath(saves) / "settings.json";
+    settings_ = GameSettings::load(settingsFile_);
+    simulation_->localization().chooseLanguage(settings_.language, QLocale::system().name().toStdString());
     const CameraView initial = sceneCameraView(*scene_, 16.0f / 9.0f);
     freeCamera_.setPosition(initial.position);
     freeCam_ = scene_->primaryCamera() == entt::null;
@@ -62,6 +67,7 @@ PlayerWindow::PlayerWindow(AppContext& app, Project project, std::unique_ptr<Sce
 PlayerWindow::~PlayerWindow() { window_.reset(); }
 
 void PlayerWindow::show() {
+    applySettings();
     window_->show();
     log::info("Player", "running '{}' ({} entities)", project_.name(), scene_->entityCount());
 }
@@ -73,10 +79,51 @@ bool PlayerWindow::eventFilter(QObject* watched, QEvent* event) {
     return QObject::eventFilter(watched, event);
 }
 
+void PlayerWindow::openMenu() {
+    menu_.open();
+    simulation_->setGameMenuOpen(true);
+    if (simulation_->audio() != nullptr) simulation_->audio()->setPaused(true);
+}
+
+void PlayerWindow::closeMenu() {
+    menu_.close();
+    simulation_->setGameMenuOpen(false);
+    if (simulation_->audio() != nullptr) simulation_->audio()->setPaused(false);
+}
+
+void PlayerWindow::applySettings() {
+    if (simulation_->audio() != nullptr) simulation_->audio()->setMasterVolume(settings_.masterVolume);
+    const Qt::WindowStates states = window_->windowStates();
+    window_->setWindowStates(settings_.fullscreen ? states | Qt::WindowFullScreen : states & ~Qt::WindowFullScreen);
+    window_->setVsync(settings_.vsync);
+    if (!settings_.language.empty()) simulation_->localization().setLanguage(settings_.language);
+}
+
 void PlayerWindow::viewportTick(float dt, const InputState& input, bool) {
     const qreal dpr = window_->devicePixelRatio();
     simulation_->hud().screenSize = glm::vec2(window_->width() * dpr, window_->height() * dpr);
     simulation_->hud().pixelRatio = static_cast<float>(dpr);
+    if (const int request = simulation_->takeGameMenuRequest(); request != 0 && !menu_.isOpen()) {
+        openMenu();
+        if (request == 2) menu_.openSettings();
+    }
+    if (menu_.isOpen()) {
+        // Paused: the game's last HUD with the menu on top.
+        overlay_ = simulation_->hud();
+        menuInput_.beginStep(&input);
+        menuUi_.beginStep(&input, &overlay_,
+                          {menuInput_.pressed("Up"), menuInput_.pressed("Down"), menuInput_.pressed("Left"),
+                           menuInput_.pressed("Right"), menuInput_.pressed("Submit")});
+        bool changed = false;
+        const GameMenu::Action action = menu_.draw(menuUi_, overlay_, settings_, simulation_->localization(), changed);
+        if (changed) {
+            applySettings();
+            if (auto saved = settings_.save(settingsFile_); !saved) log::warn("Player", "{}", saved.error().message);
+        }
+        if (action == GameMenu::Action::Resume) closeMenu();
+        if (action == GameMenu::Action::Quit) window_->close();
+        return;
+    }
     const std::uint64_t loads = simulation_->sceneLoads();
     simulation_->advance(dt);
     if (simulation_->sceneLoads() != loads) freeCam_ = scene_->primaryCamera() == entt::null;  // the new level's camera
@@ -93,7 +140,17 @@ CameraView PlayerWindow::viewportCamera(float aspect) const {
 render::RenderSettings PlayerWindow::viewportSettings() const {
     render::RenderSettings s;
     s.assets = &assets_;
-    s.hud = &simulation_->hud();
+    s.hud = menu_.isOpen() ? &overlay_ : &simulation_->hud();
+    // Graphics quality from the game's settings.
+    if (settings_.quality <= 0) {
+        s.shadows = false;
+        s.ambientOcclusion = false;
+        s.bloom = false;
+    } else if (settings_.quality == 1) {
+        s.shadowResolution = 1024;
+        s.shadowDistance = 35.0f;
+        s.ambientOcclusion = false;
+    }
     s.debug = showDebug_ ? &simulation_->debugDraw() : nullptr;
     return s;
 }
@@ -101,12 +158,19 @@ render::RenderSettings PlayerWindow::viewportSettings() const {
 bool PlayerWindow::viewportKeyPressed(int key, Qt::KeyboardModifiers) {
     switch (key) {
         case Qt::Key_Escape:
-            // A game with behaviours gets Escape (pause menus); one without quits with it.
+            // The open menu goes back a page; otherwise a game with behaviours gets Escape (its
+            // own pause menu, or openGameMenu()); one without opens the built-in menu.
+            if (menu_.isOpen()) {
+                if (menu_.back() == GameMenu::Action::Resume) closeMenu();
+                return true;
+            }
             if (simulation_->scriptInstances() > 0) return false;
-            window_->close();
+            openMenu();
             return true;
         case Qt::Key_F11:
-            window_->setWindowStates(window_->windowStates() ^ Qt::WindowFullScreen);
+            settings_.fullscreen = !settings_.fullscreen;
+            applySettings();
+            (void)settings_.save(settingsFile_);
             return true;
         case Qt::Key_F3:
             showDebug_ = !showDebug_;  // the behaviours' debug shapes

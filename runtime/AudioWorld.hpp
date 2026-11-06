@@ -38,6 +38,8 @@ public:
     void setListener(const glm::vec3& position, const glm::vec3& forward, const glm::vec3& up);
     /// Places the listener at a camera (its view matrix).
     void setListenerFromView(const glm::mat4& view);
+    /// Volume of everything (the game's settings), 0..1.
+    void setMasterVolume(float volume);
     /// Pauses or resumes every sound (play mode paused).
     void setPaused(bool paused);
 

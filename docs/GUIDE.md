@@ -433,6 +433,8 @@ What a behaviour can do:
 | `moveTo(target)`, `isMoving()`, `stopMoving()`, `findPath(from, to)` | Navigation (see Navigation) |
 | `drive(throttle, steering, brake, handbrake)`, `vehicleSpeed()` | A Vehicle |
 | `setRagdoll(on)`, `isRagdoll()` | A Ragdoll |
+| `tr("menu.play")`, `setLanguage("pl")`, `language()`, `languages()` | Texts in the player's language (see Languages) |
+| `openGameMenu()`, `openGameSettings()`, `gameMenuOpen()` | The player's built-in pause and settings menu |
 | `crossfadeAnimation("Run", 0.25f)` | Blend from the current clip into another (no pop) |
 | `emitParticles(n)`, `setParticlesPlaying(on)`, `particleCount()` | The entity's Particle Emitter |
 | `setMaterial("Content/Materials/Glow.lmat")`, `setMaterialOf(e, path)`, `setColor(v)` | Change how a Mesh Renderer looks |
@@ -465,6 +467,27 @@ with it, so save your scene before experimenting. Other ways to build: *Scripts 
 (<kbd>Ctrl</kbd>+<kbd>B</kbd>), or `lumora-editor --headless --project <p> --build-scripts`.
 The standalone player and `--simulate` use the library the editor built last
 (`Saved/ScriptBuild/bin/`).
+
+### Languages and the game menu
+
+Put one file per language in `Content/Localization`, named by its code (`en.json`,
+`pl.json`, ...), each a list of texts:
+
+```json
+{ "menu.play": "Graj", "hud.score": "Wynik", "language.name": "Polski" }
+```
+
+Scripts show `tr("menu.play")`: the text in the player's language, else English, else the key.
+The language starts as the player's choice or the system's; `setLanguage("pl")`,
+`language()` and `languages()` switch and list them.
+
+**Game menu.** In the player, <kbd>Esc</kbd> opens a built-in pause menu (Resume, Settings,
+Quit) when the game's behaviours do not handle Escape themselves; they can open it with
+`openGameMenu()`, or its settings page with `openGameSettings()` (a main menu's "Options").
+Settings: volume, graphics quality (Low, Medium, High), fullscreen, vsync and language; they are
+kept per game in the player's data folder. The menu's own texts can be translated too (keys
+`menu.paused`, `menu.resume`, `menu.settings`, `menu.quit`, `menu.volume`, `menu.quality`,
+`menu.quality.low/medium/high`, `menu.fullscreen`, `menu.vsync`, `menu.language`, `menu.back`).
 
 ### Sound
 

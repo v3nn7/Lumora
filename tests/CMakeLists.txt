@@ -24,7 +24,8 @@ add_executable(lumora_tests
     ParticleTests.cpp
     InputTests.cpp
     NavigationTests.cpp
-    LandscapeTests.cpp)
+    LandscapeTests.cpp
+    LocalizationTests.cpp)
 target_link_libraries(lumora_tests PRIVATE
     lumora_core lumora_scene lumora_project lumora_runtime lumora_renderer lumora_cli
     GTest::gtest lumora_compile_options)

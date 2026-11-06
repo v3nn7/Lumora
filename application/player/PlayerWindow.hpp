@@ -5,6 +5,10 @@
 #include "common/VulkanViewport.hpp"
 #include "assets/AssetLibrary.hpp"
 #include "project/Project.hpp"
+#include "runtime/GameMenu.hpp"
+#include "runtime/GameUi.hpp"
+#include "runtime/InputActions.hpp"
+#include "scene/Hud.hpp"
 
 #include <QObject>
 
@@ -20,7 +24,9 @@ namespace lumora::app {
 class AppContext;
 
 /// Standalone runtime (Lumora --project X --play): loads the default scene and runs the
-/// simulation, viewed through the scene's primary camera. Esc quits, F11 toggles fullscreen,
+/// simulation, viewed through the scene's primary camera. Esc opens the built-in game menu
+/// (pause, settings: volume, graphics quality, fullscreen, vsync, language; quit) unless the
+/// game's behaviours handle it (they can open it with openGameMenu()); F11 toggles fullscreen,
 /// F8 toggles a free-fly debug camera.
 class LUMORA_PLAYER_API PlayerWindow final : public QObject, public ViewportClient {
     Q_OBJECT
@@ -41,6 +47,9 @@ signals:
 
 private:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void openMenu();
+    void closeMenu();
+    void applySettings();
 
     AppContext& app_;
     Project project_;
@@ -51,6 +60,12 @@ private:
     FlyCameraController freeCamera_;
     bool freeCam_ = false;
     bool showDebug_ = false;
+    GameSettings settings_;
+    std::filesystem::path settingsFile_;
+    GameMenu menu_;
+    GameUi menuUi_;
+    InputActions menuInput_ = InputActions::defaults();
+    HudCanvas overlay_;  // the game's HUD with the menu on top
 };
 
 } // namespace lumora::app

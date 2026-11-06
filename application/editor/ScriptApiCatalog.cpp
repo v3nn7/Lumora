@@ -76,6 +76,14 @@ constexpr ScriptApiEntry kApi[] = {
     {S::Behaviour, "moveTo", "bool moveTo(Vec3 target)", "Nav Agent: walk there"},
     {S::Behaviour, "stopMoving", "void stopMoving()", "Nav Agent: stop"},
     {S::Behaviour, "isMoving", "bool isMoving()", "Nav Agent: still on its way"},
+    // Languages and the game menu
+    {S::Behaviour, "tr", "std::string tr(std::string_view key)", "Text in the player's language"},
+    {S::Behaviour, "setLanguage", "bool setLanguage(std::string_view code)", "Switch language (\"pl\", \"en\")"},
+    {S::Behaviour, "language", "std::string language()", "Current language code"},
+    {S::Behaviour, "languages", "std::vector<std::string> languages()", "Languages the game has"},
+    {S::Behaviour, "openGameMenu", "void openGameMenu()", "Built-in pause and settings menu"},
+    {S::Behaviour, "gameMenuOpen", "bool gameMenuOpen()", "Built-in menu is open"},
+    {S::Behaviour, "openGameSettings", "void openGameSettings()", "Built-in settings page"},
     // Vehicles and ragdolls
     {S::Behaviour, "drive", "void drive(float throttle, float steering, float brake = 0, float handbrake = 0)", "Vehicle: driver input"},
     {S::Behaviour, "vehicleSpeed", "float vehicleSpeed()", "Vehicle: forward speed (m/s)"},

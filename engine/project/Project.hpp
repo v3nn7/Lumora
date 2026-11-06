@@ -10,7 +10,7 @@
 
 namespace lumora {
 
-enum class ProjectTemplate { Empty, BasicScene, MaterialShowcase, PhysicsPlayground };
+enum class ProjectTemplate { Empty, BasicScene, MaterialShowcase, PhysicsPlayground, Platformer };
 
 struct ProjectTemplateInfo {
     ProjectTemplate id;

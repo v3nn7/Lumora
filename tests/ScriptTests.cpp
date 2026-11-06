@@ -7,6 +7,7 @@
 #include "project/Project.hpp"
 #include "runtime/PhysicsWorld.hpp"
 #include "scene/Prefab.hpp"
+#include "scene/SceneSerializer.hpp"
 #include "runtime/Scripting.hpp"
 #include "runtime/Simulation.hpp"
 #include "scene/Scene.hpp"
@@ -316,4 +317,49 @@ LUMORA_BEHAVIOUR(Rise);
     const glm::vec3 p = scene.registry().get<TransformComponent>(rocket).position;
     EXPECT_NEAR(p.x, 2.0f, 1e-5f);
     EXPECT_NEAR(p.y, 2.0f, 0.05f) << "spawned at y = 1, rose 1 m in a second";
+}
+
+TEST_F(ScriptTest, PlatformerTemplatePlays) {
+    // The template end to end: its scripts compile, the player stands, collects a coin it walks
+    // into, the HUD counts it, and the camera follows.
+    auto project = Project::create(dir.path() / "Jump", "Jump", ProjectTemplate::Platformer);
+    ASSERT_TRUE(project.has_value()) << project.error().message;
+    ASSERT_TRUE(std::filesystem::exists(dir.path() / "Jump" / "Scripts" / "Game.cpp"));
+    app::ScriptBuilder builder(QString::fromStdString((dir.path() / "Jump").string()));
+    QString log;
+    ASSERT_TRUE(builder.buildBlocking(&log)) << log.toStdString();
+    auto module = ScriptModule::load(builder.libraryPath().toStdString(), builder.loadDir().toStdString());
+    ASSERT_TRUE(module.has_value()) << module.error().message;
+    auto scene = SceneSerializer::load(project->defaultScenePath());
+    ASSERT_TRUE(scene.has_value()) << scene.error().message;
+    Scene& level = **scene;
+    auto named = [&](const char* name) {
+        std::vector<entt::entity> found;
+        for (auto [e, n] : level.registry().view<NameComponent>().each()) {
+            if (n.name == name) found.push_back(e);
+        }
+        return found;
+    };
+    const entt::entity player = named("Player").at(0);
+    const entt::entity camera = named("Main Camera").at(0);
+    const std::size_t coins = named("Coin").size();
+    ASSERT_EQ(coins, 8u);
+
+    Simulation sim(level);
+    sim.setProjectRoot(dir.path() / "Jump");
+    sim.setScripts(*module, nullptr);
+    for (int i = 0; i < 60; ++i) sim.step();
+    ASSERT_NE(sim.physics(), nullptr);
+    EXPECT_TRUE(sim.physics()->characterGrounded(player)) << "the player stands on the ground";
+    ASSERT_FALSE(sim.hud().texts.empty());
+    EXPECT_EQ(sim.hud().texts[0].utf8, "Coins: 0 / 8");
+    const glm::vec3 cameraBefore = level.registry().get<TransformComponent>(camera).position;
+
+    // Put the player next to the coin at (-4, 1, 2), in reach of its body.
+    level.registry().get<TransformComponent>(player).position = glm::vec3(-4.0f, 0.0f, 2.3f);
+    for (int i = 0; i < 30; ++i) sim.step();
+    EXPECT_EQ(named("Coin").size(), coins - 1) << "collected and removed";
+    EXPECT_EQ(sim.hud().texts[0].utf8, "Coins: 1 / 8");
+    const glm::vec3 cameraAfter = level.registry().get<TransformComponent>(camera).position;
+    EXPECT_LT(cameraAfter.x, cameraBefore.x - 1.0f) << "the camera followed the player to the left";
 }

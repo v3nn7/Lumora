@@ -175,7 +175,7 @@ Usage:
 
 Headless actions:
   --info                                   Print engine and GPU information (default)
-  --create <dir> [--name N] [--template T] Create a project (templates: empty, basic, showcase)
+  --create <dir> [--name N] [--template T] Create a project (templates: empty, basic, showcase, physics, platformer)
   --project <p> --import <model.glb>       Copy a glTF model into Content/Models and add it to
                                            the default scene (repeatable; saves the scene)
   --project <p> --validate                 Load the project and its default scene

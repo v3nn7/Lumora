@@ -31,6 +31,7 @@
 // Exceptions thrown by a behaviour are caught and reported; the behaviour is then disabled.
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -103,6 +104,7 @@ struct EngineApi {
     void (*drawRect)(void* context, const float* xywh, const float* rgba);
     void (*drawText)(void* context, const char* utf8, const float* xySize, const float* rgba);
     void (*screenSize)(void* context, float* wh);
+    int (*findAll)(void* context, const char* name, Entity* out, int capacity);  // returns the total
 };
 
 class Behaviour;
@@ -141,6 +143,19 @@ protected:
     }
     [[nodiscard]] Entity find(std::string_view entityName) const {
         return api_->find(api_->context, std::string(entityName).c_str());
+    }
+
+    /// Every entity with this name.
+    [[nodiscard]] std::vector<Entity> findAll(std::string_view entityName) const {
+        const std::string key(entityName);
+        std::vector<Entity> out(16);
+        int total = api_->findAll(api_->context, key.c_str(), out.data(), static_cast<int>(out.size()));
+        if (total > static_cast<int>(out.size())) {
+            out.resize(static_cast<std::size_t>(total));
+            total = api_->findAll(api_->context, key.c_str(), out.data(), total);
+        }
+        out.resize(static_cast<std::size_t>(std::min<int>(total, static_cast<int>(out.size()))));
+        return out;
     }
 
     [[nodiscard]] Vec3 position() const { return get(entity_, 0); }

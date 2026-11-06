@@ -24,6 +24,8 @@ constexpr std::array kTemplates{
                         "A grid of spheres sweeping metallic and roughness to inspect PBR shading."},
     ProjectTemplateInfo{ProjectTemplate::PhysicsPlayground, "physics", "Physics Playground",
                         "Rigid bodies on Jolt Physics: a tower of crates, rolling balls and a spinning paddle. Press Play."},
+    ProjectTemplateInfo{ProjectTemplate::Platformer, "platformer", "Platformer",
+                        "A small game: run and jump with WASD and Space, collect the coins. C++ scripts included."},
 };
 } // namespace
 
@@ -65,6 +67,12 @@ Result<Project> Project::create(const std::filesystem::path& directory, const st
                                .count();
     project.descriptorFile_ = project.descriptorPath();
 
+    for (const auto& [file, source] : templateScripts(templ)) {
+        std::filesystem::create_directories(directory / "Scripts", ec);
+        if (auto written = fs::writeTextFileAtomic(directory / "Scripts" / file, source); !written) {
+            return std::unexpected(written.error());
+        }
+    }
     auto scene = createTemplateScene(templ);
     if (auto saved = SceneSerializer::save(*scene, project.defaultScenePath()); !saved) {
         return std::unexpected(saved.error());

@@ -79,6 +79,7 @@ In the Hub click **New Project**, enter a name and a location, and pick a templa
 | Basic Scene | Ground plane, primitives and lighting |
 | Material Showcase | Spheres sweeping metallic and roughness, for checking PBR shading |
 | Physics Playground | A tower of crates, rolling balls and a spinning paddle; press Play |
+| Platformer | A small game: run and jump (WASD, Space), collect the coins; C++ scripts in `Scripts/Game.cpp` to learn from (needs CMake and a compiler) |
 
 The preview next to each template is rendered live by the engine. Double-click a project in the
 grid to open it. **Remove from List** only forgets the project; it never deletes files.
@@ -297,7 +298,7 @@ What a behaviour can do:
 |---|---|
 | `start()`, `update(dt)` | Override: once when play begins (or after a reload), every fixed step (1/60 s) |
 | `position()`, `rotation()`, `scale()` and `set…` | Read and change the entity's transform (metres, Euler degrees) |
-| `find("Name")`, `positionOf(e)`, `setPositionOf(e, v)`, `name(e)` | Other entities, by name |
+| `find("Name")`, `findAll("Name")`, `positionOf(e)`, `setPositionOf(e, v)`, `name(e)` | Other entities, by name |
 | `keyDown(Key::W)` | Keyboard state: WASD, QE, F, arrows, Space, Shift, Ctrl, Alt, Esc |
 | `time()` | Simulated seconds since play started |
 | `mouseDown(MouseButton::Left)`, `mouseDelta()` | Mouse buttons and movement this frame |

@@ -144,9 +144,123 @@ std::unique_ptr<Scene> createTemplateScene(ProjectTemplate templ) {
             scene->registry().emplace<RotatorComponent>(paddle).speedDeg = 40.0f;
             break;
         }
+        case ProjectTemplate::Platformer: {
+            addSun(*scene);
+            scene->environment().fogDensity = 0.004f;
+            addGround(*scene, 60.0f);
+            auto solid = [&](std::string_view name, glm::vec3 center, glm::vec3 size, glm::vec3 color) {
+                const entt::entity e = addMesh(*scene, name, MeshPrimitive::Cube, center, color, 0.0f, 0.7f);
+                scene->registry().get<TransformComponent>(e).scale = size;
+                scene->registry().emplace<ColliderComponent>(e);  // unit box, scaled with the entity
+                return e;
+            };
+            // Platforms rising like stairs, then a bridge.
+            const glm::vec3 stone{0.55f, 0.52f, 0.48f};
+            solid("Platform 1", {3.0f, 0.5f, -3.0f}, {3.0f, 1.0f, 3.0f}, stone);
+            solid("Platform 2", {6.5f, 1.2f, -6.0f}, {3.0f, 1.0f, 3.0f}, stone);
+            solid("Platform 3", {3.0f, 2.0f, -9.5f}, {3.0f, 1.0f, 3.0f}, stone);
+            solid("Bridge", {-3.0f, 2.0f, -9.5f}, {9.0f, 0.4f, 1.6f}, {0.45f, 0.30f, 0.18f});
+            solid("Tower", {-9.0f, 1.5f, -9.5f}, {3.0f, 3.0f, 3.0f}, stone);
+            // Coins to collect (the Player script finds every entity named "Coin").
+            const glm::vec3 coins[] = {{0.0f, 1.0f, -4.0f},  {3.0f, 1.8f, -3.0f},  {6.5f, 2.5f, -6.0f}, {3.0f, 3.3f, -9.5f},
+                                       {-1.0f, 3.0f, -9.5f}, {-5.0f, 3.0f, -9.5f}, {-9.0f, 3.8f, -9.5f}, {-4.0f, 1.0f, 2.0f}};
+            const entt::entity coinGroup = scene->createEntity("Coins");
+            for (const glm::vec3& p : coins) {
+                const entt::entity coin = addMesh(*scene, "Coin", MeshPrimitive::Cylinder, p, {1.0f, 0.78f, 0.25f}, 1.0f, 0.25f, coinGroup);
+                auto& t = scene->registry().get<TransformComponent>(coin);
+                t.scale = {0.6f, 0.12f, 0.6f};
+                t.rotationDeg = {90.0f, 0.0f, 0.0f};
+                auto& shine = scene->registry().get<MeshRendererComponent>(coin);  // easy to spot
+                shine.emissive = {1.0f, 0.7f, 0.2f};
+                shine.emissiveStrength = 0.8f;
+                auto& spin = scene->registry().emplace<RotatorComponent>(coin);
+                spin.axis = {0.0f, 1.0f, 0.0f};
+                spin.speedDeg = 120.0f;
+            }
+            // The player: a character controller standing on its origin, with a body to see.
+            const entt::entity player = scene->createEntity("Player");
+            scene->registry().get<TransformComponent>(player).position = {0.0f, 0.1f, 3.0f};
+            scene->registry().emplace<CharacterControllerComponent>(player);
+            scene->registry().emplace<ScriptComponent>(player) = ScriptComponent{"Player", "speed=5, jump=6.5"};
+            const entt::entity body = addMesh(*scene, "Body", MeshPrimitive::Cylinder, {0.0f, 0.9f, 0.0f},
+                                              {0.20f, 0.45f, 0.95f}, 0.0f, 0.5f, player);
+            scene->registry().get<TransformComponent>(body).scale = {0.6f, 1.8f, 0.6f};
+            const entt::entity camera = addCamera(*scene, {0.0f, 4.5f, 10.0f}, {-22.0f, 0.0f, 0.0f});
+            scene->registry().emplace<ScriptComponent>(camera).behaviour = "FollowCamera";
+            break;
+        }
     }
     scene->updateWorldTransforms();
     return scene;
+}
+
+std::vector<std::pair<std::string, std::string>> templateScripts(ProjectTemplate templ) {
+    if (templ != ProjectTemplate::Platformer) return {};
+    return {{"Game.cpp", R"cpp(// The Platformer template's gameplay. Edit and save: the editor rebuilds and reloads it,
+// even while you play.
+#include <lumora/Script.hpp>
+
+#include <string>
+
+using namespace lumora::script;
+
+// Runs and jumps (Character Controller), collects coins, draws the HUD.
+class Player : public Behaviour {
+public:
+    void start() override {
+        spawn_ = position();
+        total_ = static_cast<int>(findAll("Coin").size());
+    }
+
+    void update(float) override {
+        const float speed = param("speed", 5.0f);
+        Vec3 walk{0.0f, 0.0f, 0.0f};
+        if (keyDown(Key::W) || keyDown(Key::Up)) walk.z -= speed;
+        if (keyDown(Key::S) || keyDown(Key::Down)) walk.z += speed;
+        if (keyDown(Key::A) || keyDown(Key::Left)) walk.x -= speed;
+        if (keyDown(Key::D) || keyDown(Key::Right)) walk.x += speed;
+        move(walk);
+        if (keyDown(Key::Space) && grounded()) jump(param("jump", 6.5f));
+
+        // Coins within reach of the body are collected.
+        const Vec3 chest = position() + Vec3{0.0f, 0.9f, 0.0f};
+        for (Entity coin : findAll("Coin")) {
+            if ((positionOf(coin) - chest).length() < 1.1f) {
+                destroy(coin);
+                ++collected_;
+            }
+        }
+        if (position().y < -10.0f) setPosition(spawn_);  // fell off the world
+
+        drawRect(16.0f, 16.0f, 230.0f, 44.0f, Vec3{0.05f, 0.06f, 0.08f}, 0.6f);
+        drawText("Coins: " + std::to_string(collected_) + " / " + std::to_string(total_), 28.0f, 24.0f, 26.0f,
+                 Vec3{1.0f, 0.85f, 0.35f});
+        if (total_ > 0 && collected_ == total_) {
+            const Vec3 screen = screenSize();
+            drawText("All coins collected!", screen.x * 0.5f - 230.0f, screen.y * 0.4f, 48.0f);
+        }
+    }
+
+private:
+    Vec3 spawn_;
+    int total_ = 0;
+    int collected_ = 0;
+};
+LUMORA_BEHAVIOUR(Player);
+
+// Keeps the camera behind and above the player.
+class FollowCamera : public Behaviour {
+public:
+    void update(float dt) override {
+        const Entity player = find("Player");
+        if (player == kNoEntity) return;
+        const Vec3 target = positionOf(player) + Vec3{0.0f, 4.5f, 7.5f};
+        const float follow = 1.0f - std::exp(-6.0f * dt);  // smooth, frame-rate independent
+        setPosition(position() + (target - position()) * follow);
+    }
+};
+LUMORA_BEHAVIOUR(FollowCamera);
+)cpp"}};
 }
 
 } // namespace lumora

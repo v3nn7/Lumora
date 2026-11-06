@@ -104,6 +104,17 @@ script::Entity apiFind(void* c, const char* name) {
     return script::kNoEntity;
 }
 
+int apiFindAll(void* c, const char* name, script::Entity* out, int capacity) {
+    if (name == nullptr) return 0;
+    int total = 0;
+    for (auto [e, n] : context(c).scene->registry().view<NameComponent>().each()) {
+        if (n.name != name) continue;
+        if (out != nullptr && total < capacity) out[total] = static_cast<script::Entity>(entt::to_integral(e));
+        ++total;
+    }
+    return total;
+}
+
 const char* apiName(void* c, script::Entity entity) {
     Context& ctx = context(c);
     const auto& reg = ctx.scene->registry();
@@ -427,6 +438,7 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.drawRect = apiDrawRect;
     api_.drawText = apiDrawText;
     api_.screenSize = apiScreenSize;
+    api_.findAll = apiFindAll;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }

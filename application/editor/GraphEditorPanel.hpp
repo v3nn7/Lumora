@@ -11,6 +11,7 @@
 #include <vector>
 
 class QLabel;
+class QMenu;
 class QTableWidget;
 
 namespace lumora::visual {
@@ -26,8 +27,9 @@ class GraphView;
 
 /// Edits a visual script (.lgraph): nodes from the shared node library (runtime/VisualScript.hpp)
 /// placed on a canvas and joined by links. Right-click (or Space, or Add Node) opens a searchable
-/// list of nodes; drag from a pin to another pin to link them; unlinked inputs show a field for
-/// their value; Delete removes the selection. Variables are edited in the table on the right.
+/// list of nodes, and on a node, pin or link a menu to delete it or cut its links; drag from a
+/// pin to another pin to link them; unlinked inputs show a field for their value; Delete
+/// removes the selection. Variables are edited in the table on the right.
 /// Saving writes the file, which a running game reloads at once.
 class LUMORA_EDITOR_API GraphEditorPanel final : public QWidget {
     Q_OBJECT
@@ -46,6 +48,14 @@ public:
     /// Links an output pin to an input pin; replaces an existing link into a data input.
     bool connectPins(int fromNode, std::string_view fromPin, int toNode, std::string_view toPin);
     bool disconnectInput(int node, std::string_view pin);
+    /// Removes every link on one pin (an output can feed many inputs); returns how many.
+    int disconnectPin(int node, std::string_view pin, bool output);
+    /// Removes every link into or out of a node; returns how many.
+    int disconnectNode(int node);
+    /// Removes the link from an output to an input.
+    bool removeLink(int fromNode, std::string_view fromPin, int toNode, std::string_view toPin);
+    /// A copy of a node with its field values (not its links), placed next to it; returns its id.
+    int duplicateNode(int id);
     void setLiteral(int node, std::string_view pin, const nlohmann::json& value);
     void addVariable(const QString& name, const QString& type);
     [[nodiscard]] QStringList variableNames() const;
@@ -55,6 +65,10 @@ public:
     [[nodiscard]] nlohmann::json document() const;
     /// Opens the node list at a scene position (Space / right-click / Add Node).
     void showNodePicker(QPointF scenePosition);
+    /// The right-click menu for what is at a scene position: a node (delete, duplicate, break
+    /// its links), a pin (break its links) or a link (remove it). Null on empty canvas, where
+    /// right-click opens the node list instead.
+    [[nodiscard]] QMenu* contextMenuAt(QPointF scenePosition, QWidget* parent);
     /// Zooms so the whole graph is visible (at most 100 %).
     void fitGraph();
 

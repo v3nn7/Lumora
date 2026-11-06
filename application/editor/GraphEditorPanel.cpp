@@ -20,6 +20,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
@@ -35,6 +36,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 namespace lumora::editor {
 
@@ -508,11 +510,17 @@ void GraphView::keyPressEvent(QKeyEvent* event) {
 }
 
 void GraphView::contextMenuEvent(QContextMenuEvent* event) {
-    if (itemAt(event->pos()) != nullptr) {
+    // A node's own field keeps its text menu.
+    if (dynamic_cast<QGraphicsProxyWidget*>(itemAt(event->pos())) != nullptr) {
         QGraphicsView::contextMenuEvent(event);
         return;
     }
-    panel_.showNodePicker(mapToScene(event->pos()));
+    const QPointF at = mapToScene(event->pos());
+    if (std::unique_ptr<QMenu> menu{panel_.contextMenuAt(at, this)}) {
+        menu->exec(event->globalPos());
+        return;
+    }
+    panel_.showNodePicker(at);
 }
 
 void GraphView::drawBackground(QPainter* painter, const QRectF& rect) {
@@ -578,7 +586,8 @@ GraphEditorPanel::GraphEditorPanel(QString projectRoot, QWidget* parent) : QWidg
     varButtons->addWidget(removeVar);
     sideLayout->addLayout(varButtons);
     auto* help = new QLabel(tr("Drag from a pin to another pin to link them. Space / right-click: add node. "
-                               "Delete: remove. Middle mouse: pan, wheel: zoom."));
+                               "Right-click a node, pin or link to delete it or cut links. Delete: remove the selection. "
+                               "Middle mouse: pan, wheel: zoom."));
     help->setWordWrap(true);
     help->setStyleSheet(QStringLiteral("color: %1;").arg(app::theme::kTextMuted.name()));
     sideLayout->addWidget(help);
@@ -728,6 +737,117 @@ bool GraphEditorPanel::disconnectInput(int node, std::string_view name) {
     refreshLiteralEditors();
     setDirty(true);
     return true;
+}
+
+int GraphEditorPanel::disconnectPin(int node, std::string_view name, bool output) {
+    const auto removed = std::erase_if(links_, [&](const Link& l) {
+        const bool hit = output ? (l.fromNode == node && l.fromPin == name) : (l.toNode == node && l.toPin == name);
+        if (hit) delete l.item;
+        return hit;
+    });
+    if (removed == 0) return 0;
+    refreshLiteralEditors();
+    setDirty(true);
+    return static_cast<int>(removed);
+}
+
+int GraphEditorPanel::disconnectNode(int node) {
+    const auto removed = std::erase_if(links_, [&](const Link& l) {
+        const bool hit = l.fromNode == node || l.toNode == node;
+        if (hit) delete l.item;
+        return hit;
+    });
+    if (removed == 0) return 0;
+    refreshLiteralEditors();
+    setDirty(true);
+    return static_cast<int>(removed);
+}
+
+bool GraphEditorPanel::removeLink(int fromNode, std::string_view fromPin, int toNode, std::string_view toPin) {
+    const auto removed = std::erase_if(links_, [&](const Link& l) {
+        const bool hit = l.fromNode == fromNode && l.fromPin == fromPin && l.toNode == toNode && l.toPin == toPin;
+        if (hit) delete l.item;
+        return hit;
+    });
+    if (removed == 0) return false;
+    refreshLiteralEditors();
+    setDirty(true);
+    return true;
+}
+
+int GraphEditorPanel::duplicateNode(int id) {
+    const auto it = nodes_.find(id);
+    if (it == nodes_.end()) return 0;
+    const int copy = nextId_++;
+    auto* item = new GraphNodeItem(*this, copy, it->second->def(), it->second->literals());
+    scene_->addItem(item);
+    item->setPos(it->second->pos() + QPointF(30, 30));
+    nodes_[copy] = item;
+    refreshLiteralEditors();
+    scene_->clearSelection();
+    item->setSelected(true);
+    setDirty(true);
+    return copy;
+}
+
+QMenu* GraphEditorPanel::contextMenuAt(QPointF scenePosition, QWidget* parent) {
+    GraphPinItem* pinItem = nullptr;
+    GraphNodeItem* nodeItem = nullptr;
+    GraphLinkItem* linkItem = nullptr;
+    // Pins are small: look a few pixels around the click for one first.
+    for (QGraphicsItem* item : scene_->items(QRectF(scenePosition - QPointF(4, 4), QSizeF(8, 8)))) {
+        if (auto* p = dynamic_cast<GraphPinItem*>(item)) {
+            pinItem = p;
+            break;
+        }
+    }
+    if (pinItem == nullptr) {
+        for (QGraphicsItem* item : scene_->items(scenePosition)) {
+            for (QGraphicsItem* i = item; i != nullptr && nodeItem == nullptr; i = i->parentItem()) {
+                nodeItem = dynamic_cast<GraphNodeItem*>(i);
+            }
+            if (nodeItem != nullptr) break;
+            if ((linkItem = dynamic_cast<GraphLinkItem*>(item)) != nullptr) break;
+        }
+    }
+    if (pinItem == nullptr && nodeItem == nullptr && linkItem == nullptr) return nullptr;
+
+    auto* menu = new QMenu(parent);
+    if (pinItem != nullptr) {
+        const int node = pinItem->node();
+        const std::string name(pinItem->def().name);
+        const bool output = pinItem->output();
+        QAction* cut = menu->addAction(app::theme::icon(QStringLiteral("close")), tr("Break Links"),
+                                       [this, node, name, output] { disconnectPin(node, name, output); });
+        cut->setEnabled(pinItem->linked);
+        menu->addAction(tr("Delete Node"), [this, node] { removeNode(node); });
+    } else if (nodeItem != nullptr) {
+        const int id = nodeItem->id();
+        // On a node that is part of a bigger selection, deleting takes the whole selection.
+        const qsizetype selected = scene_->selectedItems().size();
+        if (nodeItem->isSelected() && selected > 1) {
+            menu->addAction(app::theme::icon(QStringLiteral("trash")), tr("Delete %1 Selected").arg(selected),
+                            [this] { removeSelection(); });
+        } else {
+            menu->addAction(app::theme::icon(QStringLiteral("trash")), tr("Delete Node"), [this, id] { removeNode(id); })
+                ->setShortcut(QKeySequence::Delete);
+        }
+        menu->addAction(app::theme::icon(QStringLiteral("plus")), tr("Duplicate"), [this, id] { duplicateNode(id); });
+        const bool hasLinks = std::ranges::any_of(links_, [id](const Link& l) { return l.fromNode == id || l.toNode == id; });
+        menu->addAction(app::theme::icon(QStringLiteral("close")), tr("Break All Links"), [this, id] { disconnectNode(id); })
+            ->setEnabled(hasLinks);
+    } else {
+        const auto link = std::ranges::find(links_, linkItem, &Link::item);
+        if (link == links_.end()) {
+            delete menu;
+            return nullptr;
+        }
+        menu->addAction(app::theme::icon(QStringLiteral("close")), tr("Remove Link"),
+                        [this, from = link->fromNode, fromPin = link->fromPin, to = link->toNode, toPin = link->toPin] {
+                            removeLink(from, fromPin, to, toPin);
+                        });
+    }
+    return menu;
 }
 
 void GraphEditorPanel::setLiteral(int node, std::string_view pinName, const nlohmann::json& value) {

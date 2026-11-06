@@ -37,7 +37,8 @@ them with `self:param("speed", 4)`, a graph with the *Script Parameter* node and
   "this entity"; you can also type another entity's name.
 - **Variables:** add them in the table on the right and read or write them with *Get Variable*,
   *Set Variable* and *Add To Variable*.
-- **Delete** removes the selected nodes or links. Middle mouse pans, the wheel zooms, and the
+- **Right-click** a node to delete, duplicate or unlink it, a pin to break its links, or a link
+  to remove it. **Delete** removes the selected nodes or links. Middle mouse pans, the wheel zooms, and the
   magnifier button shows the whole graph.
 - **Save** with <kbd>Ctrl+S</kbd>. A running game reloads the graph at once.
 

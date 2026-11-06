@@ -11,8 +11,14 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QGraphicsPathItem>
+#include <QGraphicsScene>
+#include <QGraphicsView>
+#include <QMenu>
 
 #include <gtest/gtest.h>
+
+#include <memory>
 
 using namespace lumora;
 using editor::GraphEditorPanel;
@@ -114,6 +120,69 @@ TEST(GraphEditor, ContentBrowserStarterScriptsRun) {
     for (int i = 0; i < 10; ++i) sim.step();
     EXPECT_EQ(sim.scriptInstances(), 2u) << "both starter scripts load and run without errors";
     EXPECT_GT(scene.registry().get<TransformComponent>(spinner).rotationDeg.y, 1.0f) << "the starter graph spins";
+}
+
+namespace {
+/// Triggers the right-click menu entry `text` at a scene position; false if there is none.
+bool rightClick(GraphEditorPanel& panel, QPointF at, const QString& text) {
+    std::unique_ptr<QMenu> menu{panel.contextMenuAt(at, nullptr)};
+    if (!menu) return false;
+    for (QAction* action : menu->actions()) {
+        if (action->text().startsWith(text) && action->isEnabled()) {
+            action->trigger();
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
+TEST(GraphEditor, RightClickDeletesNodesAndCutsLinks) {
+    test::TempDir dir;
+    const QString root = QString::fromStdString(dir.path().string());
+    editor::ContentBrowserPanel browser(root);
+    GraphEditorPanel panel(root);
+    ASSERT_TRUE(panel.open(browser.createVisualScript(QStringLiteral("Cut"))));
+    const std::size_t starterNodes = panel.nodeCount();
+    const int start = panel.addNode("event.start", {0, 1000});
+    const int set = panel.addNode("entity.setPosition", {500, 1000});
+    const int make = panel.addNode("vec.make", {500, 1300});
+    ASSERT_TRUE(panel.connectPins(start, "exec", set, "in"));
+    ASSERT_TRUE(panel.connectPins(make, "vector", set, "value"));
+    const std::size_t links = panel.linkCount();
+
+    EXPECT_EQ(panel.contextMenuAt({-5000, -5000}, nullptr), nullptr) << "empty canvas: the node list instead";
+
+    // A pin: Start's exec output sits on the node's right edge, on the first row.
+    const QPointF startExec(300, 1000 + 26 + 13);
+    EXPECT_TRUE(rightClick(panel, startExec, QStringLiteral("Break Links")));
+    EXPECT_EQ(panel.linkCount(), links - 1);
+    EXPECT_FALSE(rightClick(panel, startExec, QStringLiteral("Break Links"))) << "nothing left to break";
+
+    // A link: the middle of its curve.
+    auto* scene = panel.findChild<QGraphicsView*>()->scene();
+    QPointF linkMiddle;
+    for (QGraphicsItem* item : scene->items()) {
+        auto* path = dynamic_cast<QGraphicsPathItem*>(item);
+        if (path != nullptr && item->parentItem() == nullptr && path->path().pointAtPercent(1.0).x() > 400 &&
+            path->path().pointAtPercent(1.0).y() > 1000) {
+            linkMiddle = path->path().pointAtPercent(0.5);
+        }
+    }
+    ASSERT_FALSE(linkMiddle.isNull());
+    EXPECT_TRUE(rightClick(panel, linkMiddle, QStringLiteral("Remove Link")));
+    EXPECT_EQ(panel.linkCount(), links - 2);
+
+    // A node: duplicate it, link it, break its links, delete it.
+    const QPointF onMake(500 + 150, 1300 + 10);
+    EXPECT_TRUE(rightClick(panel, onMake, QStringLiteral("Duplicate")));
+    EXPECT_EQ(panel.nodeCount(), starterNodes + 4);
+    ASSERT_TRUE(panel.connectPins(make, "vector", set, "value"));
+    EXPECT_TRUE(rightClick(panel, onMake, QStringLiteral("Break All Links")));
+    EXPECT_EQ(panel.linkCount(), links - 2);
+    EXPECT_TRUE(rightClick(panel, onMake, QStringLiteral("Delete Node")));
+    EXPECT_EQ(panel.nodeCount(), starterNodes + 3);
+    EXPECT_TRUE(panel.isDirty());
 }
 
 TEST(GraphEditor, Snapshot) {

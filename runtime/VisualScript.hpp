@@ -27,7 +27,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <chrono>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -99,6 +102,32 @@ struct NodeDef {
 [[nodiscard]] const std::vector<NodeDef>& nodeLibrary();
 [[nodiscard]] const NodeDef* findNode(std::string_view type);
 
+/// What a running graph did lately, for the editor's live view while playing: which nodes ran,
+/// which exec links fired and the last value on every output pin. One per graph file; the first
+/// instance of the graph (one entity) fills it. Recording is off unless the editor enables it,
+/// so games pay nothing.
+struct GraphTrace {
+    mutable std::mutex mutex;
+    std::uint64_t step = 0;                              // advanced by each update
+    std::unordered_map<int, std::uint64_t> nodes;        // node id -> step it last ran
+    std::map<std::pair<int, int>, std::uint64_t> links;  // (node id, exec output index) -> step it fired
+    std::map<std::pair<int, int>, std::string> values;   // (node id, output index) -> last value, as text
+    script::Entity entity = script::kNoEntity;           // the instance being shown
+    std::string entityName;                              // its name, for the editor's label
+    std::chrono::steady_clock::time_point updated;       // last update (stale = not playing)
+};
+
+namespace trace {
+void setEnabled(bool enabled);
+[[nodiscard]] bool enabled();
+/// The key a graph file is traced under (absolute, normalised path).
+[[nodiscard]] std::string keyOf(const std::filesystem::path& file);
+/// The trace for a graph file, if one of its instances has run since the last clear().
+[[nodiscard]] std::shared_ptr<GraphTrace> find(const std::string& key);
+[[nodiscard]] std::shared_ptr<GraphTrace> obtain(const std::string& key);
+void clear();
+} // namespace trace
+
 struct GraphVariable {
     std::string name;
     PinType type = PinType::Number;
@@ -128,9 +157,12 @@ public:
     [[nodiscard]] const std::vector<GraphVariable>& variables() const noexcept { return variables_; }
     /// Node indices of every event node of this type.
     [[nodiscard]] std::vector<int> events(std::string_view type) const;
+    /// The trace key of the file it was loaded from (empty when parsed from memory).
+    [[nodiscard]] const std::string& source() const noexcept { return source_; }
 
 private:
     std::vector<Node> nodes_;
+    std::string source_;
     std::vector<GraphVariable> variables_;
 };
 
@@ -160,6 +192,7 @@ public:
 private:
     friend class Exec;
     void runNode(int node);
+    void record(int node);
     bool fire(std::string_view eventType, const std::function<bool(int node)>& prepare);
 
     std::shared_ptr<const Graph> graph_;
@@ -179,6 +212,7 @@ private:
     int depth_ = 0;
     std::size_t budget_ = 0;
     bool failed_ = false;
+    std::shared_ptr<GraphTrace> trace_;  // set while the editor watches this instance
 };
 
 /// What a node implementation sees while it runs.

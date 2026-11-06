@@ -4,10 +4,13 @@
 #include "runtime/ScriptNames.hpp"
 #include "runtime/VisualScript.hpp"
 
+#include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
 #include <QDialog>
 #include <QDoubleSpinBox>
+#include <QDrag>
 #include <QFile>
 #include <QFileInfo>
 #include <QGraphicsPathItem>
@@ -16,12 +19,14 @@
 #include <QGraphicsSceneMouseEvent>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QPainter>
 #include <QPushButton>
 #include <QScrollBar>
@@ -50,6 +55,13 @@ constexpr qreal kNodeWidth = 300.0;
 constexpr qreal kHeader = 26.0;
 constexpr qreal kRow = 26.0;
 constexpr qreal kPinRadius = 6.0;
+constexpr qreal kRerouteSize = 18.0;
+constexpr qreal kCommentHeader = 28.0;
+const QColor kLive(0xff, 0xae, 0x3c);  // what is running right now
+constexpr const char* kClipboardMime = "application/x-lumora-graph";
+constexpr const char* kVariableMime = "application/x-lumora-graph-variable";
+
+bool isReroute(std::string_view type) { return type == "flow.reroute" || type == "data.reroute"; }
 
 QColor pinColor(PinType type) {
     switch (type) {
@@ -181,10 +193,22 @@ public:
     void paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) override {
         p->setRenderHint(QPainter::Antialiasing);
         QPen pen = this->pen();
+        p->setBrush(Qt::NoBrush);
+        if (glow_ > 0.0f) {  // it fired lately: a warm halo that fades
+            QColor halo = kLive;
+            halo.setAlphaF(0.55f * glow_);
+            p->setPen(QPen(halo, pen.widthF() + 5.0, Qt::SolidLine, Qt::RoundCap));
+            p->drawPath(path());
+            pen.setColor(QColor::fromRgbF(1.0f, 0.85f + 0.15f * (1.0f - glow_), 0.6f + 0.4f * (1.0f - glow_)));
+        }
         if (isSelected()) pen.setColor(app::theme::kAccent);
         p->setPen(pen);
-        p->setBrush(Qt::NoBrush);
         p->drawPath(path());
+    }
+    void setGlow(float glow) {
+        if (std::abs(glow - glow_) < 0.01f) return;
+        glow_ = glow;
+        update();
     }
     [[nodiscard]] QPainterPath shape() const override {
         QPainterPathStroker stroker;
@@ -194,6 +218,7 @@ public:
 
 private:
     QColor color_;
+    float glow_ = 0.0f;
 };
 
 class GraphNodeItem final : public QGraphicsItem {
@@ -201,38 +226,65 @@ public:
     GraphNodeItem(GraphEditorPanel& panel, int id, const NodeDef& def, nlohmann::json literals)
         : panel_(panel), id_(id), def_(def), literals_(std::move(literals)) {
         setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable | QGraphicsItem::ItemSendsGeometryChanges);
-        setToolTip(qs(def.description));
+        compact_ = isReroute(def.type);
+        setToolTip(compact_ ? QObject::tr("Reroute: drag it to bend the link") : qs(def.description));
         if (!literals_.is_object()) literals_ = nlohmann::json::object();
         const int rows = static_cast<int>(std::max(def.inputs.size(), def.outputs.size()));
-        height_ = kHeader + std::max(rows, 1) * kRow + 6;
+        width_ = compact_ ? kRerouteSize : kNodeWidth;
+        height_ = compact_ ? kRerouteSize : kHeader + std::max(rows, 1) * kRow + 6;
         for (std::size_t i = 0; i < def.inputs.size(); ++i) {
             auto* pin = new GraphPinItem(panel, id, def.inputs[i], false, this);
-            pin->setPos(0, kHeader + static_cast<qreal>(i) * kRow + kRow / 2);
+            pin->setPos(compact_ ? QPointF(2, height_ / 2) : QPointF(0, kHeader + static_cast<qreal>(i) * kRow + kRow / 2));
             inputs_.push_back(pin);
-            editors_.push_back(createEditor(def.inputs[i], static_cast<int>(i)));
+            editors_.push_back(compact_ ? nullptr : createEditor(def.inputs[i], static_cast<int>(i)));
         }
         for (std::size_t i = 0; i < def.outputs.size(); ++i) {
             auto* pin = new GraphPinItem(panel, id, def.outputs[i], true, this);
-            pin->setPos(kNodeWidth, kHeader + static_cast<qreal>(i) * kRow + kRow / 2);
+            pin->setPos(compact_ ? QPointF(width_ - 2, height_ / 2)
+                                 : QPointF(kNodeWidth, kHeader + static_cast<qreal>(i) * kRow + kRow / 2));
             outputs_.push_back(pin);
         }
     }
 
-    [[nodiscard]] QRectF boundingRect() const override { return {-2, -2, kNodeWidth + 4, height_ + 4}; }
+    [[nodiscard]] QRectF boundingRect() const override {
+        const qreal values = values_.empty() ? 0.0 : 170.0;  // live value labels right of the outputs
+        const qreal halo = 5.0;
+        const qreal above = values_.empty() ? halo : 24.0;
+        return {-halo, -above, width_ + 2 * halo + values, height_ + halo + above};
+    }
+    [[nodiscard]] QPainterPath shape() const override {
+        QPainterPath path;
+        path.addRoundedRect(QRectF(0, 0, width_, height_), 6, 6);
+        return path;
+    }
     void paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) override {
         p->setRenderHint(QPainter::Antialiasing);
-        const QRectF body(0, 0, kNodeWidth, height_);
+        const QRectF body(0, 0, width_, height_);
+        if (glow_ > 0.0f) {
+            QColor halo = kLive;
+            halo.setAlphaF(0.85f * glow_);
+            p->setPen(QPen(halo, 3));
+            p->setBrush(Qt::NoBrush);
+            p->drawRoundedRect(body.adjusted(-3, -3, 3, 3), 8, 8);
+        }
+        paintValues(p);
+        if (compact_) {
+            p->setPen(QPen(isSelected() ? app::theme::kAccent : app::theme::kBorder, isSelected() ? 2 : 1));
+            p->setBrush(QColor(0x2a, 0x2d, 0x34));
+            p->drawRoundedRect(body, kRerouteSize / 2, kRerouteSize / 2);
+            return;
+        }
         p->setPen(QPen(isSelected() ? app::theme::kAccent : app::theme::kBorder, isSelected() ? 2 : 1));
         p->setBrush(QColor(0x22, 0x25, 0x2b, 235));
         p->drawRoundedRect(body, 6, 6);
         QPainterPath header;
-        header.addRoundedRect(QRectF(0, 0, kNodeWidth, kHeader), 6, 6);
+        header.addRoundedRect(QRectF(0, 0, width_, kHeader), 6, 6);
         p->fillPath(header, categoryColor(def_.category));
         p->setPen(Qt::white);
         QFont f = p->font();
         f.setBold(true);
         p->setFont(f);
-        p->drawText(QRectF(10, 0, kNodeWidth - 20, kHeader), Qt::AlignVCenter | Qt::AlignLeft, qs(def_.title));
+        p->drawText(QRectF(10, 0, width_ - 20, kHeader), Qt::AlignVCenter | Qt::AlignLeft, qs(def_.title));
         f.setBold(false);
         p->setFont(f);
         p->setPen(app::theme::kText);
@@ -243,10 +295,25 @@ public:
         }
         for (std::size_t i = 0; i < def_.outputs.size(); ++i) {
             if (def_.outputs[i].type == PinType::Exec && def_.outputs[i].label == " ") continue;
-            p->drawText(QRectF(kNodeWidth - 92, kHeader + static_cast<qreal>(i) * kRow, 80, kRow),
+            p->drawText(QRectF(width_ - 92, kHeader + static_cast<qreal>(i) * kRow, 80, kRow),
                         Qt::AlignVCenter | Qt::AlignRight, label(def_.outputs[i]));
         }
     }
+
+    /// Live view: how lit the node is and the values on its outputs (empty = not playing).
+    void setLive(float glow, std::map<int, QString> values) {
+        if (values.empty() != values_.empty()) prepareGeometryChange();
+        const bool same = std::abs(glow - glow_) < 0.01f && values == values_;
+        glow_ = glow;
+        values_ = std::move(values);
+        if (!same) update();
+    }
+    [[nodiscard]] float glow() const { return glow_; }
+    [[nodiscard]] QString value(int pin) const {
+        const auto it = values_.find(pin);
+        return it != values_.end() ? it->second : QString();
+    }
+    [[nodiscard]] qreal width() const { return width_; }
 
     [[nodiscard]] int id() const { return id_; }
     [[nodiscard]] const NodeDef& def() const { return def_; }
@@ -282,7 +349,7 @@ protected:
     QVariant itemChange(GraphicsItemChange change, const QVariant& value) override {
         if (change == ItemPositionHasChanged) {
             panel_.refreshLinks();
-            if (!panel_.loading_) panel_.setDirty(true);
+            if (!panel_.loading_) panel_.changed();
         }
         return QGraphicsItem::itemChange(change, value);
     }
@@ -369,14 +436,158 @@ private:
         return proxy;
     }
 
+    void paintValues(QPainter* p) const {
+        if (values_.empty()) return;
+        QFont f = p->font();
+        f.setPixelSize(10);
+        p->setFont(f);
+        const QFontMetricsF metrics(f);
+        for (const auto& [pin, text] : values_) {
+            const qreal y = compact_ ? height_ / 2 : kHeader + static_cast<qreal>(pin) * kRow + kRow / 2;
+            const QString shown = metrics.elidedText(text, Qt::ElideRight, 150);
+            // Just above the pin's link, so it does not cover it.
+            const QRectF pill(width_ + 8, y - 21, metrics.horizontalAdvance(shown) + 12, 16);
+            p->setPen(Qt::NoPen);
+            p->setBrush(QColor(0x14, 0x16, 0x1a, 225));
+            p->drawRoundedRect(pill, 8, 8);
+            p->setPen(kLive.lighter(130));
+            p->drawText(pill, Qt::AlignCenter, shown);
+        }
+    }
+
     GraphEditorPanel& panel_;
     int id_;
     const NodeDef& def_;
     nlohmann::json literals_;
+    bool compact_ = false;
+    qreal width_ = kNodeWidth;
+    float glow_ = 0.0f;
+    std::map<int, QString> values_;  // output pin index -> live value
     qreal height_ = 0.0;
     std::vector<GraphPinItem*> inputs_;
     std::vector<GraphPinItem*> outputs_;
     std::vector<QGraphicsProxyWidget*> editors_;  // per input (null for exec pins)
+};
+
+/// A titled frame behind nodes. Drag the title to move it with the nodes inside, the corner to
+/// resize it; double-click the title to rename it.
+class GraphCommentItem final : public QGraphicsItem {
+public:
+    GraphCommentItem(GraphEditorPanel& panel, QSizeF size, QString text, QColor color)
+        : panel_(panel), size_(size), text_(std::move(text)), color_(color) {
+        setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable | QGraphicsItem::ItemSendsGeometryChanges);
+        setZValue(-3);
+        setAcceptHoverEvents(true);
+    }
+    [[nodiscard]] QRectF boundingRect() const override { return QRectF(QPointF(0, 0), size_).adjusted(-2, -2, 2, 2); }
+    void paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) override {
+        p->setRenderHint(QPainter::Antialiasing);
+        const QRectF body(QPointF(0, 0), size_);
+        QColor fill = color_;
+        fill.setAlpha(38);
+        p->setPen(QPen(isSelected() ? app::theme::kAccent : color_.darker(110), isSelected() ? 2 : 1));
+        p->setBrush(fill);
+        p->drawRoundedRect(body, 8, 8);
+        QPainterPath header;
+        header.addRoundedRect(QRectF(0, 0, size_.width(), kCommentHeader), 8, 8);
+        QColor band = color_;
+        band.setAlpha(170);
+        p->fillPath(header, band);
+        QFont f = p->font();
+        f.setBold(true);
+        f.setPixelSize(14);
+        p->setFont(f);
+        p->setPen(Qt::white);
+        p->drawText(QRectF(12, 0, size_.width() - 24, kCommentHeader), Qt::AlignVCenter | Qt::AlignLeft, text_);
+        // Resize grip.
+        p->setPen(QPen(QColor(255, 255, 255, 90), 1.5));
+        for (int i = 1; i <= 3; ++i) {
+            const qreal d = 4.0 * i;
+            p->drawLine(QPointF(size_.width() - d, size_.height() - 2), QPointF(size_.width() - 2, size_.height() - d));
+        }
+    }
+
+    [[nodiscard]] const QString& text() const { return text_; }
+    [[nodiscard]] QColor color() const { return color_; }
+    [[nodiscard]] QSizeF size() const { return size_; }
+    void setText(const QString& text) {
+        text_ = text;
+        update();
+        panel_.changed();
+    }
+    void setColor(QColor color) {
+        color_ = color;
+        update();
+        panel_.changed();
+    }
+    void rename() {
+        bool ok = false;
+        const QString text = QInputDialog::getText(nullptr, QObject::tr("Comment"), QObject::tr("Text"), QLineEdit::Normal, text_, &ok);
+        if (ok) setText(text);
+    }
+
+protected:
+    void hoverMoveEvent(QGraphicsSceneHoverEvent* event) override {
+        setCursor(inGrip(event->pos()) ? Qt::SizeFDiagCursor : Qt::ArrowCursor);
+    }
+    void mousePressEvent(QGraphicsSceneMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton && inGrip(event->pos())) {
+            resizing_ = true;
+            event->accept();
+            return;
+        }
+        // The nodes and comments inside move along.
+        carried_.clear();
+        const QRectF area = sceneBoundingRect();
+        for (QGraphicsItem* item : scene()->items(area, Qt::ContainsItemShape)) {
+            if (item != this && item->parentItem() == nullptr && !item->isSelected() &&
+                (dynamic_cast<GraphNodeItem*>(item) != nullptr || dynamic_cast<GraphCommentItem*>(item) != nullptr)) {
+                carried_.push_back(item);
+            }
+        }
+        lastPos_ = pos();
+        QGraphicsItem::mousePressEvent(event);
+    }
+    void mouseMoveEvent(QGraphicsSceneMouseEvent* event) override {
+        if (resizing_) {
+            prepareGeometryChange();
+            size_ = QSizeF(std::max(160.0, event->pos().x()), std::max(80.0, event->pos().y()));
+            update();
+            return;
+        }
+        QGraphicsItem::mouseMoveEvent(event);
+    }
+    void mouseReleaseEvent(QGraphicsSceneMouseEvent* event) override {
+        if (resizing_) {
+            resizing_ = false;
+            panel_.changed();
+            return;
+        }
+        carried_.clear();
+        QGraphicsItem::mouseReleaseEvent(event);
+    }
+    void mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event) override {
+        if (event->pos().y() <= kCommentHeader) rename();
+    }
+    QVariant itemChange(GraphicsItemChange change, const QVariant& value) override {
+        if (change == ItemPositionHasChanged) {
+            const QPointF delta = pos() - lastPos_;
+            lastPos_ = pos();
+            for (QGraphicsItem* item : carried_) item->moveBy(delta.x(), delta.y());
+            if (!panel_.loading_) panel_.changed();
+        }
+        return QGraphicsItem::itemChange(change, value);
+    }
+
+private:
+    [[nodiscard]] bool inGrip(QPointF at) const { return at.x() > size_.width() - 16 && at.y() > size_.height() - 16; }
+    GraphEditorPanel& panel_;
+    QSizeF size_;
+    QString text_;
+    QColor color_;
+    bool resizing_ = false;
+    QPointF lastPos_;
+    std::vector<QGraphicsItem*> carried_;
 };
 
 // ---- Node picker ------------------------------------------------------------------------------
@@ -384,7 +595,8 @@ private:
 namespace {
 
 /// Search box over the node library; returns the chosen node type (empty if cancelled).
-std::string pickNode(QWidget* parent, QPoint globalPos) {
+/// `accept` narrows the list (nodes that fit a dragged pin).
+std::string pickNode(QWidget* parent, QPoint globalPos, const std::function<bool(const NodeDef&)>& accept = {}) {
     QDialog dialog(parent, Qt::Popup);
     auto* layout = new QVBoxLayout(&dialog);
     layout->setContentsMargins(6, 6, 6, 6);
@@ -398,6 +610,7 @@ std::string pickNode(QWidget* parent, QPoint globalPos) {
     auto fill = [&](const QString& filter) {
         list->clear();
         for (const NodeDef& d : visual::nodeLibrary()) {
+            if (isReroute(d.type) || (accept && !accept(d))) continue;  // reroutes come from double-clicking a link
             const QString title = qs(d.title);
             const QString category = qs(d.category);
             if (!filter.isEmpty() && !title.contains(filter, Qt::CaseInsensitive) && !category.contains(filter, Qt::CaseInsensitive) &&
@@ -413,15 +626,15 @@ std::string pickNode(QWidget* parent, QPoint globalPos) {
     };
     fill({});
     std::string chosen;
-    auto accept = [&] {
+    auto choose = [&] {
         if (QListWidgetItem* item = list->currentItem()) {
             chosen = item->data(Qt::UserRole).toString().toStdString();
             dialog.accept();
         }
     };
     QObject::connect(search, &QLineEdit::textChanged, &dialog, fill);
-    QObject::connect(search, &QLineEdit::returnPressed, &dialog, accept);
-    QObject::connect(list, &QListWidget::itemActivated, &dialog, accept);
+    QObject::connect(search, &QLineEdit::returnPressed, &dialog, choose);
+    QObject::connect(list, &QListWidget::itemActivated, &dialog, choose);
     // Up/Down in the search box move through the list.
     struct Keys final : QObject {
         QListWidget* list;
@@ -492,11 +705,59 @@ void GraphView::mouseReleaseEvent(QMouseEvent* event) {
     QGraphicsView::mouseReleaseEvent(event);
 }
 
+namespace {
+bool editingField(const QGraphicsScene* scene) {
+    return scene->focusItem() != nullptr && dynamic_cast<QGraphicsProxyWidget*>(scene->focusItem()) != nullptr;
+}
+/// The graph's own shortcuts; they win over the editor window's (scene undo, copy, ...).
+bool graphShortcut(const QKeyEvent* event) {
+    const bool ctrl = (event->modifiers() & Qt::ControlModifier) != 0;
+    switch (event->key()) {
+    case Qt::Key_Z: case Qt::Key_Y: case Qt::Key_C: case Qt::Key_X: case Qt::Key_V: case Qt::Key_D: case Qt::Key_A:
+        return ctrl || event->key() == Qt::Key_C;
+    case Qt::Key_Delete: case Qt::Key_Backspace: case Qt::Key_Space:
+        return !ctrl;
+    default:
+        return false;
+    }
+}
+} // namespace
+
+bool GraphView::event(QEvent* event) {
+    if (event->type() == QEvent::ShortcutOverride && !editingField(scene()) && graphShortcut(static_cast<QKeyEvent*>(event))) {
+        event->accept();  // delivered as a key press below instead of triggering a window action
+        return true;
+    }
+    return QGraphicsView::event(event);
+}
+
 void GraphView::keyPressEvent(QKeyEvent* event) {
     // Keys typed into a node's field stay there.
-    if (scene()->focusItem() != nullptr && dynamic_cast<QGraphicsProxyWidget*>(scene()->focusItem()) != nullptr) {
+    if (editingField(scene())) {
         QGraphicsView::keyPressEvent(event);
         return;
+    }
+    const bool ctrl = (event->modifiers() & Qt::ControlModifier) != 0;
+    const bool shift = (event->modifiers() & Qt::ShiftModifier) != 0;
+    if (ctrl) {
+        switch (event->key()) {
+        case Qt::Key_Z: shift ? panel_.redo() : panel_.undo(); return;
+        case Qt::Key_Y: panel_.redo(); return;
+        case Qt::Key_C: panel_.copySelection(); return;
+        case Qt::Key_X: panel_.cutSelection(); return;
+        case Qt::Key_V: {
+            const QPoint cursor = mapFromGlobal(QCursor::pos());
+            if (rect().contains(cursor)) {
+                panel_.paste(mapToScene(cursor));
+            } else {
+                panel_.paste();
+            }
+            return;
+        }
+        case Qt::Key_D: panel_.duplicateSelection(); return;
+        case Qt::Key_A: panel_.selectAll(); return;
+        default: break;
+        }
     }
     if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
         panel_.removeSelection();
@@ -506,7 +767,55 @@ void GraphView::keyPressEvent(QKeyEvent* event) {
         panel_.showNodePicker(mapToScene(mapFromGlobal(QCursor::pos())));
         return;
     }
+    if (event->key() == Qt::Key_C && !ctrl) {
+        panel_.commentSelection();
+        return;
+    }
     QGraphicsView::keyPressEvent(event);
+}
+
+void GraphView::mouseDoubleClickEvent(QMouseEvent* event) {
+    // Double-clicking a link puts a reroute dot there.
+    const QPointF at = mapToScene(event->pos());
+    for (QGraphicsItem* item : items(event->pos())) {
+        if (auto* link = dynamic_cast<GraphLinkItem*>(item)) {
+            for (const auto& l : panel_.links_) {
+                if (l.item == link) {
+                    const auto copy = l;  // insertReroute replaces the link
+                    panel_.insertReroute(copy.fromNode, copy.fromPin, copy.toNode, copy.toPin, at);
+                    return;
+                }
+            }
+        }
+        if (dynamic_cast<GraphLinkItem*>(item) == nullptr) break;  // something else is on top
+    }
+    QGraphicsView::mouseDoubleClickEvent(event);
+}
+
+void GraphView::dragEnterEvent(QDragEnterEvent* event) {
+    if (event->mimeData()->hasFormat(QLatin1String(kVariableMime))) {
+        event->acceptProposedAction();
+        return;
+    }
+    QGraphicsView::dragEnterEvent(event);
+}
+
+void GraphView::dragMoveEvent(QDragMoveEvent* event) {
+    if (event->mimeData()->hasFormat(QLatin1String(kVariableMime))) {
+        event->acceptProposedAction();
+        return;
+    }
+    QGraphicsView::dragMoveEvent(event);
+}
+
+void GraphView::dropEvent(QDropEvent* event) {
+    if (event->mimeData()->hasFormat(QLatin1String(kVariableMime))) {
+        const QString name = QString::fromUtf8(event->mimeData()->data(QLatin1String(kVariableMime)));
+        event->acceptProposedAction();
+        panel_.dropVariable(name, mapToScene(event->position().toPoint()), event->modifiers());
+        return;
+    }
+    QGraphicsView::dropEvent(event);
 }
 
 void GraphView::contextMenuEvent(QContextMenuEvent* event) {
@@ -560,11 +869,30 @@ GraphEditorPanel::GraphEditorPanel(QString projectRoot, QWidget* parent) : QWidg
     saveButton->setText(tr("Save"));
     saveButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     saveButton->setToolTip(tr("Save (Ctrl+S); a running game reloads it"));
+    auto* undoButton = new QToolButton;
+    undoButton->setIcon(app::theme::icon(QStringLiteral("undo")));
+    undoButton->setToolTip(tr("Undo (Ctrl+Z)"));
+    auto* redoButton = new QToolButton;
+    redoButton->setIcon(app::theme::icon(QStringLiteral("redo")));
+    redoButton->setToolTip(tr("Redo (Ctrl+Shift+Z)"));
+    auto* comment = new QToolButton;
+    comment->setText(tr("Comment"));
+    comment->setToolTip(tr("Frame the selected nodes in a comment (C)"));
+    liveLabel_ = new QLabel;
+    liveLabel_->setStyleSheet(QStringLiteral("color: %1; font-weight: 600;").arg(kLive.name()));
+    liveLabel_->hide();
     bar->addWidget(title_, 1);
+    bar->addWidget(liveLabel_);
+    bar->addWidget(undoButton);
+    bar->addWidget(redoButton);
     bar->addWidget(add);
+    bar->addWidget(comment);
     bar->addWidget(fit);
     bar->addWidget(saveButton);
     layout->addLayout(bar);
+    connect(undoButton, &QToolButton::clicked, this, &GraphEditorPanel::undo);
+    connect(redoButton, &QToolButton::clicked, this, &GraphEditorPanel::redo);
+    connect(comment, &QToolButton::clicked, this, &GraphEditorPanel::commentSelection);
 
     scene_ = new QGraphicsScene(this);
     scene_->setSceneRect(-5000, -5000, 10000, 10000);
@@ -585,9 +913,10 @@ GraphEditorPanel::GraphEditorPanel(QString projectRoot, QWidget* parent) : QWidg
     varButtons->addWidget(addVar);
     varButtons->addWidget(removeVar);
     sideLayout->addLayout(varButtons);
-    auto* help = new QLabel(tr("Drag from a pin to another pin to link them. Space / right-click: add node. "
-                               "Right-click a node, pin or link to delete it or cut links. Delete: remove the selection. "
-                               "Middle mouse: pan, wheel: zoom."));
+    auto* help = new QLabel(tr("Drag from a pin to another pin to link them, or to empty canvas for nodes that fit. "
+                               "Space / right-click: add node. Right-click a node, pin or link to delete it or cut links. "
+                               "Double-click a link: reroute dot. C: comment. Ctrl+Z/C/V/D: undo, copy, paste, duplicate. "
+                               "Drag a variable here for Get/Set (Ctrl: Get, Alt: Set). Middle mouse: pan, wheel: zoom."));
     help->setWordWrap(true);
     help->setStyleSheet(QStringLiteral("color: %1;").arg(app::theme::kTextMuted.name()));
     sideLayout->addWidget(help);
@@ -614,18 +943,358 @@ GraphEditorPanel::GraphEditorPanel(QString projectRoot, QWidget* parent) : QWidg
         const int row = variables_->currentRow();
         if (row < 0) return;
         variables_->removeRow(row);
-        setDirty(true);
+        changed();
         for (auto& [id, node] : nodes_) node->reloadVariables(variableNames());
     });
     connect(variables_, &QTableWidget::cellChanged, this, [this] {
         if (loading_) return;
-        setDirty(true);
+        changed();
         for (auto& [id, node] : nodes_) node->reloadVariables(variableNames());
     });
+    // Dragging a variable's row onto the canvas.
+    struct VariableDrag final : QObject {
+        QTableWidget* table;
+        QPoint pressed{-1, -1};
+        explicit VariableDrag(QTableWidget* t) : QObject(t), table(t) {}
+        bool eventFilter(QObject*, QEvent* e) override {
+            if (e->type() == QEvent::MouseButtonPress) {
+                pressed = static_cast<QMouseEvent*>(e)->pos();
+            } else if (e->type() == QEvent::MouseMove && (static_cast<QMouseEvent*>(e)->buttons() & Qt::LeftButton) &&
+                       pressed.x() >= 0 &&
+                       (static_cast<QMouseEvent*>(e)->pos() - pressed).manhattanLength() >= QApplication::startDragDistance()) {
+                const QModelIndex index = table->indexAt(pressed);
+                pressed = {-1, -1};
+                const QTableWidgetItem* name = index.isValid() ? table->item(index.row(), 0) : nullptr;
+                if (name == nullptr || name->text().trimmed().isEmpty()) return false;
+                auto* drag = new QDrag(table);
+                auto* mime = new QMimeData;
+                mime->setData(QLatin1String(kVariableMime), name->text().trimmed().toUtf8());
+                drag->setMimeData(mime);
+                drag->exec(Qt::CopyAction);
+                return true;
+            } else if (e->type() == QEvent::MouseButtonRelease) {
+                pressed = {-1, -1};
+            }
+            return false;
+        }
+    };
+    variables_->viewport()->installEventFilter(new VariableDrag(variables_));
+
+    commitTimer_ = new QTimer(this);
+    commitTimer_->setSingleShot(true);
+    commitTimer_->setInterval(400);  // edits within this time (a drag, typing) are one undo step
+    connect(commitTimer_, &QTimer::timeout, this, &GraphEditorPanel::commitUndo);
+    liveTimer_ = new QTimer(this);
+    liveTimer_->setInterval(100);
+    connect(liveTimer_, &QTimer::timeout, this, &GraphEditorPanel::refreshLive);
+    liveTimer_->start();
     setEnabled(true);
 }
 
 GraphEditorPanel::~GraphEditorPanel() = default;
+
+// ---- Undo -----------------------------------------------------------------------------------------
+
+void GraphEditorPanel::changed() {
+    if (loading_ || restoring_) return;
+    setDirty(true);
+    commitTimer_->start();
+}
+
+void GraphEditorPanel::commitUndo() {
+    commitTimer_->stop();
+    if (file_.isEmpty()) return;
+    nlohmann::json now = document();
+    if (now == committed_) return;
+    undo_.push_back(std::move(committed_));
+    if (undo_.size() > 200) undo_.erase(undo_.begin());
+    committed_ = std::move(now);
+    redo_.clear();
+}
+
+bool GraphEditorPanel::canUndo() const { return !undo_.empty() || commitTimer_->isActive(); }
+bool GraphEditorPanel::canRedo() const { return !redo_.empty(); }
+
+void GraphEditorPanel::undo() {
+    if (commitTimer_->isActive()) commitUndo();  // the edit in progress is a step too
+    if (undo_.empty()) return;
+    redo_.push_back(std::move(committed_));
+    committed_ = std::move(undo_.back());
+    undo_.pop_back();
+    restore(committed_);
+}
+
+void GraphEditorPanel::redo() {
+    if (commitTimer_->isActive()) commitUndo();
+    if (redo_.empty()) return;
+    undo_.push_back(std::move(committed_));
+    committed_ = std::move(redo_.back());
+    redo_.pop_back();
+    restore(committed_);
+}
+
+void GraphEditorPanel::restore(const nlohmann::json& doc) {
+    restoring_ = true;
+    loadDocument(doc);
+    restoring_ = false;
+    setDirty(document() != saved_);
+}
+
+// ---- Clipboard ------------------------------------------------------------------------------------
+
+std::vector<int> GraphEditorPanel::selectedNodes() const {
+    std::vector<int> ids;
+    for (QGraphicsItem* item : scene_->selectedItems()) {
+        if (auto* node = dynamic_cast<GraphNodeItem*>(item)) ids.push_back(node->id());
+    }
+    std::ranges::sort(ids);
+    return ids;
+}
+
+void GraphEditorPanel::selectNodes(const std::vector<int>& ids) {
+    scene_->clearSelection();
+    for (int id : ids) {
+        if (const auto it = nodes_.find(id); it != nodes_.end()) it->second->setSelected(true);
+    }
+}
+
+void GraphEditorPanel::selectAll() {
+    for (QGraphicsItem* item : scene_->items()) {
+        if (item->flags() & QGraphicsItem::ItemIsSelectable) item->setSelected(true);
+    }
+}
+
+nlohmann::json GraphEditorPanel::selectionDocument() const {
+    nlohmann::json nodes = nlohmann::json::array();
+    std::vector<int> ids = selectedNodes();
+    for (int id : ids) {
+        const GraphNodeItem* node = nodes_.at(id);
+        nodes.push_back({{"id", id}, {"type", std::string(node->def().type)}, {"x", node->pos().x()}, {"y", node->pos().y()},
+                         {"inputs", const_cast<GraphNodeItem*>(node)->literals()}});
+    }
+    nlohmann::json links = nlohmann::json::array();
+    for (const Link& l : links_) {  // only the links inside the selection
+        if (std::ranges::binary_search(ids, l.fromNode) && std::ranges::binary_search(ids, l.toNode)) {
+            links.push_back({{"from", l.fromNode}, {"fromPin", l.fromPin}, {"to", l.toNode}, {"toPin", l.toPin}});
+        }
+    }
+    nlohmann::json comments = nlohmann::json::array();
+    for (const GraphCommentItem* c : comments_) {
+        if (!c->isSelected()) continue;
+        comments.push_back({{"x", c->pos().x()}, {"y", c->pos().y()}, {"w", c->size().width()}, {"h", c->size().height()},
+                            {"text", c->text().toStdString()}, {"color", c->color().name().toStdString()}});
+    }
+    return {{"lumoraGraph", 1}, {"nodes", nodes}, {"links", links}, {"comments", comments}};
+}
+
+void GraphEditorPanel::copySelection() {
+    const nlohmann::json doc = selectionDocument();
+    if (doc["nodes"].empty() && doc["comments"].empty()) return;
+    auto* mime = new QMimeData;
+    const QByteArray bytes = QByteArray::fromStdString(doc.dump());
+    mime->setData(QLatin1String(kClipboardMime), bytes);
+    mime->setText(QString::fromUtf8(bytes));
+    QApplication::clipboard()->setMimeData(mime);
+    pasteCount_ = 0;
+}
+
+void GraphEditorPanel::cutSelection() {
+    copySelection();
+    removeSelection();
+}
+
+bool GraphEditorPanel::paste(std::optional<QPointF> at) {
+    const QMimeData* mime = QApplication::clipboard()->mimeData();
+    if (mime == nullptr) return false;
+    const QByteArray bytes = mime->hasFormat(QLatin1String(kClipboardMime)) ? mime->data(QLatin1String(kClipboardMime))
+                                                                             : mime->text().toUtf8();
+    return pasteDocument(nlohmann::json::parse(bytes.toStdString(), nullptr, false), at, ++pasteCount_);
+}
+
+bool GraphEditorPanel::pasteDocument(const nlohmann::json& doc, std::optional<QPointF> at, int step) {
+    if (file_.isEmpty() || !doc.is_object() || !doc.contains("lumoraGraph")) return false;
+    // Where the copied things go: their top-left at `at`, or a step down-right of the originals.
+    QPointF topLeft(1e9, 1e9);
+    for (const auto* list : {&doc["nodes"], &doc["comments"]}) {
+        for (const auto& n : *list) topLeft = QPointF(std::min(topLeft.x(), n.value("x", 0.0)), std::min(topLeft.y(), n.value("y", 0.0)));
+    }
+    if (topLeft.x() > 1e8) return false;
+    const QPointF offset = at ? *at - topLeft : QPointF(40, 40) * step;
+    std::map<int, int> newId;
+    std::vector<int> pasted;
+    scene_->clearSelection();
+    for (const auto& n : doc["nodes"]) {
+        const NodeDef* def = visual::findNode(n.value("type", std::string()));
+        if (def == nullptr) continue;
+        const int id = nextId_++;
+        auto* item = new GraphNodeItem(*this, id, *def, n.value("inputs", nlohmann::json::object()));
+        scene_->addItem(item);
+        item->setPos(QPointF(n.value("x", 0.0), n.value("y", 0.0)) + offset);
+        nodes_[id] = item;
+        newId[n.value("id", 0)] = id;
+        pasted.push_back(id);
+    }
+    for (const auto& l : doc["links"]) {
+        const auto from = newId.find(l.value("from", 0));
+        const auto to = newId.find(l.value("to", 0));
+        if (from != newId.end() && to != newId.end()) {
+            connectPins(from->second, l.value("fromPin", std::string()), to->second, l.value("toPin", std::string()));
+        }
+    }
+    for (const auto& c : doc["comments"]) {
+        const int index = addComment(QRectF(QPointF(c.value("x", 0.0), c.value("y", 0.0)) + offset,
+                                            QSizeF(c.value("w", 300.0), c.value("h", 200.0))),
+                                     QString::fromStdString(c.value("text", std::string())));
+        comments_[static_cast<std::size_t>(index)]->setColor(QColor(QString::fromStdString(c.value("color", std::string("#4f8cff")))));
+        comments_[static_cast<std::size_t>(index)]->setSelected(true);
+    }
+    for (int id : pasted) nodes_[id]->setSelected(true);
+    refreshLiteralEditors();
+    changed();
+    return true;
+}
+
+void GraphEditorPanel::duplicateSelection() { pasteDocument(selectionDocument(), std::nullopt, 1); }
+
+// ---- Comments and reroutes ------------------------------------------------------------------------
+
+int GraphEditorPanel::addComment(const QRectF& rect, const QString& text) {
+    auto* item = new GraphCommentItem(*this, rect.size(), text, app::theme::kAccent);
+    scene_->addItem(item);
+    item->setPos(rect.topLeft());
+    comments_.push_back(item);
+    changed();
+    return static_cast<int>(comments_.size()) - 1;
+}
+
+void GraphEditorPanel::commentSelection() {
+    if (file_.isEmpty()) return;
+    QRectF bounds;
+    for (int id : selectedNodes()) bounds |= nodes_[id]->sceneBoundingRect();
+    if (bounds.isNull()) {
+        const QPointF center = view_->mapToScene(view_->viewport()->rect().center());
+        bounds = QRectF(center - QPointF(200, 120), QSizeF(400, 240));
+    } else {
+        bounds = bounds.adjusted(-24, -24 - kCommentHeader, 24, 24);
+    }
+    const int index = addComment(bounds, tr("Comment"));
+    scene_->clearSelection();
+    comments_[static_cast<std::size_t>(index)]->setSelected(true);
+}
+
+void GraphEditorPanel::removeComment(GraphCommentItem* comment) {
+    const auto it = std::ranges::find(comments_, comment);
+    if (it == comments_.end()) return;
+    comments_.erase(it);
+    delete comment;
+    changed();
+}
+
+int GraphEditorPanel::insertReroute(int fromNode, std::string_view fromPin, int toNode, std::string_view toPin, QPointF at) {
+    GraphPinItem* out = pin(fromNode, fromPin, true);
+    if (out == nullptr || pin(toNode, toPin, false) == nullptr) return 0;
+    const bool exec = out->def().type == PinType::Exec;
+    const std::string from(fromPin);
+    const std::string to(toPin);
+    const int dot = addNode(exec ? "flow.reroute" : "data.reroute", at - QPointF(kRerouteSize / 2, kRerouteSize / 2));
+    if (dot == 0) return 0;
+    removeLink(fromNode, from, toNode, to);
+    connectPins(fromNode, from, dot, exec ? "in" : "value");
+    connectPins(dot, exec ? "then" : "value", toNode, to);
+    return dot;
+}
+
+int GraphEditorPanel::addVariableNode(const QString& name, bool set, QPointF at) {
+    const NodeDef* def = visual::findNode(set ? "var.set" : "var.get");
+    if (def == nullptr) return 0;
+    const int id = nextId_++;
+    auto* item = new GraphNodeItem(*this, id, *def, nlohmann::json{{"name", name.toStdString()}});
+    scene_->addItem(item);
+    item->setPos(at);
+    item->reloadVariables(variableNames());
+    nodes_[id] = item;
+    changed();
+    return id;
+}
+
+void GraphEditorPanel::dropVariable(const QString& name, QPointF scenePos, Qt::KeyboardModifiers modifiers) {
+    if (modifiers & Qt::ControlModifier) {
+        addVariableNode(name, false, scenePos);
+    } else if (modifiers & Qt::AltModifier) {
+        addVariableNode(name, true, scenePos);
+    } else {
+        QMenu menu(this);
+        menu.addAction(tr("Get %1").arg(name), this, [&] { addVariableNode(name, false, scenePos); });
+        menu.addAction(tr("Set %1").arg(name), this, [&] { addVariableNode(name, true, scenePos); });
+        menu.exec(QCursor::pos());
+    }
+}
+
+// ---- Live view --------------------------------------------------------------------------------------
+
+void GraphEditorPanel::refreshLive() {
+    std::shared_ptr<visual::GraphTrace> trace = liveKey_.empty() ? nullptr : visual::trace::find(liveKey_);
+    bool fresh = false;
+    if (trace) {
+        const std::lock_guard lock(trace->mutex);
+        fresh = std::chrono::steady_clock::now() - trace->updated < std::chrono::milliseconds(600);
+    }
+    if (!fresh) {
+        if (!live_) return;
+        live_ = false;
+        liveLabel_->hide();
+        for (auto& [id, node] : nodes_) node->setLive(0.0f, {});
+        for (Link& l : links_) {
+            if (l.item != nullptr) l.item->setGlow(0.0f);
+        }
+        return;
+    }
+    live_ = true;
+    const std::lock_guard lock(trace->mutex);
+    liveLabel_->setText(trace->entityName.empty() ? tr("● Live: entity #%1").arg(trace->entity)
+                                                  : tr("● Live: %1").arg(QString::fromStdString(trace->entityName)));
+    liveLabel_->show();
+    constexpr double kFadeSteps = 30.0;  // about half a second at 60 steps per second
+    auto glowOf = [&](std::uint64_t last) {
+        const double age = static_cast<double>(trace->step - std::min(last, trace->step));
+        return static_cast<float>(std::clamp(1.0 - age / kFadeSteps, 0.0, 1.0));
+    };
+    for (auto& [id, node] : nodes_) {
+        const auto ran = trace->nodes.find(id);
+        std::map<int, QString> values;
+        for (std::size_t pin = 0; pin < node->def().outputs.size(); ++pin) {
+            if (const auto v = trace->values.find({id, static_cast<int>(pin)}); v != trace->values.end()) {
+                values[static_cast<int>(pin)] = QString::fromStdString(v->second);
+            }
+        }
+        node->setLive(ran != trace->nodes.end() ? glowOf(ran->second) : 0.0f, std::move(values));
+    }
+    for (Link& l : links_) {
+        if (l.item == nullptr) continue;
+        const auto from = nodes_.find(l.fromNode);
+        if (from == nodes_.end()) continue;
+        const int pinIndex = from->second->def().outputIndex(l.fromPin);
+        float glow = 0.0f;
+        if (const auto fired = trace->links.find({l.fromNode, pinIndex}); fired != trace->links.end()) {
+            glow = glowOf(fired->second);
+        } else if (const auto ran = trace->nodes.find(l.fromNode); ran != trace->nodes.end() &&
+                                                                    from->second->def().outputs[static_cast<std::size_t>(pinIndex)].type != PinType::Exec) {
+            glow = 0.6f * glowOf(ran->second);  // a value read lately
+        }
+        l.item->setGlow(glow);
+    }
+}
+
+float GraphEditorPanel::nodeGlow(int id) const {
+    const auto it = nodes_.find(id);
+    return it != nodes_.end() ? it->second->glow() : 0.0f;
+}
+
+QString GraphEditorPanel::liveValue(int node, std::string_view pinName) const {
+    const auto it = nodes_.find(node);
+    if (it == nodes_.end()) return {};
+    return it->second->value(it->second->def().outputIndex(pinName));
+}
 
 void GraphEditorPanel::fitGraph() {
     if (nodes_.empty()) return;
@@ -647,6 +1316,7 @@ void GraphEditorPanel::setDirty(bool dirty) {
 void GraphEditorPanel::clear() {
     links_.clear();
     nodes_.clear();
+    comments_.clear();
     scene_->clear();
     variables_->setRowCount(0);
     nextId_ = 1;
@@ -672,7 +1342,7 @@ int GraphEditorPanel::addNode(std::string_view type, QPointF position) {
     scene_->addItem(item);
     item->setPos(position);
     nodes_[id] = item;
-    setDirty(true);
+    changed();
     return id;
 }
 
@@ -691,7 +1361,7 @@ bool GraphEditorPanel::removeNode(int id) {
     nodes_.erase(it);
     refreshLinks();
     refreshLiteralEditors();
-    setDirty(true);
+    changed();
     return true;
 }
 
@@ -719,7 +1389,7 @@ bool GraphEditorPanel::connectPins(int fromNode, std::string_view fromPin, int t
     links_.push_back({fromNode, std::string(fromPin), toNode, std::string(toPin), nullptr});
     rebuildLinkItem(links_.back());
     refreshLiteralEditors();
-    setDirty(true);
+    changed();
     return true;
 }
 
@@ -735,7 +1405,7 @@ bool GraphEditorPanel::disconnectInput(int node, std::string_view name) {
     }
     if (links_.size() == before) return false;
     refreshLiteralEditors();
-    setDirty(true);
+    changed();
     return true;
 }
 
@@ -747,7 +1417,7 @@ int GraphEditorPanel::disconnectPin(int node, std::string_view name, bool output
     });
     if (removed == 0) return 0;
     refreshLiteralEditors();
-    setDirty(true);
+    changed();
     return static_cast<int>(removed);
 }
 
@@ -759,7 +1429,7 @@ int GraphEditorPanel::disconnectNode(int node) {
     });
     if (removed == 0) return 0;
     refreshLiteralEditors();
-    setDirty(true);
+    changed();
     return static_cast<int>(removed);
 }
 
@@ -771,7 +1441,7 @@ bool GraphEditorPanel::removeLink(int fromNode, std::string_view fromPin, int to
     });
     if (removed == 0) return false;
     refreshLiteralEditors();
-    setDirty(true);
+    changed();
     return true;
 }
 
@@ -786,7 +1456,7 @@ int GraphEditorPanel::duplicateNode(int id) {
     refreshLiteralEditors();
     scene_->clearSelection();
     item->setSelected(true);
-    setDirty(true);
+    changed();
     return copy;
 }
 
@@ -794,6 +1464,7 @@ QMenu* GraphEditorPanel::contextMenuAt(QPointF scenePosition, QWidget* parent) {
     GraphPinItem* pinItem = nullptr;
     GraphNodeItem* nodeItem = nullptr;
     GraphLinkItem* linkItem = nullptr;
+    GraphCommentItem* commentItem = nullptr;
     // Pins are small: look a few pixels around the click for one first.
     for (QGraphicsItem* item : scene_->items(QRectF(scenePosition - QPointF(4, 4), QSizeF(8, 8)))) {
         if (auto* p = dynamic_cast<GraphPinItem*>(item)) {
@@ -808,9 +1479,10 @@ QMenu* GraphEditorPanel::contextMenuAt(QPointF scenePosition, QWidget* parent) {
             }
             if (nodeItem != nullptr) break;
             if ((linkItem = dynamic_cast<GraphLinkItem*>(item)) != nullptr) break;
+            if ((commentItem = dynamic_cast<GraphCommentItem*>(item)) != nullptr) break;
         }
     }
-    if (pinItem == nullptr && nodeItem == nullptr && linkItem == nullptr) return nullptr;
+    if (pinItem == nullptr && nodeItem == nullptr && linkItem == nullptr && commentItem == nullptr) return nullptr;
 
     auto* menu = new QMenu(parent);
     if (pinItem != nullptr) {
@@ -836,7 +1508,7 @@ QMenu* GraphEditorPanel::contextMenuAt(QPointF scenePosition, QWidget* parent) {
         const bool hasLinks = std::ranges::any_of(links_, [id](const Link& l) { return l.fromNode == id || l.toNode == id; });
         menu->addAction(app::theme::icon(QStringLiteral("close")), tr("Break All Links"), [this, id] { disconnectNode(id); })
             ->setEnabled(hasLinks);
-    } else {
+    } else if (linkItem != nullptr) {
         const auto link = std::ranges::find(links_, linkItem, &Link::item);
         if (link == links_.end()) {
             delete menu;
@@ -846,6 +1518,25 @@ QMenu* GraphEditorPanel::contextMenuAt(QPointF scenePosition, QWidget* parent) {
                         [this, from = link->fromNode, fromPin = link->fromPin, to = link->toNode, toPin = link->toPin] {
                             removeLink(from, fromPin, to, toPin);
                         });
+        menu->addAction(tr("Add Reroute Point"),
+                        [this, from = link->fromNode, fromPin = link->fromPin, to = link->toNode, toPin = link->toPin, scenePosition] {
+                            insertReroute(from, fromPin, to, toPin, scenePosition);
+                        });
+    } else {
+        menu->addAction(app::theme::icon(QStringLiteral("plus")), tr("Add Node Here…"),
+                        [this, scenePosition] { showNodePicker(scenePosition); });
+        menu->addAction(tr("Rename…"), [commentItem] { commentItem->rename(); });
+        QMenu* colors = menu->addMenu(tr("Colour"));
+        const std::pair<const char*, QColor> palette[] = {{"Blue", app::theme::kAccent},     {"Green", QColor(0x3f, 0xa8, 0x5c)},
+                                                          {"Orange", QColor(0xd9, 0x84, 0x2b)}, {"Red", QColor(0xc8, 0x45, 0x45)},
+                                                          {"Purple", QColor(0x8a, 0x5c, 0xc8)}, {"Grey", QColor(0x70, 0x76, 0x82)}};
+        for (const auto& [name, color] : palette) {
+            QPixmap swatch(12, 12);
+            swatch.fill(color);
+            colors->addAction(QIcon(swatch), tr(name), [commentItem, color] { commentItem->setColor(color); });
+        }
+        menu->addAction(app::theme::icon(QStringLiteral("trash")), tr("Delete Comment"),
+                        [this, commentItem] { removeComment(commentItem); });
     }
     return menu;
 }
@@ -854,7 +1545,7 @@ void GraphEditorPanel::setLiteral(int node, std::string_view pinName, const nloh
     const auto it = nodes_.find(node);
     if (it == nodes_.end()) return;
     it->second->literals()[std::string(pinName)] = value;
-    if (!loading_) setDirty(true);
+    if (!loading_) changed();
 }
 
 void GraphEditorPanel::rebuildLinkItem(Link& link) {
@@ -892,21 +1583,25 @@ void GraphEditorPanel::refreshLiteralEditors() {
 void GraphEditorPanel::removeSelection() {
     const QList<QGraphicsItem*> selected = scene_->selectedItems();
     std::vector<int> nodeIds;
+    std::vector<GraphCommentItem*> comments;
     for (QGraphicsItem* item : selected) {
-        if (auto* node = dynamic_cast<GraphNodeItem*>(item)) {
+        if (auto* comment = dynamic_cast<GraphCommentItem*>(item)) {
+            comments.push_back(comment);
+        } else if (auto* node = dynamic_cast<GraphNodeItem*>(item)) {
             nodeIds.push_back(node->id());
         } else if (auto* link = dynamic_cast<GraphLinkItem*>(item)) {
             for (auto l = links_.begin(); l != links_.end(); ++l) {
                 if (l->item == link) {
                     delete l->item;
                     links_.erase(l);
-                    setDirty(true);
+                    changed();
                     break;
                 }
             }
         }
     }
     for (int id : nodeIds) removeNode(id);
+    for (GraphCommentItem* comment : comments) removeComment(comment);
     refreshLiteralEditors();
 }
 
@@ -919,8 +1614,34 @@ void GraphEditorPanel::pinDragFinished(GraphPinItem* from, QPointF scenePos) {
         }
     }
     if (target == nullptr) {
-        // Dropped on empty canvas: an input pin's link is removed.
-        if (!from->output()) disconnectInput(from->node(), from->def().name);
+        // Dropped on empty canvas: a linked input loses its link; otherwise pick a node that fits.
+        if (!from->output() && from->linked) {
+            disconnectInput(from->node(), from->def().name);
+            return;
+        }
+        const int node = from->node();
+        const std::string pinName(from->def().name);
+        const PinType type = from->def().type;
+        const bool output = from->output();
+        auto fits = [&](const PinDef& p) {
+            return output ? compatible(static_cast<int>(type), static_cast<int>(p.type))
+                          : compatible(static_cast<int>(p.type), static_cast<int>(type));
+        };
+        const QPoint global = view_->viewport()->mapToGlobal(view_->mapFromScene(scenePos));
+        const std::string chosen = pickNode(this, global, [&](const NodeDef& d) {
+            return std::ranges::any_of(output ? d.inputs : d.outputs, fits);
+        });
+        if (chosen.empty()) return;
+        const int added = addNode(chosen, scenePos);
+        if (added == 0) return;
+        GraphNodeItem* item = nodes_[added];
+        if (!output) item->setPos(scenePos - QPointF(item->width(), kHeader));  // ends at the drop point
+        else item->setPos(scenePos - QPointF(0, kHeader));
+        for (const PinDef& p : output ? item->def().inputs : item->def().outputs) {
+            if (!fits(p)) continue;
+            output ? connectPins(node, pinName, added, p.name) : connectPins(added, p.name, node, pinName);
+            break;
+        }
         return;
     }
     GraphPinItem* out = from->output() ? from : target;
@@ -944,14 +1665,14 @@ void GraphEditorPanel::addVariable(const QString& name, const QString& type) {
     auto* typeBox = new QComboBox;
     typeBox->addItems({QStringLiteral("number"), QStringLiteral("bool"), QStringLiteral("vec3"), QStringLiteral("string")});
     typeBox->setCurrentText(type);
-    connect(typeBox, &QComboBox::currentTextChanged, this, [this] { setDirty(true); });
+    connect(typeBox, &QComboBox::currentTextChanged, this, [this] { changed(); });
     variables_->setCellWidget(row, 1, typeBox);
     variables_->setItem(row, 2, new QTableWidgetItem(type == QLatin1String("bool") ? QStringLiteral("false")
                                                      : type == QLatin1String("vec3") ? QStringLiteral("0, 0, 0")
                                                      : type == QLatin1String("string") ? QString()
                                                                                        : QStringLiteral("0")));
     loading_ = wasLoading;
-    if (!loading_) setDirty(true);
+    if (!loading_) changed();
     for (auto& [id, node] : nodes_) node->reloadVariables(variableNames());
 }
 
@@ -1013,20 +1734,24 @@ nlohmann::json GraphEditorPanel::document() const {
     for (const Link& l : links_) {
         links.push_back({{"from", l.fromNode}, {"fromPin", l.fromPin}, {"to", l.toNode}, {"toPin", l.toPin}});
     }
-    return {{"version", 1}, {"variables", variablesJson()}, {"nodes", nodes}, {"links", links}};
+    nlohmann::json comments = nlohmann::json::array();
+    for (const GraphCommentItem* c : comments_) {
+        comments.push_back({{"x", std::round(c->pos().x())},
+                            {"y", std::round(c->pos().y())},
+                            {"w", std::round(c->size().width())},
+                            {"h", std::round(c->size().height())},
+                            {"text", c->text().toStdString()},
+                            {"color", c->color().name().toStdString()}});
+    }
+    nlohmann::json doc{{"version", 1}, {"variables", variablesJson()}, {"nodes", nodes}, {"links", links}};
+    if (!comments.empty()) doc["comments"] = comments;
+    return doc;
 }
 
-bool GraphEditorPanel::open(const QString& path) {
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly)) return false;
-    const nlohmann::json doc = nlohmann::json::parse(f.readAll().toStdString(), nullptr, false);
-    if (doc.is_discarded() || !doc.is_object()) {
-        QMessageBox::warning(this, tr("Visual Script"), tr("%1 is not a valid visual script.").arg(QFileInfo(path).fileName()));
-        return false;
-    }
+void GraphEditorPanel::loadDocument(const nlohmann::json& doc) {
+    const bool wasLoading = loading_;
     loading_ = true;
     clear();
-    file_ = path;
     loadVariables(doc.value("variables", nlohmann::json::array()));
     for (const auto& n : doc.value("nodes", nlohmann::json::array())) {
         if (!n.is_object()) continue;
@@ -1043,8 +1768,36 @@ bool GraphEditorPanel::open(const QString& path) {
         if (!l.is_object()) continue;
         connectPins(l.value("from", 0), l.value("fromPin", std::string()), l.value("to", 0), l.value("toPin", std::string()));
     }
+    for (const auto& c : doc.value("comments", nlohmann::json::array())) {
+        if (!c.is_object()) continue;
+        auto* item = new GraphCommentItem(*this, QSizeF(c.value("w", 300.0), c.value("h", 200.0)),
+                                          QString::fromStdString(c.value("text", std::string())),
+                                          QColor(QString::fromStdString(c.value("color", std::string("#4f8cff")))));
+        scene_->addItem(item);
+        item->setPos(c.value("x", 0.0), c.value("y", 0.0));
+        comments_.push_back(item);
+    }
     refreshLiteralEditors();
-    loading_ = false;
+    loading_ = wasLoading;
+    live_ = false;  // the next refresh lights the new items
+}
+
+bool GraphEditorPanel::open(const QString& path) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    const nlohmann::json doc = nlohmann::json::parse(f.readAll().toStdString(), nullptr, false);
+    if (doc.is_discarded() || !doc.is_object()) {
+        QMessageBox::warning(this, tr("Visual Script"), tr("%1 is not a valid visual script.").arg(QFileInfo(path).fileName()));
+        return false;
+    }
+    file_ = path;
+    liveKey_ = visual::trace::keyOf(std::filesystem::path(path.toStdU16String()));
+    loadDocument(doc);
+    undo_.clear();
+    redo_.clear();
+    commitTimer_->stop();
+    committed_ = document();
+    saved_ = committed_;
     dirty_ = true;  // so setDirty(false) updates the title
     setDirty(false);
     QTimer::singleShot(0, this, [this] { fitGraph(); });
@@ -1058,7 +1811,9 @@ bool GraphEditorPanel::save() {
         QMessageBox::warning(this, tr("Visual Script"), tr("Could not write %1.").arg(file_));
         return false;
     }
-    const std::string text = document().dump(2) + "\n";
+    if (commitTimer_->isActive()) commitUndo();
+    saved_ = document();
+    const std::string text = saved_.dump(2) + "\n";
     f.write(text.data(), static_cast<qint64>(text.size()));
     setDirty(false);
     return true;

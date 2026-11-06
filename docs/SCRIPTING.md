@@ -32,14 +32,27 @@ them with `self:param("speed", 4)`, a graph with the *Script Parameter* node and
 - **Link two pins:** drag from one pin to the other. White triangles are *exec* pins and set the
   order in which actions run. Coloured circles carry values: green numbers, red booleans, yellow
   vectors, pink text, blue entities and grey "anything". A data input takes one link. Drop a
-  dragged input on empty canvas to unlink it.
+  dragged pin on empty canvas for the list of nodes that fit it; the new node comes linked.
+  Dragging a linked input onto empty canvas unlinks it instead.
 - **Values:** an input without a link shows a field for its value. An empty Entity input means
   "this entity"; you can also type another entity's name.
 - **Variables:** add them in the table on the right and read or write them with *Get Variable*,
-  *Set Variable* and *Add To Variable*.
+  *Set Variable* and *Add To Variable*. Drag a variable from the table onto the canvas for a Get
+  or Set node (hold <kbd>Ctrl</kbd> for Get, <kbd>Alt</kbd> for Set).
 - **Right-click** a node to delete, duplicate or unlink it, a pin to break its links, or a link
-  to remove it. **Delete** removes the selected nodes or links. Middle mouse pans, the wheel zooms, and the
-  magnifier button shows the whole graph.
+  to remove it or add a reroute point. **Delete** removes the selection. Middle mouse pans, the
+  wheel zooms, and the magnifier button shows the whole graph.
+- **Undo and the clipboard:** <kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Shift+Z</kbd> undo and redo every
+  edit; <kbd>Ctrl+C</kbd>, <kbd>Ctrl+X</kbd> and <kbd>Ctrl+V</kbd> copy, cut and paste nodes (with
+  the links between them) at the mouse, <kbd>Ctrl+D</kbd> duplicates, <kbd>Ctrl+A</kbd> selects all.
+- **Comments:** <kbd>C</kbd> (or *Comment*) frames the selected nodes in a titled box. Dragging its
+  title moves the nodes inside; the corner resizes it; double-click the title to rename it;
+  right-click for its colour.
+- **Reroute points:** double-click a link to put a dot on it, then drag the dot to route the link
+  around other nodes.
+- **Live view:** while the game plays, the nodes and links that run light up (fading over half a
+  second) and every output pin shows its last value. The panel follows the first entity running
+  the graph and names it in the toolbar.
 - **Save** with <kbd>Ctrl+S</kbd>. A running game reloads the graph at once.
 
 Execution starts at event nodes: *On Start*, *On Update* (gives *delta time*), *On Collision*

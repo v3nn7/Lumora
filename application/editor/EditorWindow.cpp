@@ -12,6 +12,7 @@
 #include "editor/ConsolePanel.hpp"
 #include "editor/TimelinePanel.hpp"
 #include "editor/GraphEditorPanel.hpp"
+#include "runtime/VisualScript.hpp"
 #include "editor/CodeEditorPanel.hpp"
 #include "editor/ContentBrowserPanel.hpp"
 #include "editor/EditorViewportClient.hpp"
@@ -1555,6 +1556,9 @@ void EditorWindow::play() {
         QMessageBox::critical(this, tr("Cannot start play mode"), QString::fromStdString(copy.error().message));
         return;
     }
+    // Visual scripts report what runs, for the Visual Script panel's live view.
+    visual::trace::clear();
+    visual::trace::setEnabled(true);
     playScene_ = std::move(*copy);
     simulation_ = std::make_unique<Simulation>(*playScene_);
     simulation_->setProjectRoot(project_.rootDir());
@@ -1589,6 +1593,8 @@ void EditorWindow::stop() {
     client_->hud = nullptr;
     client_->debug = nullptr;
     simulation_.reset();
+    visual::trace::setEnabled(false);
+    visual::trace::clear();
     ctx_.setScene(editScene_.get(), false);
     playScene_.reset();
     paused_ = false;

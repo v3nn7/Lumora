@@ -14,6 +14,7 @@
 #include <QGraphicsPathItem>
 #include <QGraphicsScene>
 #include <QGraphicsView>
+#include <QKeyEvent>
 #include <QMenu>
 
 #include <gtest/gtest.h>
@@ -185,6 +186,197 @@ TEST(GraphEditor, RightClickDeletesNodesAndCutsLinks) {
     EXPECT_TRUE(panel.isDirty());
 }
 
+namespace {
+/// A panel with the starter graph open (ids 1-7, see ContentBrowserPanel::createVisualScript).
+struct StarterGraph {
+    test::TempDir dir;
+    QString root = QString::fromStdString(dir.path().generic_string());
+    editor::ContentBrowserPanel browser{root};
+    QString file = browser.createVisualScript(QStringLiteral("Spinner"));
+    GraphEditorPanel panel{root};
+    StarterGraph() { EXPECT_TRUE(panel.open(file)); }
+};
+
+void press(QWidget* target, int key, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+    QKeyEvent down(QEvent::KeyPress, key, modifiers);
+    QCoreApplication::sendEvent(target, &down);
+}
+} // namespace
+
+TEST(GraphEditor, UndoAndRedoEveryEdit) {
+    StarterGraph g;
+    GraphEditorPanel& panel = g.panel;
+    const auto original = panel.document();
+    EXPECT_FALSE(panel.canUndo());
+
+    const int added = panel.addNode("math.add", {0, 600});
+    panel.undo();  // the pending edit becomes a step and is undone
+    EXPECT_EQ(panel.document(), original);
+    EXPECT_FALSE(panel.isDirty()) << "back to what is on disk";
+    EXPECT_TRUE(panel.canRedo());
+    panel.redo();
+    EXPECT_EQ(panel.nodeCount(), 8u);
+    EXPECT_TRUE(panel.isDirty());
+
+    ASSERT_TRUE(panel.removeNode(4));  // takes its links along
+    EXPECT_EQ(panel.linkCount(), 4u);
+    panel.undo();
+    EXPECT_EQ(panel.nodeCount(), 8u);
+    EXPECT_EQ(panel.linkCount(), 6u) << "the node comes back with its links";
+    panel.undo();
+    EXPECT_EQ(panel.document(), original);
+
+    // Ctrl+Z on the canvas reaches the graph (not the editor's scene undo).
+    panel.redo();
+    auto* view = panel.findChild<QGraphicsView*>();
+    press(view, Qt::Key_Z, Qt::ControlModifier);
+    EXPECT_EQ(panel.document(), original);
+    press(view, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+    EXPECT_EQ(panel.nodeCount(), 8u);
+    EXPECT_GT(added, 7);
+}
+
+TEST(GraphEditor, CopyPasteAndDuplicateKeepInnerLinks) {
+    StarterGraph g;
+    GraphEditorPanel& panel = g.panel;
+    panel.selectNodes({5, 6, 7});  // vec.make <- mul <- get speed: two links inside, two out
+    panel.copySelection();
+    ASSERT_TRUE(panel.paste(QPointF(2000, 2000)));
+    EXPECT_EQ(panel.nodeCount(), 10u);
+    EXPECT_EQ(panel.linkCount(), 8u) << "the two links between the copies, none to the rest";
+    const auto pasted = panel.selectedNodes();
+    ASSERT_EQ(pasted.size(), 3u) << "the copies are selected";
+    EXPECT_GT(pasted.front(), 7) << "with new ids";
+    const auto doc = panel.document();
+    for (const auto& n : doc["nodes"]) {
+        if (n["id"] == pasted.front()) {
+            EXPECT_GE(n["x"].get<double>(), 2000.0);
+            EXPECT_GE(n["y"].get<double>(), 2000.0);
+        }
+    }
+    panel.duplicateSelection();
+    EXPECT_EQ(panel.nodeCount(), 13u);
+    EXPECT_EQ(panel.linkCount(), 10u);
+
+    panel.selectNodes({1});
+    panel.cutSelection();
+    EXPECT_EQ(panel.nodeCount(), 12u);
+    EXPECT_TRUE(panel.paste());
+    EXPECT_EQ(panel.nodeCount(), 13u);
+}
+
+TEST(GraphEditor, CommentsAreSavedAndCarryTheirNodes) {
+    StarterGraph g;
+    GraphEditorPanel& panel = g.panel;
+    panel.selectNodes({1, 2});
+    panel.commentSelection();
+    ASSERT_EQ(panel.commentCount(), 1u);
+    ASSERT_TRUE(panel.save());
+    auto doc = panel.document();
+    ASSERT_EQ(doc["comments"].size(), 1u);
+    EXPECT_EQ(doc["comments"][0]["text"], "Comment");
+    const double x1 = doc["nodes"][0]["x"].get<double>();
+
+    // What was saved still runs (the runtime ignores comments) and opens again.
+    EXPECT_TRUE(visual::Graph::parse(doc).has_value());
+    GraphEditorPanel reopened(g.root);
+    ASSERT_TRUE(reopened.open(g.file));
+    EXPECT_EQ(reopened.commentCount(), 1u);
+
+    // Dragging the comment's title moves the nodes inside it.
+    auto* view = panel.findChild<QGraphicsView*>();
+    QGraphicsItem* comment = nullptr;
+    for (QGraphicsItem* item : view->scene()->items()) {
+        if (item->zValue() == -3) comment = item;
+    }
+    ASSERT_NE(comment, nullptr);
+    view->resize(800, 600);
+    view->show();
+    view->centerOn(comment->sceneBoundingRect().topLeft());
+    const QPoint grab = view->mapFromScene(comment->sceneBoundingRect().topLeft() + QPointF(60, 12));
+    auto mouse = [&](QEvent::Type type, QPoint at, Qt::MouseButtons buttons) {
+        QMouseEvent e(type, at, view->viewport()->mapToGlobal(at), Qt::LeftButton, buttons, Qt::NoModifier);
+        QCoreApplication::sendEvent(view->viewport(), &e);
+    };
+    view->scene()->clearSelection();
+    mouse(QEvent::MouseButtonPress, grab, Qt::LeftButton);
+    mouse(QEvent::MouseMove, grab + QPoint(100, 0), Qt::LeftButton);
+    mouse(QEvent::MouseButtonRelease, grab + QPoint(100, 0), Qt::NoButton);
+    doc = panel.document();
+    EXPECT_NEAR(doc["nodes"][0]["x"].get<double>() - x1, 100.0 / view->transform().m11(), 2.0);
+}
+
+TEST(GraphEditor, ReroutePointsKeepTheGraphWorking) {
+    StarterGraph g;
+    GraphEditorPanel& panel = g.panel;
+    const int exec = panel.insertReroute(3, "exec", 4, "in", {600, 160});
+    const int data = panel.insertReroute(5, "vector", 4, "degrees", {900, 300});
+    ASSERT_GT(exec, 0);
+    ASSERT_GT(data, 0);
+    EXPECT_EQ(panel.nodeCount(), 9u);
+    EXPECT_EQ(panel.linkCount(), 8u) << "each split link becomes two";
+    ASSERT_TRUE(panel.save());
+
+    // The spinner still spins through both dots.
+    Scene scene;
+    const entt::entity spinner = scene.createEntity("Spinner");
+    scene.registry().emplace<ScriptComponent>(spinner).behaviour = QDir(g.root).relativeFilePath(g.file).toStdString();
+    Simulation sim(scene);
+    sim.setProjectRoot(g.dir.path());
+    sim.setScripts(nullptr, nullptr);
+    for (int i = 0; i < 10; ++i) sim.step();
+    EXPECT_GT(scene.registry().get<TransformComponent>(spinner).rotationDeg.y, 1.0f);
+}
+
+TEST(GraphEditor, VariablesDropInAsGetAndSetNodes) {
+    StarterGraph g;
+    GraphEditorPanel& panel = g.panel;
+    const int get = panel.addVariableNode(QStringLiteral("speed"), false, {0, 700});
+    const int set = panel.addVariableNode(QStringLiteral("speed"), true, {300, 700});
+    const auto doc = panel.document();
+    int found = 0;
+    for (const auto& n : doc["nodes"]) {
+        if (n["id"] != get && n["id"] != set) continue;
+        EXPECT_EQ(n["type"], n["id"] == get ? "var.get" : "var.set");
+        EXPECT_EQ(n["inputs"]["name"], "speed");
+        ++found;
+    }
+    EXPECT_EQ(found, 2);
+}
+
+TEST(GraphEditor, LiveViewLightsWhatRunsWhilePlaying) {
+    StarterGraph g;
+    GraphEditorPanel& panel = g.panel;
+    panel.refreshLive();
+    EXPECT_FALSE(panel.isLive()) << "nothing plays yet";
+
+    visual::trace::clear();
+    visual::trace::setEnabled(true);
+    Scene scene;
+    const entt::entity spinner = scene.createEntity("Spinner");
+    scene.registry().emplace<ScriptComponent>(spinner).behaviour = QDir(g.root).relativeFilePath(g.file).toStdString();
+    {
+        Simulation sim(scene);
+        sim.setProjectRoot(g.dir.path());
+        sim.setScripts(nullptr, nullptr);
+        for (int i = 0; i < 5; ++i) sim.step();
+        panel.refreshLive();
+        EXPECT_TRUE(panel.isLive());
+        EXPECT_GT(panel.nodeGlow(3), 0.9f) << "On Update fires every step";
+        EXPECT_FALSE(panel.liveValue(3, "dt").isEmpty()) << "with its delta time";
+        EXPECT_GT(panel.nodeGlow(4), 0.9f) << "Rotate By runs every step";
+        EXPECT_GT(panel.nodeGlow(6), 0.9f) << "the multiply feeding it was read this step";
+        EXPECT_LT(panel.nodeGlow(2), 0.95f) << "Log ran once, at the start";
+        EXPECT_EQ(panel.liveValue(7, "value"), QStringLiteral("90")) << "the speed variable";
+        EXPECT_FALSE(panel.liveValue(6, "result").isEmpty());
+    }
+    visual::trace::setEnabled(false);
+    visual::trace::clear();
+    panel.refreshLive();
+    EXPECT_FALSE(panel.isLive()) << "stopping clears the view";
+    EXPECT_TRUE(panel.liveValue(7, "value").isEmpty());
+}
+
 TEST(GraphEditor, Snapshot) {
     // Visual check only: LUMORA_TEST_SNAPSHOT_DIR=... writes a picture of the panel.
     const QString out = qEnvironmentVariable("LUMORA_TEST_SNAPSHOT_DIR");
@@ -201,4 +393,25 @@ TEST(GraphEditor, Snapshot) {
     panel.fitGraph();
     QCoreApplication::processEvents();
     panel.grab().save(out + QStringLiteral("/graph-editor.png"));
+
+    // The same graph with a comment, a reroute dot and the live view of a running game.
+    panel.selectNodes({1, 2});
+    panel.commentSelection();
+    panel.insertReroute(3, "exec", 4, "in", {700, 175});
+    ASSERT_TRUE(panel.save());
+    visual::trace::clear();
+    visual::trace::setEnabled(true);
+    Scene scene;
+    const entt::entity spinner = scene.createEntity("Spinner");
+    scene.registry().emplace<ScriptComponent>(spinner).behaviour = QDir(root).relativeFilePath(file).toStdString();
+    Simulation sim(scene);
+    sim.setProjectRoot(dir.path());
+    sim.setScripts(nullptr, nullptr);
+    for (int i = 0; i < 5; ++i) sim.step();
+    panel.refreshLive();
+    panel.fitGraph();
+    QCoreApplication::processEvents();
+    panel.grab().save(out + QStringLiteral("/graph-editor-live.png"));
+    visual::trace::setEnabled(false);
+    visual::trace::clear();
 }

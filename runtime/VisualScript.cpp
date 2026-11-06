@@ -3,6 +3,7 @@
 #include "runtime/ScriptNames.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <format>
@@ -291,6 +292,12 @@ std::vector<NodeDef> buildLibrary() {
                        {execPin("then")}, [](Exec& x) {
                            if (x.flag(1)) x.fire(0);
                        }));
+
+    // Reroute points: dots that let a long link bend (double-click a link in the editor).
+    lib.push_back(flow("flow.reroute", "Reroute", "Passes execution straight on.", {}, {execPin("then", " ")},
+                       [](Exec& x) { x.fire(0); }));
+    lib.push_back(pure("data.reroute", "Reroute", "Flow", "Passes a value straight on.", {any("value")}, {any("value")},
+                       [](Exec& x) { x.out(0, x.in(0)); }));
 
     // -- Variables
     lib.push_back(pure("var.get", "Get Variable", "Variables", "Reads a graph variable.",
@@ -859,8 +866,53 @@ Result<std::shared_ptr<const Graph>> Graph::load(const std::filesystem::path& fi
     if (!in) return makeError("cannot open {}", file.string());
     nlohmann::json doc = nlohmann::json::parse(in, nullptr, false);
     if (doc.is_discarded()) return makeError("{} is not valid JSON", file.string());
-    return parse(doc, warnings);
+    auto parsed = parse(doc, warnings);
+    if (!parsed) return parsed;
+    auto graph = std::const_pointer_cast<Graph>(*parsed);
+    graph->source_ = trace::keyOf(file);
+    return std::shared_ptr<const Graph>(std::move(graph));
 }
+
+// ---- Trace ---------------------------------------------------------------------------------------
+
+namespace trace {
+namespace {
+std::atomic<bool> gEnabled{false};
+std::mutex gMutex;
+std::unordered_map<std::string, std::shared_ptr<GraphTrace>>& traces() {
+    static std::unordered_map<std::string, std::shared_ptr<GraphTrace>> map;
+    return map;
+}
+} // namespace
+
+void setEnabled(bool on) { gEnabled = on; }
+bool enabled() { return gEnabled; }
+
+std::string keyOf(const std::filesystem::path& file) {
+    std::error_code ec;
+    std::filesystem::path p = std::filesystem::weakly_canonical(std::filesystem::absolute(file, ec), ec);
+    if (ec) p = file;
+    return p.lexically_normal().generic_string();
+}
+
+std::shared_ptr<GraphTrace> find(const std::string& key) {
+    const std::lock_guard lock(gMutex);
+    const auto it = traces().find(key);
+    return it != traces().end() ? it->second : nullptr;
+}
+
+std::shared_ptr<GraphTrace> obtain(const std::string& key) {
+    const std::lock_guard lock(gMutex);
+    auto& slot = traces()[key];
+    if (!slot) slot = std::make_shared<GraphTrace>();
+    return slot;
+}
+
+void clear() {
+    const std::lock_guard lock(gMutex);
+    traces().clear();
+}
+} // namespace trace
 
 std::vector<int> Graph::events(std::string_view type) const {
     std::vector<int> out;
@@ -893,6 +945,30 @@ GraphInstance::GraphInstance(std::shared_ptr<const Graph> graph, const script::E
         }
     }
     state_.assign(graph_->nodes().size(), 0.0);
+    // The editor watches the first instance of each graph while playing.
+    if (trace::enabled() && !graph_->source().empty()) {
+        auto t = trace::obtain(graph_->source());
+        const std::lock_guard lock(t->mutex);
+        if (t->entity == kNoEntity || t->entity == self_) {  // the same entity again after a reload
+            t->entity = self_;
+            const char* name = api_ != nullptr && api_->name != nullptr ? api_->name(api_->context, self_) : nullptr;
+            t->entityName = name != nullptr ? name : "";
+            trace_ = std::move(t);
+        }
+    }
+}
+
+void GraphInstance::record(int node) {
+    const Graph::Node& n = graph_->nodes()[static_cast<std::size_t>(node)];
+    const std::lock_guard lock(trace_->mutex);
+    trace_->nodes[n.id] = trace_->step;
+    const auto& outs = outputs_[static_cast<std::size_t>(node)];
+    for (std::size_t pin = 0; pin < n.def->outputs.size() && pin < outs.size(); ++pin) {
+        if (n.def->outputs[pin].type == PinType::Exec) continue;
+        std::string text = outs[pin].asString();
+        if (outs[pin].type == PinType::String) text = "\"" + (text.size() > 24 ? text.substr(0, 23) + "…" : text) + "\"";
+        trace_->values[{n.id, static_cast<int>(pin)}] = std::move(text);
+    }
 }
 
 void GraphInstance::fail(std::string message) {
@@ -918,12 +994,17 @@ void GraphInstance::runNode(int node) {
     } catch (const std::exception& e) {
         fail(std::format("{}: {}", def.title, e.what()));
     }
+    if (trace_) record(node);
     --depth_;
 }
 
 void GraphInstance::runExec(int node, int outputPin) {
     const auto& targets = graph_->nodes()[static_cast<std::size_t>(node)].execTargets;
     if (outputPin < 0 || static_cast<std::size_t>(outputPin) >= targets.size()) return;
+    if (trace_ && !targets[static_cast<std::size_t>(outputPin)].empty()) {
+        const std::lock_guard lock(trace_->mutex);
+        trace_->links[{graph_->nodes()[static_cast<std::size_t>(node)].id, outputPin}] = trace_->step;
+    }
     for (int target : targets[static_cast<std::size_t>(outputPin)]) {
         if (failed_) return;
         runNode(target);
@@ -952,6 +1033,7 @@ bool GraphInstance::fire(std::string_view eventType, const std::function<bool(in
         if (failed_) break;
         budget_ = 0;
         if (prepare && !prepare(node)) continue;
+        if (trace_) record(node);  // events start here, not through runNode
         runExec(node, 0);
     }
     return !failed_;
@@ -965,6 +1047,11 @@ bool GraphInstance::start() {
 bool GraphInstance::update(float dt) {
     if (failed_) return false;
     dt_ = dt;
+    if (trace_) {
+        const std::lock_guard lock(trace_->mutex);
+        ++trace_->step;
+        trace_->updated = std::chrono::steady_clock::now();
+    }
     // Delays that are due (they may schedule new ones while running).
     if (!pending_.empty()) {
         std::vector<Pending> due;

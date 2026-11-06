@@ -193,7 +193,7 @@ Result<ExtractStats> extractZip(const QString& archivePath, const QString& desti
             if (!QFileInfo(link.second).isFile() || !insideRoot(link.second)) return false;
             QFile::remove(link.first);
             if (!QFile::copy(link.second, link.first)) return false;
-            ++stats.files;
+            ++stats.symlinks;  // a link in the package, stored as a copy here
             return true;
         });
     }

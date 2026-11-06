@@ -292,7 +292,10 @@ TEST(LauncherZip, ExtractsFilesModesAndLinks) {
     EXPECT_FALSE(QFileInfo(out + "/lib/libLumora.so.1").isExecutable());
     EXPECT_TRUE(QFileInfo(out + "/lib/libLumora.so").isSymLink());
     EXPECT_EQ(QFileInfo(out + "/lib/libLumora.so").symLinkTarget(), QFileInfo(out + "/lib/libLumora.so.1").absoluteFilePath());
+#else
+    EXPECT_EQ(QFile(out + "/lib/libLumora.so").size(), 5000) << "no links without developer mode: a copy of the target";
 #endif
+    EXPECT_EQ(stats->symlinks, 1u);
 }
 
 TEST(LauncherZip, RefusesHostileArchives) {

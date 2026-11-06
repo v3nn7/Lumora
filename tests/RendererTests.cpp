@@ -350,12 +350,12 @@ TEST_F(RendererTest, CascadeDebugViewShowsFinerCascadesNearTheCamera) {
     settings.debugCascades = true;
     auto image = renderer_->capture(*scene, view, {size.x, size.y}, settings);
     ASSERT_TRUE(image.has_value());
-    const glm::u8vec4 near = pixel(*image, toPixel(view, {0.0f, 0.0f, -3.0f}, size).x, toPixel(view, {0.0f, 0.0f, -3.0f}, size).y);
+    const glm::u8vec4 nearPixel = pixel(*image, toPixel(view, {0.0f, 0.0f, -3.0f}, size).x, toPixel(view, {0.0f, 0.0f, -3.0f}, size).y);
     const glm::ivec2 farPx = toPixel(view, {0.0f, 0.0f, -40.0f}, size);
-    const glm::u8vec4 far = pixel(*image, farPx.x, farPx.y);
-    EXPECT_GT(near.r, near.g + 40) << "cascade 0 is tinted red";
-    EXPECT_GT(far.g, far.b + 40) << "cascade 3 is tinted yellow";
-    EXPECT_GT(far.r, far.b + 40);
+    const glm::u8vec4 farPixel = pixel(*image, farPx.x, farPx.y);
+    EXPECT_GT(nearPixel.r, nearPixel.g + 40) << "cascade 0 is tinted red";
+    EXPECT_GT(farPixel.g, farPixel.b + 40) << "cascade 3 is tinted yellow";
+    EXPECT_GT(farPixel.r, farPixel.b + 40);
 }
 
 TEST_F(RendererTest, ParallelRecordingMatchesSerial) {

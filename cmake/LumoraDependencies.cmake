@@ -109,6 +109,12 @@ set(NVRHI_FETCH_VULKAN_HEADERS OFF CACHE BOOL "" FORCE)  # the Vulkan SDK's head
 FetchContent_MakeAvailable(glm EnTT nlohmann_json cgltf stb JoltPhysics miniaudio nvrhi recastnavigation)
 # NVRHI is static; the renderer module may be a shared library.
 set_target_properties(nvrhi nvrhi_vk Recast Detour DetourCrowd PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# On Windows NVRHI publishes VK_USE_PLATFORM_WIN32_KHR, which makes <vulkan/vulkan.h> include
+# <windows.h> everywhere (its near/far/DeviceCapabilities... macros break ordinary code). Qt
+# creates the window surfaces, so only NVRHI's own sources keep it.
+if(WIN32)
+    set_property(TARGET nvrhi_vk PROPERTY INTERFACE_COMPILE_DEFINITIONS "")
+endif()
 add_library(stb INTERFACE)
 target_include_directories(stb SYSTEM INTERFACE ${stb_SOURCE_DIR})
 add_library(miniaudio INTERFACE)

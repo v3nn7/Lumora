@@ -192,6 +192,8 @@ EditorWindow::EditorWindow(app::AppContext& app, Project project, QWidget* paren
             // Particle effects run in the editor too, so they can be tuned without playing.
             updateParticles(*editScene_, std::min(dt, 0.1f));
         }
+        client_->pixelRatio = static_cast<float>(viewport_->devicePixelRatio());
+        client_->viewportPixels = glm::vec2(viewport_->width(), viewport_->height()) * client_->pixelRatio;
         if (simulation_) {
             // The HUD is laid out in the viewport's pixels.
             const qreal dpr = viewport_->devicePixelRatio();
@@ -322,6 +324,10 @@ void EditorWindow::buildActions() {
     grid_ = make(tr("Show Grid"), QStringLiteral("grid"), QKeySequence(Qt::Key_G));
     grid_->setCheckable(true);
     grid_->setChecked(true);
+    icons_ = make(tr("Show Scene Icons"), QStringLiteral("light"), QKeySequence(Qt::SHIFT | Qt::Key_G));
+    icons_->setToolTip(tr("Floating icons for lights, cameras, sounds and particle emitters (Shift+G)"));
+    icons_->setCheckable(true);
+    icons_->setChecked(true);
     vsync_ = make(tr("V-Sync"), QString());
     vsync_->setCheckable(true);
     vsync_->setChecked(app_.options().vsync.value_or(true));
@@ -381,6 +387,7 @@ void EditorWindow::buildActions() {
     connect(stop_, &QAction::triggered, this, &EditorWindow::stop);
     connect(pilot_, &QAction::toggled, this, [this](bool on) { client_->pilotSceneCamera = on; });
     connect(grid_, &QAction::toggled, this, [this](bool on) { client_->showGrid = on; });
+    connect(icons_, &QAction::toggled, this, [this](bool on) { client_->showIcons = on; });
     connect(vsync_, &QAction::toggled, this, [this](bool on) {
         if (viewport_) viewport_->setVsync(on);
     });
@@ -606,7 +613,7 @@ void EditorWindow::buildMenus() {
     QMenu* view = menuBar()->addMenu(tr("&View"));
     for (QDockWidget* dock : findChildren<QDockWidget*>()) view->addAction(dock->toggleViewAction());
     view->addSeparator();
-    view->addActions({grid_, vsync_});
+    view->addActions({grid_, icons_, vsync_});
     view->addSeparator();
     QMenu* mainArea = view->addMenu(app::theme::icon(QStringLiteral("scene")), tr("Main Area"));
     for (QDockWidget* dock : findChildren<QDockWidget*>()) {
@@ -1629,7 +1636,7 @@ bool EditorWindow::handleShortcut(int key, Qt::KeyboardModifiers mods) {
     } else if (key == Qt::Key_F && !ctrl) {
         client_->frameSelection();
     } else if (key == Qt::Key_G && !ctrl) {
-        grid_->toggle();
+        (mods & Qt::ShiftModifier) ? icons_->toggle() : grid_->toggle();
     } else if (key == Qt::Key_1 && !ctrl) {
         moveTool_->trigger();
     } else if (key == Qt::Key_2 && !ctrl) {

@@ -58,7 +58,14 @@ void EditorViewportClient::viewportTick(float dt, const InputState& input, bool)
     if (scene != nullptr) scene->updateWorldTransforms();
     overlay_.clear();
     if (scene != nullptr && !remoteMarkers.empty() && !viewingThroughSceneCamera()) drawRemoteMarkers(*scene);
+    sprites_.clear();
+    if (scene != nullptr && showIcons && !ctx_.isPlaying() && !viewingThroughSceneCamera()) {
+        std::vector<entt::entity> selected;
+        for (Uuid id : ctx_.selection()) selected.push_back(scene->findByUuid(id));
+        icons_.build(*scene, camera_.view(lastAspect_).position, selected, pixelRatio, sprites_);
+    }
     if (gizmoVisible()) {
+        drawLightOf(*scene, ctx_.selectedEntity());
         drawColliderOf(*scene, ctx_.selectedEntity());
         gizmo_.build(*scene, ctx_.selectedEntity(), camera_.view(lastAspect_), overlay_);
     }
@@ -108,6 +115,46 @@ void EditorViewportClient::drawColliderOf(const Scene& scene, entt::entity e) {
             for (const glm::vec3& side : {axes[0], -axes[0], axes[2], -axes[2]}) {
                 b.cylinder(center + side * r - up * h, center + side * r + up * h, line, edge, 6);
             }
+            break;
+        }
+    }
+}
+
+void EditorViewportClient::drawLightOf(const Scene& scene, entt::entity e) {
+    const auto* light = scene.registry().try_get<LightComponent>(e);
+    if (light == nullptr) return;
+    const CameraView view = camera_.view(lastAspect_);
+    const glm::vec3 forward = -glm::normalize(glm::vec3(glm::inverse(view.view)[2]));
+    render::OverlayBuilder b(overlay_, forward);
+    const glm::mat4 world = scene.worldMatrix(e);
+    const glm::vec3 position(world[3]);
+    const glm::vec3 axisX = glm::normalize(glm::vec3(world[0]));
+    const glm::vec3 axisY = glm::normalize(glm::vec3(world[1]));
+    const glm::vec3 dir = -glm::normalize(glm::vec3(world[2]));  // lights shine along local -Z
+    const float line = std::max(glm::distance(view.position, position) * 0.0012f, 0.002f);
+    const glm::vec4 color(glm::mix(light->color / std::max({light->color.r, light->color.g, light->color.b, 1e-4f}),
+                                   glm::vec3(1.0f), 0.3f),
+                          0.85f);
+    switch (light->type) {
+        case LightType::Point:
+            for (const glm::vec3 axis : {glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), glm::vec3(0, 0, 1)}) {
+                b.torus(position, axis, light->range, line, color, 64, 4);
+            }
+            break;
+        case LightType::Spot: {
+            const float angle = glm::radians(std::clamp(light->spotAngleDeg, 1.0f, 89.0f));
+            const glm::vec3 end = position + dir * light->range * std::cos(angle);
+            const float radius = light->range * std::sin(angle);
+            b.torus(end, dir, radius, line, color, 64, 4);
+            for (const glm::vec3 side : {axisX, -axisX, axisY, -axisY}) b.cylinder(position, end + side * radius, line, color, 6);
+            break;
+        }
+        case LightType::Directional: {
+            // An arrow along the light's direction, a few metres long.
+            const float length = std::max(glm::distance(view.position, position) * 0.15f, 0.5f);
+            const glm::vec3 tip = position + dir * length;
+            b.cylinder(position, tip - dir * (length * 0.2f), line * 1.5f, color, 8);
+            b.cone(tip - dir * (length * 0.2f), tip, length * 0.06f, color);
             break;
         }
     }
@@ -226,6 +273,7 @@ render::RenderSettings EditorViewportClient::viewportSettings() const {
         }
     }
     s.overlay = overlay_.empty() ? nullptr : &overlay_;
+    s.sprites = sprites_.empty() ? nullptr : &sprites_;
     s.assets = assets;
     s.hud = ctx_.isPlaying() ? hud : nullptr;
     s.debug = ctx_.isPlaying() ? debug : nullptr;
@@ -239,7 +287,12 @@ void EditorViewportClient::viewportClicked(glm::vec2 ndc) {
     // While playing, clicks belong to the game (its buttons); select in the Hierarchy instead.
     if (scene == nullptr || ctx_.isPlaying()) return;
     const Ray ray = rayFromNdc(viewportCamera(lastAspect_), ndc);
-    const entt::entity hit = pickEntity(*scene, ray, assets);
+    entt::entity hit = entt::null;
+    if (!sprites_.empty() && viewportPixels.x > 0.0f) {  // icons are on top, so they win
+        const glm::vec2 pixel((ndc.x * 0.5f + 0.5f) * viewportPixels.x, (0.5f - ndc.y * 0.5f) * viewportPixels.y);
+        hit = SceneIcons::pick(sprites_, viewportCamera(lastAspect_), viewportPixels, pixel);
+    }
+    if (hit == entt::null) hit = pickEntity(*scene, ray, assets);
     if (pressModifiers_ & (Qt::ControlModifier | Qt::ShiftModifier)) {
         if (hit != entt::null) ctx_.toggleSelected(scene->uuidOf(hit));  // add to / remove from the selection
         return;

@@ -218,6 +218,7 @@ private:
     QAction* stop_ = nullptr;
     QAction* pilot_ = nullptr;
     QAction* grid_ = nullptr;
+    QAction* icons_ = nullptr;
     QAction* vsync_ = nullptr;
     QAction* resetLayout_ = nullptr;
     QAction* moveTool_ = nullptr;

@@ -2,6 +2,7 @@
 // Skipped (not faked) when no Vulkan 1.4 device is available.
 #include "renderer/RenderContext.hpp"
 #include "renderer/Renderer.hpp"
+#include "renderer/Sprites.hpp"
 #include "scene/Scene.hpp"
 
 #include <gtest/gtest.h>
@@ -1110,6 +1111,68 @@ TEST_F(RendererTest, HudDrawsRectanglesAndTextOnTop) {
     }
     EXPECT_GT(textPixels, 60) << "white glyph pixels where the text is";
     EXPECT_EQ(changedElsewhere, 0) << "nothing else changes";
+}
+
+TEST(Sprites, LayoutFacesTheViewerSortsFarFirstAndPicksTheNearest) {
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.0f, 5.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const CameraView view = cam.view(2.0f);
+    SpriteAtlas atlas;
+    atlas.width = atlas.height = 1;
+    atlas.rgba = {255, 255, 255, 255};
+    SpriteBatch batch;
+    batch.atlas = &atlas;
+    batch.pixelRatio = 2.0f;
+    batch.sprites.push_back({{0.0f, 0.0f, 0.0f}, 10.0f, {0, 0, 1, 1}, glm::vec4(1.0f), 1});   // centre
+    batch.sprites.push_back({{0.0f, 0.0f, -5.0f}, 10.0f, {0, 0, 1, 1}, glm::vec4(1.0f), 2});  // behind it, farther
+    batch.sprites.push_back({{0.0f, 0.0f, 9.0f}, 10.0f, {0, 0, 1, 1}, glm::vec4(1.0f), 3});   // behind the camera
+    const auto quads = layoutSprites(batch, view, {400.0f, 200.0f});
+    ASSERT_EQ(quads.size(), 2u);
+    EXPECT_EQ(batch.sprites[quads[0].index].id, 2u) << "farther first";
+    EXPECT_EQ(batch.sprites[quads[1].index].id, 1u);
+    EXPECT_NEAR(quads[1].min.x, 190.0f, 1.0f) << "20 target pixels wide (10 x pixel ratio 2), centred";
+    EXPECT_NEAR(quads[1].max.x - quads[1].min.x, 20.0f, 1e-3f);
+    EXPECT_NEAR(quads[1].min.y, 90.0f, 1.0f);
+    const Sprite* hit = spriteAt(batch, view, {400.0f, 200.0f}, {200.0f, 100.0f});
+    ASSERT_NE(hit, nullptr);
+    EXPECT_EQ(hit->id, 1u) << "the nearer of the two overlapping sprites";
+    EXPECT_EQ(spriteAt(batch, view, {400.0f, 200.0f}, {20.0f, 20.0f}), nullptr);
+}
+
+TEST_F(RendererTest, SpritesDrawTheirPictureTintedOnTop) {
+    auto scene = sceneWithSun();
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.0f, 5.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    // Left half white, right half transparent.
+    SpriteAtlas atlas;
+    atlas.width = 2;
+    atlas.height = 1;
+    atlas.rgba = {255, 255, 255, 255, 255, 255, 255, 0};
+    atlas.version = 1;
+    SpriteBatch batch;
+    batch.atlas = &atlas;
+    batch.sprites.push_back({{0.0f, 0.0f, 0.0f}, 40.0f, {0.0f, 0.0f, 0.5f, 1.0f}, {0.0f, 1.0f, 0.0f, 1.0f}, 1});
+    batch.sprites.push_back({{3.0f, 0.0f, 0.0f}, 40.0f, {0.75f, 0.0f, 1.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}, 2});
+    RenderSettings off;
+    off.bloom = false;
+    off.antiAliasing = false;
+    RenderSettings on = off;
+    on.sprites = &batch;
+    auto plain = renderer_->capture(*scene, cam.view(2.0f), {200, 100}, off);
+    auto drawn = renderer_->capture(*scene, cam.view(2.0f), {200, 100}, on);
+    ASSERT_TRUE(plain.has_value() && drawn.has_value());
+    const auto centre = pixel(*drawn, 100, 50);
+    EXPECT_LT(centre.r, 30);
+    EXPECT_GT(centre.g, 220) << "white picture tinted green";
+    EXPECT_LT(centre.b, 30);
+    // The second sprite samples only the transparent texel: nothing changes there.
+    const glm::vec4 clip = cam.view(2.0f).projection * cam.view(2.0f).view * glm::vec4(3.0f, 0.0f, 0.0f, 1.0f);
+    const auto x = static_cast<std::uint32_t>((clip.x / clip.w * 0.5f + 0.5f) * 200.0f);
+    EXPECT_EQ(glm::ivec3(pixel(*drawn, x, 50)), glm::ivec3(pixel(*plain, x, 50)));
+    EXPECT_EQ(glm::ivec3(pixel(*drawn, 5, 5)), glm::ivec3(pixel(*plain, 5, 5))) << "nothing else changes";
 }
 
 // ---- Terrain, foliage, water ------------------------------------------------------------------

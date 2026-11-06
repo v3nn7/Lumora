@@ -316,6 +316,7 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
 
 SceneRenderer::~SceneRenderer() {
     if (hudAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(hudAtlasIndex_);
+    if (spriteAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(spriteAtlasIndex_);
 }
 
 nvrhi::IGraphicsPipeline* SceneRenderer::outputPipeline(std::unordered_map<int, nvrhi::GraphicsPipelineHandle>& cache,
@@ -1322,6 +1323,57 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 ctx.cmd->draw(nvrhi::DrawArguments().setVertexCount(count));
             });
         ++stats.drawCalls;
+    }
+    // ---- Sprites: pictures at points in the world (editor icons), facing the viewer.
+    if (settings.sprites != nullptr && !settings.sprites->empty()) {
+        const SpriteAtlas& atlas = *settings.sprites->atlas;
+        if (spriteAtlasSource_ != &atlas || spriteAtlasVersion_ != atlas.version || !spriteAtlas_) {
+            if (spriteAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(spriteAtlasIndex_);
+            const std::span<const std::byte> bytes = std::as_bytes(std::span(atlas.rgba));
+            spriteAtlas_ = ctx_.createTexture(std::span(&bytes, 1), atlas.width, atlas.height, nvrhi::Format::RGBA8_UNORM,
+                                              "SpriteAtlas");
+            spriteAtlasIndex_ = ctx_.bindless().registerTexture(spriteAtlas_);
+            spriteAtlasSource_ = &atlas;
+            spriteAtlasVersion_ = atlas.version;
+        }
+        const glm::vec2 target(static_cast<float>(extent.width), static_cast<float>(extent.height));
+        std::vector<HudVertex> vertices;
+        for (const SpriteQuad& q : layoutSprites(*settings.sprites, camera, target)) {
+            const Sprite& s = settings.sprites->sprites[q.index];
+            const HudVertex tl{q.min, {s.uv.x, s.uv.y}, s.tint};
+            const HudVertex tr{{q.max.x, q.min.y}, {s.uv.z, s.uv.y}, s.tint};
+            const HudVertex bl{{q.min.x, q.max.y}, {s.uv.x, s.uv.w}, s.tint};
+            const HudVertex br{q.max, {s.uv.z, s.uv.w}, s.tint};
+            vertices.insert(vertices.end(), {tl, tr, br, tl, br, bl});
+        }
+        if (!vertices.empty()) {
+            nvrhi::IBuffer* vb = frame.spriteVertices.write(gpu, std::as_bytes(std::span(vertices)),
+                                                            DynamicBuffer::Kind::Vertex, sizeof(HudVertex), "SpriteVertices");
+            PipelineDesc spriteDesc;
+            spriteDesc.name = "HUD";
+            spriteDesc.vertexShader = "hud.vert";
+            spriteDesc.pixelShader = "hud.frag";
+            spriteDesc.input = VertexInput::Hud;
+            spriteDesc.blend = BlendMode::Alpha;
+            nvrhi::IGraphicsPipeline* pipeline = outputPipeline(hud_, spriteDesc, outputFormat);
+            const auto count = static_cast<std::uint32_t>(vertices.size());
+            const std::uint32_t texture = spriteAtlasIndex_;
+            const bool unorm = !isSrgbFormat(outputFormat);
+            graph.addRasterPass(
+                "Sprites", [&](PassBuilder& b) { b.writeColor(output, LoadOp::Load); },
+                [=](PassContext& ctx) {
+                    nvrhi::GraphicsState state = stateFor(pipeline, ctx);
+                    state.vertexBuffers = {nvrhi::VertexBufferBinding().setBuffer(vb).setSlot(0)};
+                    ctx.cmd->setGraphicsState(state);
+                    PushConstants pc;
+                    pc.index0 = texture;
+                    pc.index1 = sampler;
+                    pc.flags = (unorm ? 1u : 0u) | 2u;  // bit1: a colour picture, not glyph coverage
+                    push(ctx.cmd, pc);
+                    ctx.cmd->draw(nvrhi::DrawArguments().setVertexCount(count));
+                });
+            ++stats.drawCalls;
+        }
     }
     // ---- HUD: the game's text and rectangles, on top of everything.
     if (settings.hud != nullptr && !settings.hud->empty()) {

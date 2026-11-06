@@ -86,6 +86,7 @@ lumora_qt_module(editor
         editor/EditorWindow.cpp
         editor/EditorViewportClient.cpp
         editor/TransformGizmo.cpp
+        editor/SceneIcons.cpp
         editor/EntityFactory.cpp
         editor/SceneHierarchyPanel.cpp
         editor/PropertyWidgets.cpp

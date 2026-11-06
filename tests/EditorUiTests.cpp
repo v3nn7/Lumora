@@ -1127,3 +1127,46 @@ TEST(TimelineEditor, KeysPreviewsRestoresAndSaves) {
     EXPECT_FLOAT_EQ(loaded->tracks[0].keys[1].position.x, 8.0f);
     EXPECT_EQ(loaded->tracks[1].keys[0].text, "door");
 }
+
+#include "editor/SceneIcons.hpp"
+
+TEST(SceneIcons, LightsCamerasAndSoundsGetIconsThatPickTheirEntity) {
+    Scene scene("Icons");
+    const entt::entity lamp = scene.createEntity("Lamp");
+    auto& light = scene.registry().emplace<LightComponent>(lamp);
+    light.type = LightType::Point;
+    light.color = {1.0f, 0.5f, 0.0f};
+    const entt::entity cam = scene.createEntity("Camera");
+    scene.registry().emplace<CameraComponent>(cam);
+    scene.registry().get<TransformComponent>(cam).position = {3.0f, 0.0f, 0.0f};
+    const entt::entity cube = scene.createEntity("Cube");
+    scene.registry().emplace<MeshRendererComponent>(cube);
+    scene.updateWorldTransforms();
+
+    editor::SceneIcons icons(32.0f);
+    render::SpriteBatch batch;
+    icons.build(scene, {0.0f, 0.0f, 8.0f}, {cam}, 2.0f, batch);
+    ASSERT_EQ(batch.sprites.size(), 4u) << "a badge and a picture each for the lamp and the camera, none for the cube";
+    EXPECT_EQ(batch.atlas, &icons.atlas());
+    EXPECT_GT(icons.atlas().width, 64u) << "pictures drawn at 32 x 2 pixels";
+    const auto picture = std::ranges::find_if(batch.sprites, [&](const render::Sprite& s) {
+        return s.id == static_cast<std::uint32_t>(lamp) && s.tint != glm::vec4(1.0f);
+    });
+    ASSERT_NE(picture, batch.sprites.end());
+    EXPECT_GT(picture->tint.r, picture->tint.b) << "tinted with the light's orange";
+    bool someOpaque = false;
+    for (std::size_t i = 3; i < icons.atlas().rgba.size(); i += 4) someOpaque |= icons.atlas().rgba[i] == 255;
+    EXPECT_TRUE(someOpaque) << "the SVGs rendered";
+
+    FlyCameraController viewer;
+    viewer.setPosition({0.0f, 0.0f, 8.0f});
+    viewer.lookAt({0.0f, 0.0f, 0.0f});
+    const CameraView view = viewer.view(2.0f);
+    EXPECT_EQ(editor::SceneIcons::pick(batch, view, {800.0f, 400.0f}, {400.0f, 200.0f}), lamp);
+    EXPECT_EQ(editor::SceneIcons::pick(batch, view, {800.0f, 400.0f}, {50.0f, 50.0f}), entt::entity{entt::null});
+
+    // Up close they fade out rather than fill the view.
+    render::SpriteBatch close;
+    icons.build(scene, {0.0f, 0.0f, 0.2f}, {}, 2.0f, close);
+    EXPECT_EQ(close.sprites.size(), 2u) << "only the camera's, the lamp is too close";
+}

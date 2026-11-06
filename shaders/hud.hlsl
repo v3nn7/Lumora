@@ -1,6 +1,7 @@
 // HUD: pixel-space rectangles and text (glyphs from the font atlas), alpha blended on top of
 // the final image. uv.x < 0 marks a solid rectangle. gPush: index0 = font atlas, index1 =
-// sampler, flags bit0 = UNORM target (colours stay as authored; sRGB targets decode first).
+// sampler, flags bit0 = UNORM target (colours stay as authored; sRGB targets decode first),
+// bit1 = index0 is a colour picture (sprites) that the vertex colour tints, not glyph coverage.
 #include "common.hlsli"
 
 struct VSInput {
@@ -26,10 +27,15 @@ VSOutput VSMain(VSInput input) {
 #if defined(LUMORA_STAGE_FRAG)
 float4 PSMain(VSOutput input) : SV_Target0 {
     float coverage = 1.0;
-    if (input.uv.x >= 0.0) {
+    float3 c = input.color.rgb;
+    if ((gPush.flags & 2u) != 0u) {
+        // Straight alpha; the atlas carries colour into its transparent texels so edges do not darken.
+        float4 picture = gTextures[gPush.index0].SampleLevel(gSamplers[gPush.index1], input.uv, 0.0);
+        c *= picture.rgb;
+        coverage = picture.a;
+    } else if (input.uv.x >= 0.0) {
         coverage = gTextures[gPush.index0].SampleLevel(gSamplers[gPush.index1], input.uv, 0.0).r;
     }
-    float3 c = input.color.rgb;
     if ((gPush.flags & 1u) == 0u) {
         c = pow(max(c, 0.0.xxx), 2.2);
     }

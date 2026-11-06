@@ -36,6 +36,7 @@ struct FrameResources {
     DynamicBuffer lightGrid;
     DynamicBuffer overlayVertices;
     DynamicBuffer hudVertices;
+    DynamicBuffer spriteVertices;
     DynamicBuffer particleVertices;
     nvrhi::BindingSetHandle bindings;  // set 0 over the buffers above
     std::array<nvrhi::IBuffer*, 5> bound{};

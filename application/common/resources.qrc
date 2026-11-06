@@ -1,5 +1,13 @@
 <RCC>
   <qresource prefix="/icons">
+    <file alias="scene/badge.svg">icons/scene/badge.svg</file>
+    <file alias="scene/badge-selected.svg">icons/scene/badge-selected.svg</file>
+    <file alias="scene/sun.svg">icons/scene/sun.svg</file>
+    <file alias="scene/bulb.svg">icons/scene/bulb.svg</file>
+    <file alias="scene/spot.svg">icons/scene/spot.svg</file>
+    <file alias="scene/camera.svg">icons/scene/camera.svg</file>
+    <file alias="scene/speaker.svg">icons/scene/speaker.svg</file>
+    <file alias="scene/sparkles.svg">icons/scene/sparkles.svg</file>
     <file alias="back.svg">icons/back.svg</file>
     <file alias="physics.svg">icons/physics.svg</file>
     <file alias="audio.svg">icons/audio.svg</file>

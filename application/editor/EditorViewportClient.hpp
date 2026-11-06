@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/VulkanViewport.hpp"
+#include "editor/SceneIcons.hpp"
 #include "editor/TransformGizmo.hpp"
 #include "renderer/Overlay.hpp"
 #include "scene/Camera.hpp"
@@ -44,6 +45,9 @@ public:
     std::vector<RemoteMarker> remoteMarkers;
 
     bool showGrid = true;
+    bool showIcons = true;              // floating light / camera / sound icons while editing
+    glm::vec2 viewportPixels{0.0f};     // the viewport's size in target pixels (set by the window)
+    float pixelRatio = 1.0f;            // target pixels per window pixel
     AssetLibrary* assets = nullptr;  // project asset library (meshes for rendering and picking)
     const HudCanvas* hud = nullptr;  // the game's HUD while playing
     const DebugDraw* debug = nullptr;  // behaviours' debug shapes (play mode)
@@ -72,9 +76,13 @@ private:
     /// Translucent collider outline for the selected entity (editing only).
     void drawColliderOf(const Scene& scene, entt::entity e);
     void drawRemoteMarkers(const Scene& scene);
+    /// Range sphere, cone or direction of the selected light (editing only).
+    void drawLightOf(const Scene& scene, entt::entity e);
 
     EditorContext& ctx_;
     FlyCameraController camera_;
+    SceneIcons icons_;
+    render::SpriteBatch sprites_;
     mutable float lastAspect_ = 16.0f / 9.0f;
     struct GroupMember {
         Uuid id;

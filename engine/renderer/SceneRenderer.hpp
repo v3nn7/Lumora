@@ -6,6 +6,7 @@
 #include "renderer/GpuTypes.hpp"
 #include "renderer/Overlay.hpp"
 #include "renderer/RenderGraph.hpp"
+#include "renderer/Sprites.hpp"
 #include "scene/Camera.hpp"
 #include "scene/Components.hpp"
 
@@ -38,6 +39,7 @@ struct RenderSettings {
     entt::entity selected = entt::null;
     std::vector<entt::entity> alsoSelected;  // the rest of a multi-selection (outlined too)
     const OverlayGeometry* overlay = nullptr;  // drawn on top after tone mapping (gizmos)
+    const SpriteBatch* sprites = nullptr;      // pictures floating in the world (editor icons), on top
     const HudCanvas* hud = nullptr;            // the game's 2D overlay (text, rectangles), drawn last
     const DebugDraw* debug = nullptr;          // behaviours' debug shapes, drawn on top like the overlay
     AssetLibrary* assets = nullptr;            // resolves MeshRenderer::meshAsset; null = primitives only
@@ -135,6 +137,10 @@ private:
     std::unique_ptr<HudFont> hudFont_;  // built on first use
     nvrhi::TextureHandle hudAtlas_;
     std::uint32_t hudAtlasIndex_ = UINT32_MAX;
+    nvrhi::TextureHandle spriteAtlas_;
+    std::uint32_t spriteAtlasIndex_ = UINT32_MAX;
+    const SpriteAtlas* spriteAtlasSource_ = nullptr;
+    std::uint64_t spriteAtlasVersion_ = 0;
     /// Terrains and foliage: how they look (as a Mesh Renderer would) and their copies' world
     /// matrices, rebuilt when their key changes; dropped when unused for a while.
     struct LandscapeEntry {

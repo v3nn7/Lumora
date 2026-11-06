@@ -4,6 +4,9 @@
 #include <glm/vec3.hpp>
 
 #include <memory>
+#include <optional>
+#include <utility>
+#include <vector>
 
 namespace lumora {
 
@@ -32,6 +35,22 @@ public:
     void setGravity(const glm::vec3& gravity);
     /// Linear velocity of a dynamic body (zero if the entity has none).
     [[nodiscard]] glm::vec3 linearVelocity(entt::entity entity) const;
+    /// Sets the velocity of a dynamic body. False if the entity has no dynamic body.
+    bool setLinearVelocity(entt::entity entity, const glm::vec3& velocity);
+    /// Force (N) applied during the next step, or an instant impulse (N s). Dynamic bodies only.
+    bool addForce(entt::entity entity, const glm::vec3& force, bool impulse);
+
+    struct RayHit {
+        entt::entity entity = entt::null;
+        glm::vec3 point{0.0f};
+        glm::vec3 normal{0.0f};
+        float distance = 0.0f;
+    };
+    /// Closest body hit by a ray (direction need not be normalised), within maxDistance.
+    [[nodiscard]] std::optional<RayHit> raycast(const glm::vec3& origin, const glm::vec3& direction,
+                                                float maxDistance) const;
+    /// Pairs of entities whose bodies started touching since the last call (each pair once).
+    [[nodiscard]] std::vector<std::pair<entt::entity, entt::entity>> takeContacts();
 
 private:
     struct Impl;

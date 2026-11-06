@@ -58,6 +58,7 @@ void Simulation::setScripts(std::shared_ptr<ScriptModule> module, const InputSta
         scripts_->reload(std::move(module));
     } else if (module) {
         scripts_ = std::make_unique<ScriptRunner>(scene_, std::move(module), input);
+        scripts_->setPhysics(physics_.get());
     }
 }
 
@@ -69,9 +70,15 @@ void Simulation::step() {
     if (scripts_) scripts_->update(dt, simulatedSeconds());
     runRotatorSystem(scene_, dt);
     scene_.updateWorldTransforms();
+    if (!physics_ && PhysicsWorld::sceneHasColliders(scene_)) {
+        // Colliders appeared during play (a script cloned one): start the physics world now.
+        physics_ = std::make_unique<PhysicsWorld>(scene_);
+        if (scripts_) scripts_->setPhysics(physics_.get());
+    }
     if (physics_) {
         physics_->step(dt);
         scene_.updateWorldTransforms();
+        if (scripts_) scripts_->dispatchCollisions(physics_->takeContacts());
     }
     ++steps_;
 }

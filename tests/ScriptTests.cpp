@@ -3,6 +3,7 @@
 #include "TestUtils.hpp"
 
 #include "common/ScriptBuilder.hpp"
+#include "runtime/PhysicsWorld.hpp"
 #include "runtime/Scripting.hpp"
 #include "runtime/Simulation.hpp"
 #include "scene/Scene.hpp"
@@ -118,4 +119,104 @@ TEST_F(ScriptTest, NewBehaviourTemplateCompiles) {
     auto module = ScriptModule::load(builder.libraryPath().toStdString(), builder.loadDir().toStdString());
     ASSERT_TRUE(module.has_value()) << module.error().message;
     EXPECT_EQ((*module)->behaviours(), std::vector<std::string>{"Spinner"});
+}
+
+TEST_F(ScriptTest, PhysicsEntitiesAndParameters) {
+    const std::filesystem::path project = dir.path();
+    writeScript(project, "Game.cpp", R"cpp(#include <lumora/Script.hpp>
+using namespace lumora::script;
+
+// Pushed sideways at start; reports its first collision by moving the "Flag" entity.
+class Kicker : public Behaviour {
+public:
+    void start() override { addImpulse(Vec3{param("impulse", 0.0f), 0.0f, 0.0f}); }
+    void onCollision(Entity other) override {
+        if (reported_) return;
+        reported_ = true;
+        setPositionOf(find("Flag"), Vec3{name(other) == "Ground" ? 1.0f : -1.0f, 0.0f, 0.0f});
+    }
+private:
+    bool reported_ = false;
+};
+LUMORA_BEHAVIOUR(Kicker);
+
+// Drops itself onto whatever lies below.
+class Prober : public Behaviour {
+public:
+    void start() override {
+        RayHit hit;
+        if (raycast(position(), Vec3{0.0f, -1.0f, 0.0f}, 50.0f, hit)) setPosition(hit.point);
+    }
+};
+LUMORA_BEHAVIOUR(Prober);
+
+// Clones the "Template" entity once; the clone's Lifetime script removes it again.
+class Spawner : public Behaviour {
+public:
+    void update(float) override {
+        if (!spawned_ && time() >= 0.1) {
+            spawned_ = true;
+            Entity copy = clone(find("Template"));
+            setPositionOf(copy, Vec3{0.0f, 5.0f, 0.0f});
+        }
+    }
+private:
+    bool spawned_ = false;
+};
+LUMORA_BEHAVIOUR(Spawner);
+
+class Lifetime : public Behaviour {
+public:
+    void start() override { born_ = time(); }
+    void update(float) override {
+        if (position().y > 1.0f && time() - born_ > param("life", 1.0f)) destroy(entity());  // the template stays at y = 0
+    }
+private:
+    double born_ = 0.0;
+};
+LUMORA_BEHAVIOUR(Lifetime);
+)cpp");
+    app::ScriptBuilder builder(QString::fromStdString(project.string()));
+    QString log;
+    ASSERT_TRUE(builder.buildBlocking(&log)) << log.toStdString();
+    auto module = ScriptModule::load(builder.libraryPath().toStdString(), builder.loadDir().toStdString());
+    ASSERT_TRUE(module.has_value()) << module.error().message;
+
+    Scene scene("Test");
+    auto& reg = scene.registry();
+    const entt::entity ground = scene.createEntity("Ground");
+    reg.emplace<ColliderComponent>(ground).size = glm::vec3(40.0f, 1.0f, 40.0f);  // top at y = 0.5
+    const entt::entity ball = scene.createEntity("Ball");
+    reg.get<TransformComponent>(ball).position = glm::vec3(0.0f, 2.0f, 0.0f);
+    reg.emplace<ColliderComponent>(ball).shape = ColliderShape::Sphere;
+    reg.emplace<RigidBodyComponent>(ball);
+    reg.emplace<ScriptComponent>(ball) = ScriptComponent{"Kicker", "impulse = 3"};
+    const entt::entity flag = scene.createEntity("Flag");
+    const entt::entity probe = scene.createEntity("Probe");
+    reg.get<TransformComponent>(probe).position = glm::vec3(5.0f, 10.0f, 5.0f);
+    reg.emplace<ScriptComponent>(probe).behaviour = "Prober";
+    const entt::entity spawner = scene.createEntity("Spawner");
+    reg.emplace<ScriptComponent>(spawner).behaviour = "Spawner";
+    const entt::entity templ = scene.createEntity("Template");
+    reg.emplace<ScriptComponent>(templ) = ScriptComponent{"Lifetime", "life=0.2"};
+    scene.updateWorldTransforms();
+
+    Simulation sim(scene);
+    sim.setScripts(*module, nullptr);
+    ASSERT_NE(sim.physics(), nullptr);
+    const std::size_t entitiesAtStart = scene.entityCount();
+
+    sim.step();
+    EXPECT_NEAR(reg.get<TransformComponent>(probe).position.y, 0.5f, 1e-3f) << "raycast hit the ground's top";
+    EXPECT_GT(sim.physics()->linearVelocity(ball).x, 2.0f) << "the impulse (3 N s on 1 kg) moved the ball";
+
+    for (int i = 0; i < 9; ++i) sim.step();  // t = 0.17 s: the clone exists
+    EXPECT_EQ(scene.entityCount(), entitiesAtStart + 1) << "Spawner cloned the template";
+    EXPECT_EQ(sim.scriptInstances(), 5u) << "the clone runs its own Lifetime behaviour";
+
+    for (int i = 0; i < 50; ++i) sim.step();  // 1 s in total: the ball landed, the clone expired
+    EXPECT_EQ(scene.entityCount(), entitiesAtStart) << "the clone destroyed itself after life=0.2 s";
+    EXPECT_EQ(sim.scriptInstances(), 4u);
+    EXPECT_FLOAT_EQ(reg.get<TransformComponent>(flag).position.x, 1.0f) << "onCollision named the ground";
+    EXPECT_GT(reg.get<TransformComponent>(ball).position.x, 1.0f);
 }

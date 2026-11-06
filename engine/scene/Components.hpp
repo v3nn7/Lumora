@@ -81,7 +81,8 @@ struct CameraComponent {
 
 /// Runs a C++ behaviour from the project's game library (Scripts/) while the simulation runs.
 struct ScriptComponent {
-    std::string behaviour;  // class name registered with LUMORA_BEHAVIOUR
+    std::string behaviour;   // class name registered with LUMORA_BEHAVIOUR
+    std::string parameters;  // "speed=4, jump=6": numbers the behaviour reads with param()
 };
 
 /// Built-in gameplay behaviour: spins the entity while the simulation runs.

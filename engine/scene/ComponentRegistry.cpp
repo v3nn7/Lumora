@@ -116,6 +116,7 @@ ComponentRegistry makeBuiltin() {
         auto d = R::describe<ScriptComponent>("Script", "Script");
         d.fields = {
             R::field(&ScriptComponent::behaviour, "behaviour", "Behaviour", FieldKind::String),
+            R::field(&ScriptComponent::parameters, "parameters", "Parameters", FieldKind::String),
         };
         reg.add(std::move(d));
     }

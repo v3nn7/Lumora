@@ -14,6 +14,10 @@
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
@@ -166,6 +170,19 @@ JPH::RefConst<JPH::Shape> makeShape(const ColliderComponent& c, const glm::vec3&
 
 } // namespace
 
+/// Collects "started touching" pairs. Jolt calls it from its worker threads during Update().
+class ContactCollector final : public JPH::ContactListener {
+public:
+    void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold&,
+                        JPH::ContactSettings&) override {
+        std::scoped_lock lock(mutex);
+        pairs.emplace_back(static_cast<entt::entity>(static_cast<std::uint32_t>(a.GetUserData())),
+                           static_cast<entt::entity>(static_cast<std::uint32_t>(b.GetUserData())));
+    }
+    std::mutex mutex;
+    std::vector<std::pair<entt::entity, entt::entity>> pairs;
+};
+
 struct PhysicsWorld::Impl {
     Scene& scene;
     BroadPhaseLayerMapping broadPhase;
@@ -174,6 +191,7 @@ struct PhysicsWorld::Impl {
     std::unique_ptr<JPH::TempAllocatorImpl> temp;
     std::unique_ptr<JPH::JobSystemThreadPool> jobs;
     JPH::PhysicsSystem system;
+    ContactCollector contacts;
     struct Body {
         JPH::BodyID id;
         BodyMotion motion;
@@ -194,6 +212,7 @@ struct PhysicsWorld::Impl {
         JPH::BodyCreationSettings settings(makeShape(collider, pose.scale), JPH::RVec3(toJolt(pose.position)),
                                            toJolt(pose.rotation), type,
                                            motion == BodyMotion::Static ? Layers::kStatic : Layers::kMoving);
+        settings.mUserData = static_cast<JPH::uint64>(entt::to_integral(e));  // contacts and raycasts name the entity
         if (rb != nullptr) {
             settings.mFriction = rb->friction;
             settings.mRestitution = rb->restitution;
@@ -255,6 +274,7 @@ PhysicsWorld::PhysicsWorld(Scene& scene) : impl_(std::make_unique<Impl>(scene)) 
     impl_->system.Init(kMaxBodies, 0, kMaxBodyPairs, kMaxContacts, impl_->broadPhase, impl_->objectVsBroadPhase,
                        impl_->objectPairs);
     impl_->system.SetGravity(JPH::Vec3(0.0f, -9.81f, 0.0f));
+    impl_->system.SetContactListener(&impl_->contacts);
     scene.updateWorldTransforms();
     impl_->syncBodies();
     log::info("Physics", "world created with {} bodies ({} worker threads)", impl_->bodies.size(), threads);
@@ -279,6 +299,51 @@ glm::vec3 PhysicsWorld::linearVelocity(entt::entity entity) const {
     const auto it = impl_->bodies.find(entity);
     if (it == impl_->bodies.end()) return glm::vec3(0.0f);
     return fromJolt(impl_->system.GetBodyInterface().GetLinearVelocity(it->second.id));
+}
+
+bool PhysicsWorld::setLinearVelocity(entt::entity entity, const glm::vec3& velocity) {
+    const auto it = impl_->bodies.find(entity);
+    if (it == impl_->bodies.end() || it->second.motion != BodyMotion::Dynamic) return false;
+    impl_->system.GetBodyInterface().SetLinearVelocity(it->second.id, toJolt(velocity));
+    return true;
+}
+
+bool PhysicsWorld::addForce(entt::entity entity, const glm::vec3& force, bool impulse) {
+    const auto it = impl_->bodies.find(entity);
+    if (it == impl_->bodies.end() || it->second.motion != BodyMotion::Dynamic) return false;
+    JPH::BodyInterface& bi = impl_->system.GetBodyInterface();
+    if (impulse) {
+        bi.AddImpulse(it->second.id, toJolt(force));
+    } else {
+        bi.AddForce(it->second.id, toJolt(force));
+    }
+    bi.ActivateBody(it->second.id);
+    return true;
+}
+
+std::optional<PhysicsWorld::RayHit> PhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& direction,
+                                                          float maxDistance) const {
+    const float length = glm::length(direction);
+    if (length < 1e-6f || maxDistance <= 0.0f) return std::nullopt;
+    const glm::vec3 dir = direction / length;
+    const JPH::RRayCast ray{JPH::RVec3(toJolt(origin)), toJolt(dir * maxDistance)};
+    JPH::RayCastResult result;
+    if (!impl_->system.GetNarrowPhaseQuery().CastRay(ray, result)) return std::nullopt;
+    RayHit hit;
+    hit.distance = result.mFraction * maxDistance;
+    hit.point = origin + dir * hit.distance;
+    JPH::BodyLockRead lock(impl_->system.GetBodyLockInterface(), result.mBodyID);
+    if (lock.Succeeded()) {
+        const JPH::Body& body = lock.GetBody();
+        hit.entity = static_cast<entt::entity>(static_cast<std::uint32_t>(body.GetUserData()));
+        hit.normal = fromJolt(body.GetWorldSpaceSurfaceNormal(result.mSubShapeID2, ray.GetPointOnRay(result.mFraction)));
+    }
+    return hit;
+}
+
+std::vector<std::pair<entt::entity, entt::entity>> PhysicsWorld::takeContacts() {
+    std::scoped_lock lock(impl_->contacts.mutex);
+    return std::exchange(impl_->contacts.pairs, {});
 }
 
 void PhysicsWorld::step(float dt) {

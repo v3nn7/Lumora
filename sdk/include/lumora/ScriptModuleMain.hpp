@@ -69,6 +69,11 @@ LUMORA_SCRIPT_EXPORT int lumora_script_update(void* instance, float dt) {
     return lumora::script::detail::guarded([&] { static_cast<lumora::script::Behaviour*>(instance)->update(dt); });
 }
 
+LUMORA_SCRIPT_EXPORT int lumora_script_collision(void* instance, lumora::script::Entity other) {
+    return lumora::script::detail::guarded(
+        [&] { static_cast<lumora::script::Behaviour*>(instance)->onCollision(other); });
+}
+
 LUMORA_SCRIPT_EXPORT void lumora_script_destroy(void* instance) {
     lumora::script::detail::guarded([&] { delete static_cast<lumora::script::Behaviour*>(instance); });
 }

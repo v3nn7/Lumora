@@ -234,6 +234,12 @@ What a behaviour can do:
 | `find("Name")`, `positionOf(e)`, `setPositionOf(e, v)`, `name(e)` | Other entities, by name |
 | `keyDown(Key::W)` | Keyboard state: WASD, QE, F, arrows, Space, Shift, Ctrl, Alt, Esc |
 | `time()` | Simulated seconds since play started |
+| `mouseDown(MouseButton::Left)`, `mouseDelta()` | Mouse buttons and movement this frame |
+| `addForce(v)`, `addImpulse(v)`, `velocity()`, `setVelocity(v)` | Physics of a dynamic Rigid Body (newtons, newton-seconds, m/s) |
+| `raycast(origin, direction, maxDistance, hit)` | Closest collider along a ray: `hit.entity`, `hit.point`, `hit.normal`, `hit.distance` |
+| `onCollision(Entity other)` | Override: this entity's collider started touching another |
+| `clone(e)`, `destroy(e)` | Copy an entity with its children, components and scripts; remove one at the end of the step |
+| `param("speed", 4.0f)` | A number from the Script component's **Parameters** field, e.g. `speed=6, jump=4` |
 | `log("…")`, `warn("…")` | Messages in the Console |
 
 An exception thrown by a behaviour is reported in the Console and disables that behaviour; the

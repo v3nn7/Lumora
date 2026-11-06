@@ -2,9 +2,12 @@
 
 #include "core/Log.hpp"
 #include "input/InputState.hpp"
+#include "runtime/PhysicsWorld.hpp"
 #include "scene/Scene.hpp"
 
+#include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <format>
 #include <system_error>
 
@@ -143,6 +146,104 @@ int apiKeyDown(void* c, int key) {
 
 double apiTime(void* c) { return context(c).time; }
 
+entt::entity liveEntity(void* c, script::Entity entity) {
+    const entt::entity e = toEntity(entity);
+    return entity != script::kNoEntity && context(c).scene->registry().valid(e) ? e : entt::null;
+}
+
+int apiGetVelocity(void* c, script::Entity entity, float* xyz) {
+    PhysicsWorld* physics = context(c).physics;
+    const entt::entity e = liveEntity(c, entity);
+    if (physics == nullptr || e == entt::null || xyz == nullptr) return 0;
+    const glm::vec3 v = physics->linearVelocity(e);
+    xyz[0] = v.x;
+    xyz[1] = v.y;
+    xyz[2] = v.z;
+    return 1;
+}
+
+int apiSetVelocity(void* c, script::Entity entity, const float* xyz) {
+    PhysicsWorld* physics = context(c).physics;
+    const entt::entity e = liveEntity(c, entity);
+    if (physics == nullptr || e == entt::null || xyz == nullptr) return 0;
+    return physics->setLinearVelocity(e, glm::vec3(xyz[0], xyz[1], xyz[2])) ? 1 : 0;
+}
+
+int apiAddForce(void* c, script::Entity entity, const float* xyz, int impulse) {
+    PhysicsWorld* physics = context(c).physics;
+    const entt::entity e = liveEntity(c, entity);
+    if (physics == nullptr || e == entt::null || xyz == nullptr) return 0;
+    return physics->addForce(e, glm::vec3(xyz[0], xyz[1], xyz[2]), impulse != 0) ? 1 : 0;
+}
+
+int apiRaycast(void* c, const float* origin, const float* direction, float maxDistance, script::RayHit* out) {
+    PhysicsWorld* physics = context(c).physics;
+    if (physics == nullptr || origin == nullptr || direction == nullptr || out == nullptr) return 0;
+    const auto hit = physics->raycast(glm::vec3(origin[0], origin[1], origin[2]),
+                                      glm::vec3(direction[0], direction[1], direction[2]), maxDistance);
+    if (!hit) return 0;
+    out->entity = hit->entity == entt::null ? script::kNoEntity : static_cast<script::Entity>(entt::to_integral(hit->entity));
+    out->point = {hit->point.x, hit->point.y, hit->point.z};
+    out->normal = {hit->normal.x, hit->normal.y, hit->normal.z};
+    out->distance = hit->distance;
+    return 1;
+}
+
+script::Entity apiClone(void* c, script::Entity source) {
+    const entt::entity e = liveEntity(c, source);
+    if (e == entt::null) return script::kNoEntity;
+    const entt::entity copy = context(c).scene->duplicateEntity(e);
+    context(c).scene->updateWorldTransforms();  // physics creates the clone's body from its world pose
+    return copy == entt::null ? script::kNoEntity : static_cast<script::Entity>(entt::to_integral(copy));
+}
+
+void apiDestroy(void* c, script::Entity entity) {
+    const entt::entity e = liveEntity(c, entity);
+    if (e != entt::null) context(c).pendingDestroy.push_back(e);
+}
+
+int apiMouseDown(void* c, int button) {
+    const InputState* input = context(c).input;
+    if (input == nullptr || button < 0 || button >= static_cast<int>(MouseButton::Count)) return 0;
+    return input->isDown(static_cast<MouseButton>(button)) ? 1 : 0;
+}
+
+void apiMouseDelta(void* c, float* xy) {
+    const InputState* input = context(c).input;
+    if (xy == nullptr) return;
+    const glm::vec2 d = input != nullptr ? input->mouseDelta() : glm::vec2(0.0f);
+    xy[0] = d.x;
+    xy[1] = d.y;
+}
+
+/// "speed=4, jump = 6.5; name=2" -> the number for `key`, or `fallback`.
+double apiParameter(void* c, script::Entity entity, const char* key, double fallback) {
+    const entt::entity e = liveEntity(c, entity);
+    if (e == entt::null || key == nullptr) return fallback;
+    const auto* script = context(c).scene->registry().try_get<ScriptComponent>(e);
+    if (script == nullptr) return fallback;
+    const std::string_view wanted(key);
+    std::string_view rest(script->parameters);
+    auto trim = [](std::string_view v) {
+        while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.remove_prefix(1);
+        while (!v.empty() && (v.back() == ' ' || v.back() == '\t')) v.remove_suffix(1);
+        return v;
+    };
+    while (!rest.empty()) {
+        const std::size_t end = rest.find_first_of(",;");
+        const std::string_view item = rest.substr(0, end);
+        rest = end == std::string_view::npos ? std::string_view() : rest.substr(end + 1);
+        const std::size_t eq = item.find('=');
+        if (eq == std::string_view::npos || trim(item.substr(0, eq)) != wanted) continue;
+        const std::string_view number = trim(item.substr(eq + 1));
+        double value = fallback;
+        const auto [ptr, ec] = std::from_chars(number.data(), number.data() + number.size(), value);
+        if (ec == std::errc() && ptr == number.data() + number.size()) return value;
+        return fallback;
+    }
+    return fallback;
+}
+
 } // namespace
 
 // ---- ScriptModule ------------------------------------------------------------------------------
@@ -176,9 +277,11 @@ Result<std::shared_ptr<ScriptModule>> ScriptModule::load(const std::filesystem::
     module->start = reinterpret_cast<StepFn>(symbol(module->handle_, "lumora_script_start"));
     module->update = reinterpret_cast<UpdateFn>(symbol(module->handle_, "lumora_script_update"));
     module->destroy = reinterpret_cast<DestroyFn>(symbol(module->handle_, "lumora_script_destroy"));
+    module->collision = reinterpret_cast<CollisionFn>(symbol(module->handle_, "lumora_script_collision"));
     module->lastError = reinterpret_cast<ErrorFn>(symbol(module->handle_, "lumora_script_last_error"));
     if (abi == nullptr || count == nullptr || name == nullptr || module->create == nullptr || module->start == nullptr ||
-        module->update == nullptr || module->destroy == nullptr || module->lastError == nullptr) {
+        module->update == nullptr || module->destroy == nullptr || module->lastError == nullptr ||
+        module->collision == nullptr) {
         return makeError("{} is not a Lumora game library (entry points missing)", library.string());
     }
     if (abi() != LUMORA_SCRIPT_ABI) {
@@ -221,6 +324,15 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.setTransform = apiSetTransform;
     api_.keyDown = apiKeyDown;
     api_.time = apiTime;
+    api_.getVelocity = apiGetVelocity;
+    api_.setVelocity = apiSetVelocity;
+    api_.addForce = apiAddForce;
+    api_.raycast = apiRaycast;
+    api_.clone = apiClone;
+    api_.destroy = apiDestroy;
+    api_.mouseDown = apiMouseDown;
+    api_.mouseDelta = apiMouseDelta;
+    api_.parameter = apiParameter;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }
@@ -232,35 +344,101 @@ void ScriptRunner::reportFailure(const Instance& instance, const char* phase) {
                message != nullptr ? message : "?");
 }
 
+bool ScriptRunner::createInstance(entt::entity e, const ScriptComponent& script) {
+    const auto id = static_cast<script::Entity>(entt::to_integral(e));
+    scripted_.insert(id);
+    if (script.behaviour.empty() || !module_) return false;
+    const int index = module_->find(script.behaviour);
+    if (index < 0) {
+        log::warn("Script", "no behaviour named '{}' in the game library (entity '{}')", script.behaviour,
+                  apiName(&context_, id) != nullptr ? context_.nameScratch : std::string("?"));
+        return false;
+    }
+    void* object = module_->create(static_cast<std::uint32_t>(index), &api_, id);
+    if (object == nullptr) {
+        log::error("Script", "creating {} failed: {}", script.behaviour, module_->lastError());
+        return false;
+    }
+    instances_.push_back({id, script.behaviour, object});
+    return true;
+}
+
 void ScriptRunner::createInstances() {
     created_ = true;
+    scripted_.clear();
     if (!module_) return;
-    for (auto [e, script] : scene_.registry().view<ScriptComponent>().each()) {
-        if (script.behaviour.empty()) continue;
-        const int index = module_->find(script.behaviour);
-        const auto id = static_cast<script::Entity>(entt::to_integral(e));
-        if (index < 0) {
-            log::warn("Script", "no behaviour named '{}' in the game library (entity '{}')", script.behaviour,
-                      apiName(&context_, id) != nullptr ? context_.nameScratch : std::string("?"));
-            continue;
-        }
-        void* object = module_->create(static_cast<std::uint32_t>(index), &api_, id);
-        if (object == nullptr) {
-            log::error("Script", "creating {} failed: {}", script.behaviour, module_->lastError());
-            continue;
-        }
-        instances_.push_back({id, script.behaviour, object});
-    }
+    const std::size_t first = instances_.size();
+    for (auto [e, script] : scene_.registry().view<ScriptComponent>().each()) createInstance(e, script);
     // start() after every instance exists, so behaviours can find each other's entities.
+    for (std::size_t i = first; i < instances_.size();) {
+        if (module_->start(instances_[i].object) != 0) {
+            reportFailure(instances_[i], "start");
+            module_->destroy(instances_[i].object);
+            instances_.erase(instances_.begin() + static_cast<std::ptrdiff_t>(i));
+        } else {
+            ++i;
+        }
+    }
+}
+
+void ScriptRunner::startNewInstances() {
+    if (!module_) return;
+    std::vector<entt::entity> fresh;
+    for (auto [e, script] : scene_.registry().view<ScriptComponent>().each()) {
+        if (!scripted_.contains(static_cast<std::uint64_t>(entt::to_integral(e)))) fresh.push_back(e);
+    }
+    const std::size_t first = instances_.size();
+    for (entt::entity e : fresh) createInstance(e, scene_.registry().get<ScriptComponent>(e));
+    for (std::size_t i = first; i < instances_.size();) {
+        if (module_->start(instances_[i].object) != 0) {
+            reportFailure(instances_[i], "start");
+            module_->destroy(instances_[i].object);
+            instances_.erase(instances_.begin() + static_cast<std::ptrdiff_t>(i));
+        } else {
+            ++i;
+        }
+    }
+}
+
+void ScriptRunner::finishStep() {
+    // Entities destroyed by scripts go now, outside any behaviour's update.
+    auto pending = std::exchange(context_.pendingDestroy, {});
+    for (entt::entity e : pending) {
+        if (scene_.registry().valid(e)) scene_.destroyEntity(e);
+    }
+    // Their instances (and those of destroyed children) stop.
     for (auto it = instances_.begin(); it != instances_.end();) {
-        if (module_->start(it->object) != 0) {
-            reportFailure(*it, "start");
+        if (!scene_.registry().valid(toEntity(it->entity))) {
             module_->destroy(it->object);
+            scripted_.erase(it->entity);
             it = instances_.erase(it);
         } else {
             ++it;
         }
     }
+    startNewInstances();  // clones made this step
+}
+
+void ScriptRunner::dispatchCollisions(const std::vector<std::pair<entt::entity, entt::entity>>& pairs) {
+    if (!module_ || pairs.empty() || instances_.empty()) return;
+    auto notify = [&](entt::entity self, entt::entity other) {
+        const auto selfId = static_cast<std::uint64_t>(entt::to_integral(self));
+        const auto otherId = static_cast<script::Entity>(entt::to_integral(other));
+        for (std::size_t i = 0; i < instances_.size(); ++i) {
+            if (instances_[i].entity != selfId) continue;
+            if (module_->collision(instances_[i].object, otherId) != 0) {
+                reportFailure(instances_[i], "onCollision");
+                module_->destroy(instances_[i].object);
+                instances_.erase(instances_.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+            return;
+        }
+    };
+    for (const auto& [a, b] : pairs) {
+        notify(a, b);
+        notify(b, a);
+    }
+    finishStep();  // collision handlers may destroy or clone too
 }
 
 void ScriptRunner::destroyInstances() {
@@ -268,25 +446,28 @@ void ScriptRunner::destroyInstances() {
         for (const Instance& instance : instances_) module_->destroy(instance.object);
     }
     instances_.clear();
+    scripted_.clear();
 }
 
 void ScriptRunner::update(float dt, double simulatedSeconds) {
     context_.time = simulatedSeconds;
     if (!created_) createInstances();
-    for (auto it = instances_.begin(); it != instances_.end();) {
-        if (!scene_.registry().valid(toEntity(it->entity))) {  // entity removed meanwhile
-            module_->destroy(it->object);
-            it = instances_.erase(it);
+    // Index loop: behaviours may clone entities (appending instances only in finishStep).
+    for (std::size_t i = 0; i < instances_.size();) {
+        Instance& instance = instances_[i];
+        if (!scene_.registry().valid(toEntity(instance.entity))) {
+            ++i;  // removed by finishStep
             continue;
         }
-        if (module_->update(it->object, dt) != 0) {
-            reportFailure(*it, "update");
-            module_->destroy(it->object);
-            it = instances_.erase(it);
+        if (module_->update(instance.object, dt) != 0) {
+            reportFailure(instance, "update");
+            module_->destroy(instance.object);
+            instances_.erase(instances_.begin() + static_cast<std::ptrdiff_t>(i));
         } else {
-            ++it;
+            ++i;
         }
     }
+    finishStep();
 }
 
 void ScriptRunner::reload(std::shared_ptr<ScriptModule> module) {

@@ -18,6 +18,10 @@
 //     };
 //     LUMORA_BEHAVIOUR(Bobber);
 //
+// Behaviours can also drive physics (addForce, addImpulse, setVelocity, raycast), react to
+// collisions (onCollision), clone and destroy entities, read the keyboard and mouse, and read
+// numbers from the Script component's Parameters field (param("speed", 4.0f)).
+//
 // then add a Script component with Behaviour "Bobber" to an entity and press Play. The editor
 // compiles Scripts/*.cpp into a shared library and reloads it whenever a file changes, also
 // during play (behaviours are then created again and start() runs again).
@@ -33,7 +37,7 @@
 #include <string_view>
 #include <vector>
 
-#define LUMORA_SCRIPT_ABI 1u
+#define LUMORA_SCRIPT_ABI 2u
 
 namespace lumora::script {
 
@@ -60,6 +64,16 @@ enum class Key : int {
 using Entity = std::uint64_t;
 inline constexpr Entity kNoEntity = ~Entity{0};
 
+enum class MouseButton : int { Left, Right, Middle };
+
+/// Result of Behaviour::raycast.
+struct RayHit {
+    Entity entity = ~Entity{0};
+    Vec3 point;
+    Vec3 normal;
+    float distance = 0.0f;
+};
+
 /// Services of the engine, as plain C function pointers (stable for one LUMORA_SCRIPT_ABI).
 struct EngineApi {
     std::uint32_t abi;
@@ -72,6 +86,16 @@ struct EngineApi {
     int (*setTransform)(void* context, Entity entity, int which, const float* xyz);
     int (*keyDown)(void* context, int key);
     double (*time)(void* context);  // simulated seconds since Play
+    // ABI 2: physics, entities, mouse, parameters.
+    int (*getVelocity)(void* context, Entity entity, float* xyz);        // 0 if no dynamic body
+    int (*setVelocity)(void* context, Entity entity, const float* xyz);
+    int (*addForce)(void* context, Entity entity, const float* xyz, int impulse);
+    int (*raycast)(void* context, const float* origin, const float* direction, float maxDistance, RayHit* hit);
+    Entity (*clone)(void* context, Entity source);  // copy with children and components
+    void (*destroy)(void* context, Entity entity);  // removed at the end of the step
+    int (*mouseDown)(void* context, int button);
+    void (*mouseDelta)(void* context, float* xy);  // pixels moved this frame
+    double (*parameter)(void* context, Entity entity, const char* name, double fallback);
 };
 
 class Behaviour;
@@ -98,6 +122,8 @@ public:
     virtual ~Behaviour() = default;
     virtual void start() {}
     virtual void update(float dt) { (void)dt; }
+    /// This entity's body started touching another one (needs Collider components).
+    virtual void onCollision(Entity other) { (void)other; }
 
 protected:
     [[nodiscard]] Entity entity() const { return entity_; }
@@ -119,7 +145,46 @@ protected:
     [[nodiscard]] Vec3 positionOf(Entity e) const { return get(e, 0); }
     void setPositionOf(Entity e, Vec3 v) const { set(e, 0, v); }
 
+    // Physics (dynamic Rigid Body + Collider). Forces in newtons, impulses in newton-seconds.
+    [[nodiscard]] Vec3 velocity() const {
+        float v[3] = {0.0f, 0.0f, 0.0f};
+        api_->getVelocity(api_->context, entity_, v);
+        return {v[0], v[1], v[2]};
+    }
+    void setVelocity(Vec3 v) const {
+        const float xyz[3] = {v.x, v.y, v.z};
+        api_->setVelocity(api_->context, entity_, xyz);
+    }
+    void addForce(Vec3 f) const { push(f, 0); }
+    void addImpulse(Vec3 i) const { push(i, 1); }
+    /// Closest collider along a ray; false if nothing within maxDistance.
+    bool raycast(Vec3 origin, Vec3 direction, float maxDistance, RayHit& hit) const {
+        const float o[3] = {origin.x, origin.y, origin.z};
+        const float d[3] = {direction.x, direction.y, direction.z};
+        return api_->raycast(api_->context, o, d, maxDistance, &hit) != 0;
+    }
+
+    // Entities
+    /// Copies an entity (with its children and components, including scripts) into the scene.
+    [[nodiscard]] Entity clone(Entity source) const { return api_->clone(api_->context, source); }
+    /// Removes an entity (and its children) at the end of this step.
+    void destroy(Entity e) const { api_->destroy(api_->context, e); }
+
+    /// A number from the Script component's Parameters field ("speed=4, jump=6").
+    [[nodiscard]] float param(std::string_view key, float fallback) const {
+        return static_cast<float>(api_->parameter(api_->context, entity_, std::string(key).c_str(), fallback));
+    }
+
     [[nodiscard]] bool keyDown(Key key) const { return api_->keyDown(api_->context, static_cast<int>(key)) != 0; }
+    [[nodiscard]] bool mouseDown(MouseButton button) const {
+        return api_->mouseDown(api_->context, static_cast<int>(button)) != 0;
+    }
+    /// Pixels the mouse moved this frame.
+    [[nodiscard]] Vec3 mouseDelta() const {
+        float xy[2] = {0.0f, 0.0f};
+        api_->mouseDelta(api_->context, xy);
+        return {xy[0], xy[1], 0.0f};
+    }
     [[nodiscard]] double time() const { return api_->time(api_->context); }
     void log(std::string_view message) const { api_->log(api_->context, 0, std::string(message).c_str()); }
     void warn(std::string_view message) const { api_->log(api_->context, 1, std::string(message).c_str()); }
@@ -130,6 +195,10 @@ private:
         float v[3] = {0.0f, 0.0f, 0.0f};
         api_->getTransform(api_->context, e, which, v);
         return {v[0], v[1], v[2]};
+    }
+    void push(Vec3 f, int impulse) const {
+        const float xyz[3] = {f.x, f.y, f.z};
+        api_->addForce(api_->context, entity_, xyz, impulse);
     }
     void set(Entity e, int which, Vec3 value) const {
         const float v[3] = {value.x, value.y, value.z};

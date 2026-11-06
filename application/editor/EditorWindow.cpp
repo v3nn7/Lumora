@@ -21,6 +21,7 @@
 #include "runtime/Scripting.hpp"
 #include "runtime/Simulation.hpp"
 #include "assets/AssetImport.hpp"
+#include "assets/Image.hpp"
 #include "collab/CollabClient.hpp"
 #include "collab/CollabServer.hpp"
 #include "collab/HostIdentity.hpp"
@@ -330,6 +331,7 @@ void EditorWindow::onRenderFailed(const QString& message) {
 void EditorWindow::buildDocks() {
     auto* hierarchy = makeDock(this, tr("Hierarchy"), QStringLiteral("dock.hierarchy"), QStringLiteral("hierarchy"), new SceneHierarchyPanel(ctx_));
     auto* inspector = makeDock(this, tr("Inspector"), QStringLiteral("dock.inspector"), QStringLiteral("settings"), new InspectorPanel(ctx_, [this](QWidget* parent, const FieldDesc& field) {
+                     if (field.id == "skyHdr") return pickHdrAsset(parent);
                      return field.id.ends_with("Texture") ? pickTextureAsset(parent) : pickMeshAsset(parent);
                  }));
     auto* content = new ContentBrowserPanel(app::toQString(project_.contentDir()));
@@ -600,6 +602,18 @@ void EditorWindow::importModelDialog() {
 
 void EditorWindow::importModels(const QStringList& files, const QString& targetDir) {
     for (const QString& file : files) {
+        if (isHdrFile(app::toPath(file))) {
+            // An HDR environment becomes the scene's sky (undoable like any environment edit).
+            auto copied = importFile(app::toPath(file), project_.contentDir() / "Textures");
+            if (!copied) {
+                QMessageBox::critical(this, tr("Import failed"), QString::fromStdString(copied.error().message));
+                continue;
+            }
+            const std::string key = project_.relativePath(*copied);
+            ctx_.setEnvironment(tr("Set HDR Sky"), [&key](EnvironmentSettings& env) { env.skyTexture = key; });
+            log::info("Editor", "sky set to {}", key);
+            continue;
+        }
         auto imported = importModelFile(app::toPath(file), app::toPath(targetDir));
         if (!imported) {
             QMessageBox::critical(this, tr("Import failed"), QString::fromStdString(imported.error().message));
@@ -674,6 +688,27 @@ std::optional<std::string> EditorWindow::pickMeshAsset(QWidget* parent) {
         index = static_cast<int>(names.indexOf(chosen));
     }
     return AssetLibrary::meshKey(relative, index);
+}
+
+std::optional<std::string> EditorWindow::pickHdrAsset(QWidget* parent) {
+    const QString file = QFileDialog::getOpenFileName(parent, tr("Choose HDR Environment"),
+                                                      app::toQString(project_.contentDir()),
+                                                      tr("Radiance HDR, equirectangular (*.hdr)"));
+    if (file.isEmpty()) return std::nullopt;
+    std::filesystem::path path = std::filesystem::absolute(app::toPath(file));
+    if (project_.relativePath(path).starts_with("..")) {
+        auto imported = importFile(path, project_.contentDir() / "Textures");
+        if (!imported) {
+            QMessageBox::critical(parent, tr("Import failed"), QString::fromStdString(imported.error().message));
+            return std::nullopt;
+        }
+        path = *imported;
+    }
+    if (auto hdr = loadHdrFile(path); !hdr) {
+        QMessageBox::critical(parent, tr("Cannot use image"), QString::fromStdString(hdr.error().message));
+        return std::nullopt;
+    }
+    return project_.relativePath(path);
 }
 
 std::optional<std::string> EditorWindow::pickTextureAsset(QWidget* parent) {

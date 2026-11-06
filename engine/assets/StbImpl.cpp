@@ -4,6 +4,7 @@
 #define STBI_ONLY_JPEG
 #define STBI_ONLY_TGA
 #define STBI_ONLY_BMP
+#define STBI_ONLY_HDR  // Radiance .hdr environment maps
 #define STBI_NO_STDIO
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push

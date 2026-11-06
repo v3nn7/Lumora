@@ -241,6 +241,16 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     fc.groundColor = glm::vec4(env.groundColor, 0.0f);
     fc.gridParams = glm::vec4(settings.showGrid ? 1.0f : 0.0f, settings.gridCellSize, settings.gridFadeDistance, 0.0f);
     fc.fogParams = glm::vec4(std::max(env.fogDensity, 0.0f), std::max(env.fogHeightFalloff, 1e-4f), 0.97f, 0.0f);
+    // Image-based lighting from the scene's HDR sky (procedural sky until it has loaded).
+    if (!env.skyTexture.empty() && settings.assets != nullptr) {
+        if (const auto* gpu = ctx_.environments().get(*settings.assets, env.skyTexture, settings.blockOnAssets)) {
+            fc.environmentParams = glm::vec4(1.0f, std::max(env.skyIntensity, 0.0f), glm::radians(env.skyRotationDeg),
+                                             static_cast<float>(gpu->specularLevels - 1));
+            fc.environmentTextures = glm::uvec4(gpu->skyIndex, gpu->specularIndex, ctx_.materialSampler(), 0u);
+            for (std::size_t i = 0; i < gpu->irradiance.size(); ++i) fc.irradianceSh[i] = glm::vec4(gpu->irradiance[i], 0.0f);
+            stats.environmentLit = true;
+        }
+    }
 
     std::uint32_t lightCount = 0;
     bool haveSun = false;

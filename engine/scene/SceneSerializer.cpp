@@ -94,6 +94,9 @@ json SceneSerializer::environmentToJson(const EnvironmentSettings& env) {
         {"fogHeightFalloff", env.fogHeightFalloff},
         {"bloomIntensity", env.bloomIntensity},
         {"vignette", env.vignette},
+        {"skyTexture", env.skyTexture},
+        {"skyIntensity", env.skyIntensity},
+        {"skyRotation", env.skyRotationDeg},
     };
 }
 
@@ -116,6 +119,9 @@ void SceneSerializer::applyEnvironment(EnvironmentSettings& env, const json& j) 
     number("fogHeightFalloff", env.fogHeightFalloff);
     number("bloomIntensity", env.bloomIntensity);
     number("vignette", env.vignette);
+    if (const auto it = j.find("skyTexture"); it != j.end() && it->is_string()) env.skyTexture = it->get<std::string>();
+    number("skyIntensity", env.skyIntensity);
+    number("skyRotation", env.skyRotationDeg);
 }
 
 void SceneSerializer::applyComponents(Scene& scene, entt::entity e, const json& componentsJson, bool removeMissing) {

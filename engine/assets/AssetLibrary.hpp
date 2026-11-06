@@ -56,6 +56,8 @@ public:
     /// Absolute-path identities for caches shared across projects (e.g. GPU resources).
     [[nodiscard]] Result<std::string> canonicalKey(std::string_view key) const;
     [[nodiscard]] Result<std::string> canonicalTextureKey(std::string_view key) const;
+    /// Absolute path of a standalone asset file key (e.g. "Content/Textures/Sky.hdr").
+    [[nodiscard]] Result<std::filesystem::path> filePath(std::string_view key) const { return resolveRelative(key, key); }
 
     // ---- Blocking access (importers, tools, offscreen captures) ----------------------------
     [[nodiscard]] Result<const ImportedModel*> model(const std::filesystem::path& absoluteFile);

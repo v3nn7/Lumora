@@ -40,6 +40,9 @@ struct FrameConstants {
     glm::vec4 cascadeTexelWorld{0.0f};      // world size of one shadow texel in each cascade (m)
     glm::vec4 shadowFade{0.0f};             // x distance where shadows start to fade, y where they end
     glm::vec4 fogParams{0.0f};              // x density, y height falloff, z max opacity
+    glm::vec4 environmentParams{0.0f};      // x enabled, y intensity, z rotation (radians), w max specular lod
+    glm::uvec4 environmentTextures{0u};     // x sky, y prefiltered specular (bindless), z sampler
+    glm::vec4 irradianceSh[9]{};            // SH9 irradiance / pi (rgb)
     GpuLight lights[kMaxLights]{};
 };
 
@@ -74,8 +77,8 @@ static_assert(offsetof(FrameConstants, shadowParams) == 656);
 static_assert(offsetof(FrameConstants, cascadeTexelWorld) == 672);
 static_assert(offsetof(FrameConstants, shadowFade) == 688);
 static_assert(offsetof(FrameConstants, fogParams) == 704);
-static_assert(offsetof(FrameConstants, lights) == 720);
-static_assert(sizeof(FrameConstants) == 720 + 48 * kMaxLights);
+static_assert(offsetof(FrameConstants, lights) == 896);
+static_assert(sizeof(FrameConstants) == 896 + 48 * kMaxLights);
 static_assert(sizeof(GpuObject) == 192);
 static_assert(offsetof(GpuObject, textures) == 176);
 static_assert(offsetof(GpuObject, flags) == 160);

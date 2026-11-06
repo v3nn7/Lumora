@@ -388,3 +388,62 @@ TEST_F(RendererTest, ParallelRecordingMatchesSerial) {
     for (std::size_t i = 0; i < one->rgba.size(); ++i) differing += one->rgba[i] != many->rgba[i] ? 1 : 0;
     EXPECT_EQ(differing, 0u) << "parallel recording must not change the image";
 }
+
+// ---- Image-based lighting -------------------------------------------------------------------
+
+#include <stb_image_write.h>
+
+TEST_F(RendererTest, HdrEnvironmentLightsTheSceneAndDrawsTheSky) {
+    // Red sky above, blue ground below, no lights: a rough white sphere is lit only by the
+    // environment (reddish on top, bluish underneath) and the background shows the HDR.
+    test::TempDir project;
+    std::filesystem::create_directories(project.path() / "Content" / "Textures");
+    constexpr int kW = 128, kH = 64;
+    std::vector<float> rgb(kW * kH * 3, 0.0f);
+    for (int y = 0; y < kH; ++y) {
+        for (int x = 0; x < kW; ++x) {
+            float* p = &rgb[(y * kW + x) * 3];
+            if (y < kH / 2) {
+                p[0] = 2.0f;
+            } else {
+                p[2] = 2.0f;
+            }
+        }
+    }
+    const auto file = project.path() / "Content" / "Textures" / "split.hdr";
+    ASSERT_NE(stbi_write_hdr(file.string().c_str(), kW, kH, 3, rgb.data()), 0);
+
+    auto scene = std::make_unique<Scene>("Env");
+    const entt::entity ball = scene->createEntity("Ball");
+    auto& mesh = scene->registry().emplace<MeshRendererComponent>(ball);
+    mesh.mesh = MeshPrimitive::Sphere;
+    mesh.baseColor = glm::vec3(0.9f);
+    mesh.roughness = 1.0f;
+    scene->environment().skyTexture = "Content/Textures/split.hdr";
+    scene->environment().ambientIntensity = 1.0f;
+    scene->environment().fogDensity = 0.0f;
+    scene->updateWorldTransforms();
+
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.0f, 3.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    AssetLibrary assets(project.path());
+    RenderSettings settings;
+    settings.assets = &assets;
+    settings.blockOnAssets = true;
+    settings.bloom = false;
+    auto image = renderer_->capture(*scene, cam.view(1.0f), {96, 96}, settings);
+    ASSERT_TRUE(image.has_value()) << image.error().message;
+    EXPECT_TRUE(renderer_->stats().scene.environmentLit);
+
+    const auto top = pixel(*image, 48, 36);     // upper part of the sphere
+    const auto bottom = pixel(*image, 48, 60);  // lower part
+    EXPECT_GT(top.r, top.b + 30) << "the upper hemisphere sees the red sky";
+    EXPECT_GT(bottom.b, bottom.r + 30) << "the lower hemisphere sees the blue ground";
+    const auto skyAbove = pixel(*image, 48, 2);
+    const auto skyBelow = pixel(*image, 48, 93);
+    EXPECT_GT(skyAbove.r, 150);
+    EXPECT_LT(skyAbove.b, 40);
+    EXPECT_GT(skyBelow.b, 150);
+    EXPECT_LT(skyBelow.r, 40);
+}

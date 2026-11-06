@@ -170,8 +170,9 @@ EnvironmentMap prefilterEnvironment(const HdrImage& image) {
     env.specular[0] = source[0];
     for (std::uint32_t level = 1; level < kEnvironmentSpecularLevels; ++level) {
         Level& out = env.specular[level];
-        out.width = std::max(source[0].width >> level, 8u);
-        out.height = std::max(source[0].height >> level, 4u);
+        // Exactly the GPU mip chain of the base (max(1, size >> level)): uploaded as its mips.
+        out.width = std::max(source[0].width >> level, 1u);
+        out.height = std::max(source[0].height >> level, 1u);
         out.rgb.resize(static_cast<std::size_t>(out.width) * out.height * 3);
         const float roughness = static_cast<float>(level) / static_cast<float>(kEnvironmentSpecularLevels - 1);
         const std::uint32_t samples = level < 3 ? 96u : 64u;

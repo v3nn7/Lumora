@@ -7,6 +7,11 @@ FullscreenOut VSMain(uint id : SV_VertexID) {
 
 float4 PSMain(FullscreenOut input) : SV_Target0 {
     float3 dir = viewRay(input.uv);
+#if defined(LUMORA_STAGE_FRAG)
+    if (environmentEnabled()) {
+        return float4(environmentSky(dir), 1.0);  // the HDR carries its own sun
+    }
+#endif
     float3 color = skyGradient(dir);
     if (gFrame.sunDirection.w > 0.0) {
         float d = dot(dir, gFrame.sunDirection.xyz);

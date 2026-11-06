@@ -1,6 +1,7 @@
 #pragma once
 
 #include "renderer/MeshCache.hpp"
+#include "renderer/EnvironmentCache.hpp"
 #include "renderer/TextureCache.hpp"
 #include "renderer/vulkan/BindlessTable.hpp"
 #include "renderer/vulkan/Device.hpp"
@@ -45,6 +46,7 @@ public:
     [[nodiscard]] rhi::PipelineCache& pipelineCache() noexcept { return *pipelineCache_; }
     [[nodiscard]] MeshCache& meshes() noexcept { return *meshes_; }
     [[nodiscard]] TextureCache& textures() noexcept { return *textures_; }
+    [[nodiscard]] EnvironmentCache& environments() noexcept { return *environments_; }
 
     [[nodiscard]] VkDescriptorSetLayout frameSetLayout() const noexcept { return frameSetLayout_.get(); }
     [[nodiscard]] VkPipelineLayout pipelineLayout() const noexcept { return pipelineLayout_.get(); }
@@ -67,6 +69,7 @@ private:
     std::unique_ptr<rhi::PipelineCache> pipelineCache_;
     std::unique_ptr<MeshCache> meshes_;
     std::unique_ptr<TextureCache> textures_;
+    std::unique_ptr<EnvironmentCache> environments_;
     rhi::UniqueDescriptorSetLayout frameSetLayout_;
     rhi::UniquePipelineLayout pipelineLayout_;
     rhi::UniqueSampler linearClamp_;

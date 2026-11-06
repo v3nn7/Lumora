@@ -133,19 +133,31 @@ float3 evaluateAmbient(Surface s) {
     float3 F = fresnelSchlickRoughness(NdotV, F0, s.roughness);
     float2 envBrdf = environmentBrdf(NdotV, s.roughness);
 
-    // Irradiance / pi of the sky around the normal. The 0.5 stands in for ambient occlusion:
-    // nothing else darkens ambient light yet, and full sky light would flatten every shadow.
-    float3 skyAroundNormal = skyAverage(s.normal, 0.8);
-    float3 diffuse = (1.0 - F) * (1.0 - s.metallic) * s.albedo * skyAroundNormal * 0.5;
-
     float alpha = s.roughness * s.roughness;
     float3 R = reflect(-s.view, s.normal);
     // Rough lobes lean towards the normal (Frostbite's dominant direction).
     float lean = (1.0 - alpha) * (sqrt(1.0 - alpha) + alpha);
     float3 dominant = normalize(lerp(s.normal, R, lean));
-    // Sharp lobes see the sky in one direction; wide ones approach the average around the
-    // normal, which is already computed (one extra sky evaluation instead of a second average).
-    float3 envSpecular = lerp(skyGradient(dominant), skyAroundNormal, saturate(alpha * 1.6));
+
+    float3 diffuseLight;
+    float3 envSpecular;
+#if defined(LUMORA_STAGE_FRAG)
+    if (environmentEnabled()) {
+        // HDR environment: SH9 irradiance and the GGX-prefiltered mip for this roughness.
+        diffuseLight = environmentIrradiance(s.normal);
+        envSpecular = environmentRadiance(dominant, s.roughness * gFrame.environmentParams.w);
+    } else
+#endif
+    {
+        // Procedural sky. The 0.5 stands in for ambient occlusion: nothing else darkens ambient
+        // light yet, and full sky light would flatten every shadow.
+        float3 skyAroundNormal = skyAverage(s.normal, 0.8);
+        diffuseLight = skyAroundNormal * 0.5;
+        // Sharp lobes see the sky in one direction; wide ones approach the average around the
+        // normal, which is already computed (one extra sky evaluation instead of a second average).
+        envSpecular = lerp(skyGradient(dominant), skyAroundNormal, saturate(alpha * 1.6));
+    }
+    float3 diffuse = (1.0 - F) * (1.0 - s.metallic) * s.albedo * diffuseLight;
     float3 specular = envSpecular * (F0 * envBrdf.x + envBrdf.y) * energyCompensation(envBrdf, F0);
     specular *= horizonOcclusion(R, s.geometricNormal);
     return (diffuse + specular) * gFrame.skyZenith.w;

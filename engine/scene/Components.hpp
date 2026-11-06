@@ -127,6 +127,11 @@ struct EnvironmentSettings {
     float fogHeightFalloff = 0.12f;   // fog thins out with altitude
     float bloomIntensity = 0.05f;     // fraction of the blurred image mixed back in
     float vignette = 0.35f;
+    // Image-based lighting: an equirectangular .hdr replaces the procedural sky and lights the
+    // scene (reflections and ambient). Empty = procedural sky.
+    std::string skyTexture;
+    float skyIntensity = 1.0f;
+    float skyRotationDeg = 0.0f;  // turns the environment around the vertical axis
 };
 
 } // namespace lumora

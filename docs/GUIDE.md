@@ -177,6 +177,22 @@ Select nothing to edit the **scene environment** in the Inspector:
 | Atmosphere | Height fog density and falloff |
 | Post Processing | Exposure, bloom, vignette |
 
+### Environment maps (HDR sky)
+
+An equirectangular **.hdr** image can replace the procedural sky and light the whole scene:
+reflections, ambient light and fog all take their colour from it. Free, high-quality ones are on
+[Poly Haven](https://polyhaven.com/hdris) (CC0); pick the 2K or 4K `.hdr` version.
+
+- Drop the file on the Content Browser (or double-click one in it, or right-click → *Use as
+  Sky*), or select nothing and pick it under **Environment Map → HDR Sky** in the Inspector.
+- **Intensity** scales the light, **Rotation** turns the environment around the vertical axis.
+- The map is prefiltered in the background when the scene opens (a fraction of a second for a
+  2K image); until then the procedural sky is shown.
+- The HDR carries its own sun. Keep a Directional Light for sharp shadows and align it with the
+  sun in the image (rotate one or the other), or remove the light for soft, shadowless lighting.
+- **Ambient** (Sky and Ambient) still scales the environment's ambient light: 1 is physically
+  correct.
+
 ### Physics
 
 Give an entity a **Collider** (box, sphere or capsule) to make it solid. Add a **Rigid Body** to

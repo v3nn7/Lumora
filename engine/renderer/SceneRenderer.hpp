@@ -51,6 +51,7 @@ struct SceneDrawStats {
     std::uint32_t lights = 0;
     bool parallelRecording = false;  // a pass was set up to record on several threads
     bool shadowsRendered = false;
+    bool environmentLit = false;  // an HDR environment lit the frame
 };
 
 /// Orthographic sun transform covering the camera frustum up to `distance` (one cascade),

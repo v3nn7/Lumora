@@ -26,6 +26,8 @@ bool isModel(const QFileInfo& info) {
     return info.suffix().compare(QLatin1String("glb"), Qt::CaseInsensitive) == 0 ||
            info.suffix().compare(QLatin1String("gltf"), Qt::CaseInsensitive) == 0;
 }
+/// Equirectangular HDR environment: dropping or opening one makes it the scene's sky.
+bool isHdr(const QFileInfo& info) { return info.suffix().compare(QLatin1String("hdr"), Qt::CaseInsensitive) == 0; }
 
 class AssetIconProvider final : public QFileIconProvider {
 public:
@@ -92,6 +94,8 @@ ContentBrowserPanel::ContentBrowserPanel(const QString& contentRoot, QWidget* pa
             emit openSceneRequested(info.absoluteFilePath());
         } else if (isModel(info)) {
             emit addModelRequested(info.absoluteFilePath());
+        } else if (isHdr(info)) {
+            emit importRequested({info.absoluteFilePath()}, current_);
         } else {
             QDesktopServices::openUrl(QUrl::fromLocalFile(info.absoluteFilePath()));
         }
@@ -136,7 +140,8 @@ bool ContentBrowserPanel::eventFilter(QObject* watched, QEvent* event) {
             auto* drop = static_cast<QDropEvent*>(event);
             QStringList files;
             for (const QUrl& url : drop->mimeData()->urls()) {
-                if (url.isLocalFile() && isModel(QFileInfo(url.toLocalFile()))) files << url.toLocalFile();
+                const QFileInfo dropped(url.toLocalFile());
+                if (url.isLocalFile() && (isModel(dropped) || isHdr(dropped))) files << url.toLocalFile();
             }
             if (!files.isEmpty()) emit importRequested(files, current_);
             drop->acceptProposedAction();
@@ -154,6 +159,10 @@ void ContentBrowserPanel::showContextMenu(const QPoint& pos) {
         if (info.suffix() == QLatin1String("lscene")) {
             menu.addAction(app::theme::icon(QStringLiteral("scene")), tr("Open Scene"),
                            [this, info] { emit openSceneRequested(info.absoluteFilePath()); });
+        }
+        if (isHdr(info)) {
+            menu.addAction(app::theme::icon(QStringLiteral("sun")), tr("Use as Sky"),
+                           [this, info] { emit importRequested({info.absoluteFilePath()}, current_); });
         }
         if (isModel(info)) {
             menu.addAction(app::theme::icon(QStringLiteral("cube")), tr("Add to Scene"),

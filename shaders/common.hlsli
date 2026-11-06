@@ -34,6 +34,9 @@ struct FrameData {
     float4 cascadeTexelWorld;   // world size of one shadow texel per cascade (m)
     float4 shadowFade;          // x distance where shadows start fading out, y where they are gone
     float4 fogParams;           // x density, y height falloff, z max opacity
+    float4 environmentParams;   // x enabled, y intensity, z rotation (radians), w max specular lod
+    uint4 environmentTextures;  // x sky, y prefiltered specular (bindless), z sampler
+    float4 irradianceSh[9];     // SH9 irradiance / pi
     GpuLight lights[MAX_LIGHTS];
 };
 
@@ -94,6 +97,52 @@ float3 skyGradient(float3 dir) {
     return color;
 }
 
+// ---- Image-based lighting (an equirectangular HDR environment) ------------------------------
+// Fragment stage only: glslang mis-optimises the bindless texture array when a vertex shader
+// merely contains a function that samples it.
+
+bool environmentEnabled() { return gFrame.environmentParams.x > 0.5; }
+
+#if defined(LUMORA_STAGE_FRAG)
+/// Equirectangular uv of a world direction, turned by the environment rotation.
+float2 environmentUv(float3 dir) {
+    float s = sin(gFrame.environmentParams.z);
+    float c = cos(gFrame.environmentParams.z);
+    float3 d = float3(c * dir.x + s * dir.z, dir.y, -s * dir.x + c * dir.z);
+    return float2(0.5 + atan2(d.x, -d.z) / (2.0 * PI), acos(clamp(d.y, -1.0, 1.0)) / PI);
+}
+
+/// Radiance of the environment in a direction; lod 0 is the sharp sky, higher lods are the
+/// GGX-prefiltered levels (lod = roughness * max lod).
+float3 environmentRadiance(float3 dir, float lod) {
+    float2 uv = environmentUv(dir);
+    uint smp = gFrame.environmentTextures.z;
+    return gTextures[gFrame.environmentTextures.y].SampleLevel(gSamplers[smp], uv, lod).rgb * gFrame.environmentParams.y;
+}
+
+float3 environmentSky(float3 dir) {
+    float2 uv = environmentUv(dir);
+    uint smp = gFrame.environmentTextures.z;
+    return gTextures[gFrame.environmentTextures.x].SampleLevel(gSamplers[smp], uv, 0.0).rgb * gFrame.environmentParams.y;
+}
+
+/// Irradiance / pi of the environment around a normal (SH9, rotated like the environment).
+float3 environmentIrradiance(float3 n) {
+    float s = sin(gFrame.environmentParams.z);
+    float c = cos(gFrame.environmentParams.z);
+    float3 d = float3(c * n.x + s * n.z, n.y, -s * n.x + c * n.z);
+    float basis[9] = {0.282095, 0.488603 * d.y, 0.488603 * d.z, 0.488603 * d.x, 1.092548 * d.x * d.y,
+                      1.092548 * d.y * d.z, 0.315392 * (3.0 * d.z * d.z - 1.0), 1.092548 * d.x * d.z,
+                      0.546274 * (d.x * d.x - d.y * d.y)};
+    float3 e = 0.0.xxx;
+    [unroll] for (int i = 0; i < 9; ++i) {
+        e += gFrame.irradianceSh[i].rgb * basis[i];
+    }
+    return max(e, 0.0.xxx) * gFrame.environmentParams.y;
+}
+
+#endif  // LUMORA_STAGE_FRAG
+
 /// Exponential height fog (aerial perspective) between the camera and a world-space point,
 /// coloured by the sky in that direction so distant geometry dissolves into the horizon.
 float fogAmount(float3 worldPosition) {
@@ -119,7 +168,13 @@ float3 applyFog(float3 color, float3 worldPosition) {
         return color;
     }
     float3 dir = normalize(worldPosition - gFrame.cameraPositionTime.xyz);
-    float3 fogColor = skyGradient(float3(dir.x, max(dir.y, 0.02), dir.z));
+    float3 fogDir = float3(dir.x, max(dir.y, 0.02), dir.z);
+    // With an environment map the fog takes its blurred colour, so distance fades into the sky.
+#if defined(LUMORA_STAGE_FRAG)
+    float3 fogColor = environmentEnabled() ? environmentRadiance(fogDir, gFrame.environmentParams.w) : skyGradient(fogDir);
+#else
+    float3 fogColor = skyGradient(fogDir);
+#endif
     return lerp(color, fogColor, amount);
 }
 

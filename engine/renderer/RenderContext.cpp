@@ -105,6 +105,7 @@ RenderContext::RenderContext(const RenderContextConfig& config) {
 
     meshes_ = std::make_unique<MeshCache>(*uploads_);
     textures_ = std::make_unique<TextureCache>(*uploads_, *bindless_);
+    environments_ = std::make_unique<EnvironmentCache>(*uploads_, *bindless_);
 }
 
 RenderContext::~RenderContext() {

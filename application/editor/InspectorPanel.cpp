@@ -187,12 +187,14 @@ void InspectorPanel::buildEnvironment() {
         float min, max, step;
         std::function<FieldValue(const EnvironmentSettings&)> get;
         std::function<void(EnvironmentSettings&, const FieldValue&)> set;
+        const char* id = "";  // asset pickers choose by id
     };
     auto addSection = [this](const QString& sectionTitle, const QString& iconName, std::span<const EnvField> fields) {
         auto* section = new Section(sectionTitle, app::theme::icon(iconName), false);
         auto* form = makeForm(section->body());
         for (const EnvField& f : fields) {
             FieldDesc desc;
+            desc.id = f.id;
             desc.kind = f.kind;
             desc.min = f.min;
             desc.max = f.max;
@@ -232,7 +234,16 @@ void InspectorPanel::buildEnvironment() {
         {"Vignette", FieldKind::Float, 0, 1, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.vignette); },
          [](EnvironmentSettings& e, const FieldValue& v) { e.vignette = std::get<float>(v); }},
     };
+    const EnvField environmentMap[] = {
+        {"HDR Sky", FieldKind::Asset, 0, 0, 0, [](const EnvironmentSettings& e) { return FieldValue(e.skyTexture); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.skyTexture = std::get<std::string>(v); }, "skyHdr"},
+        {"Intensity", FieldKind::Float, 0, 20, 0.05f, [](const EnvironmentSettings& e) { return FieldValue(e.skyIntensity); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.skyIntensity = std::get<float>(v); }},
+        {"Rotation", FieldKind::Float, -180, 180, 1, [](const EnvironmentSettings& e) { return FieldValue(e.skyRotationDeg); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.skyRotationDeg = std::get<float>(v); }},
+    };
     addSection(tr("Sky and Ambient"), QStringLiteral("sun"), sky);
+    addSection(tr("Environment Map"), QStringLiteral("sphere"), environmentMap);
     addSection(tr("Atmosphere"), QStringLiteral("sparkle"), atmosphere);
     addSection(tr("Post Processing"), QStringLiteral("chart"), post);
 }

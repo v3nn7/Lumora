@@ -33,6 +33,12 @@ public:
     [[nodiscard]] Image uploadImage(std::span<const std::byte> rgba, VkExtent2D extent, VkFormat format, bool mipmaps,
                                     const char* name);
 
+    /// Creates a sampled 2D image whose mip levels are given explicitly (each tightly packed,
+    /// `texelBytes` per texel; level i must be extents[i]). Ends in SHADER_READ_ONLY_OPTIMAL.
+    [[nodiscard]] Image uploadImageLevels(std::span<const std::span<const std::byte>> levels,
+                                          std::span<const VkExtent2D> extents, VkFormat format,
+                                          std::uint32_t texelBytes, const char* name);
+
     [[nodiscard]] VkSemaphore timeline() const noexcept { return timeline_.get(); }
     /// Highest value signalled by a submitted upload (0 if none).
     [[nodiscard]] std::uint64_t lastSubmittedValue() const noexcept { return lastSubmitted_; }

@@ -144,6 +144,68 @@ Image UploadQueue::uploadImage(std::span<const std::byte> rgba, VkExtent2D exten
     return image;
 }
 
+Image UploadQueue::uploadImageLevels(std::span<const std::span<const std::byte>> levels,
+                                     std::span<const VkExtent2D> extents, VkFormat format, std::uint32_t texelBytes,
+                                     const char* name) {
+    std::scoped_lock lock(mutex_);
+    if (levels.empty() || levels.size() != extents.size()) {
+        throw VulkanError("uploadImageLevels: one extent per level is required", VK_ERROR_UNKNOWN);
+    }
+    std::size_t total = 0;
+    for (std::size_t i = 0; i < levels.size(); ++i) {
+        if (levels[i].size() != static_cast<std::size_t>(extents[i].width) * extents[i].height * texelBytes) {
+            throw VulkanError("uploadImageLevels: level data does not match its extent", VK_ERROR_UNKNOWN);
+        }
+        // Mip i of a Vulkan image is max(1, base >> i) in each dimension.
+        if (extents[i].width != std::max(extents[0].width >> i, 1u) || extents[i].height != std::max(extents[0].height >> i, 1u)) {
+            throw VulkanError("uploadImageLevels: level extents do not form a mip chain", VK_ERROR_UNKNOWN);
+        }
+        total += (levels[i].size() + 15) & ~std::size_t{15};  // keep every level 16-byte aligned
+    }
+    const auto count = static_cast<std::uint32_t>(levels.size());
+    Image image(device_, {format, extents[0], VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, count, name});
+    Buffer staging(device_, {total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryUsage::CpuToGpu, "UploadStaging"});
+    std::vector<std::byte> packed(total);
+    std::vector<VkBufferImageCopy> copies(count);
+    std::size_t offset = 0;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        std::copy(levels[i].begin(), levels[i].end(), packed.begin() + static_cast<std::ptrdiff_t>(offset));
+        copies[i].bufferOffset = offset;
+        copies[i].imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1};
+        copies[i].imageExtent = {extents[i].width, extents[i].height, 1};
+        offset += (levels[i].size() + 15) & ~std::size_t{15};
+    }
+    staging.write(packed);
+    VkCommandBuffer cmd = beginCommands();
+    auto barrier = [&](VkImageLayout from, VkImageLayout to, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+                       VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess) {
+        VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        b.srcStageMask = srcStage;
+        b.srcAccessMask = srcAccess;
+        b.dstStageMask = dstStage;
+        b.dstAccessMask = dstAccess;
+        b.oldLayout = from;
+        b.newLayout = to;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = image.handle();
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, count, 0, 1};
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &b;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    };
+    barrier(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE,
+            VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    vkCmdCopyBufferToImage(cmd, staging.handle(), image.handle(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, count,
+                           copies.data());
+    barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    submit(cmd, std::move(staging));
+    return image;
+}
+
 void UploadQueue::collect() {
     std::scoped_lock lock(mutex_);
     std::uint64_t completed = 0;

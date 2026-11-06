@@ -16,6 +16,9 @@ public:
         path_ = std::filesystem::temp_directory_path() /
                 ("lumora_test_" + std::to_string(rd()) + "_" + std::to_string(rd()));
         std::filesystem::create_directories(path_);
+        // The long spelling: Windows runners hand out 8.3 temp paths (C:/Users/RUNNER~1/...),
+        // which QFileSystemModel prunes once it lists the parent folder under its real name.
+        path_ = std::filesystem::canonical(path_);
     }
     ~TempDir() {
         std::error_code ec;

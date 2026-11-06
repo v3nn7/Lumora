@@ -87,6 +87,13 @@ public:
     }
 };
 
+/// The canonical spelling where there is one: QFileSystemModel drops Windows 8.3 short names
+/// (RUNNER~1) when it lists the parent folder, which would empty the view.
+QString longPath(const QString& path) {
+    const QString canonical = QFileInfo(path).canonicalFilePath();
+    return canonical.isEmpty() ? QDir(path).absolutePath() : canonical;
+}
+
 /// Hides the editor's own state (Saved/) at the project's top level.
 class HideSaved final : public QSortFilterProxyModel {
 public:
@@ -108,7 +115,7 @@ private:
 } // namespace
 
 ContentBrowserPanel::ContentBrowserPanel(const QString& projectRoot, QWidget* parent)
-    : QWidget(parent), root_(QDir(projectRoot).absolutePath()) {
+    : QWidget(parent), root_(longPath(projectRoot)) {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(6, 6, 6, 6);
     layout->setSpacing(6);
@@ -220,7 +227,7 @@ void ContentBrowserPanel::setThumbnails(ThumbnailCache* thumbnails) {
 }
 
 void ContentBrowserPanel::navigate(const QString& dir) {
-    QString target = QDir(dir).absolutePath();
+    QString target = longPath(dir);
     if (!target.startsWith(root_) || !QFileInfo(target).isDir()) target = root_;  // never leave the project
     current_ = target;
     view_->setRootIndex(model_->index(current_));

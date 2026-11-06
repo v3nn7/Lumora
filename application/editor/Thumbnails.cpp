@@ -8,6 +8,9 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QTimer>
+#include <QPointer>
+#include <QThreadPool>
+#include <QCoreApplication>
 
 namespace lumora::editor {
 
@@ -115,7 +118,7 @@ QIcon ThumbnailCache::typeIcon(const QString& suffix) {
 ThumbnailCache::ThumbnailCache(QString projectRoot, QObject* parent) : QObject(parent), root_(std::move(projectRoot)) {
     timer_ = new QTimer(this);
     timer_->setInterval(30);  // one preview per tick keeps the editor responsive
-    connect(timer_, &QTimer::timeout, this, &ThumbnailCache::processOne);
+    connect(timer_, &QTimer::timeout, this, [this] { processOne(false); });
 }
 
 QString ThumbnailCache::cacheFile(const QString& path, qint64 stamp) const {
@@ -138,7 +141,7 @@ QIcon ThumbnailCache::icon(const QFileInfo& file) {
         stamps_.insert(path, stamp);
         return icon;
     }
-    if (!queue_.contains(path) && (isImage(suffix) || renderer_)) {
+    if (!queue_.contains(path) && !decoding_.contains(path) && (isImage(suffix) || renderer_)) {
         queue_.append(path);
         if (!timer_->isActive()) timer_->start();
     }
@@ -164,7 +167,7 @@ QImage ThumbnailCache::makePreview(const QString& path) {
     return renderer_ ? renderer_(path) : QImage();
 }
 
-void ThumbnailCache::processOne() {
+void ThumbnailCache::processOne(bool wait) {
     if (queue_.isEmpty()) {
         timer_->stop();
         return;
@@ -173,7 +176,28 @@ void ThumbnailCache::processOne() {
     const QFileInfo info(path);
     if (!info.exists()) return;
     const qint64 stamp = info.lastModified().toMSecsSinceEpoch();
-    const QImage image = makePreview(path);
+    if (isImage(info.suffix().toLower()) && !wait) {
+        // Images decode on the thread pool; the result comes back to this thread.
+        decoding_.insert(path);
+        QPointer<ThumbnailCache> self(this);
+        QThreadPool::globalInstance()->start([self, path, stamp] {
+            QImageReader reader(path);
+            const QSize size = reader.size();
+            if (size.isValid()) reader.setScaledSize(size.scaled(kPreviewSize, kPreviewSize, Qt::KeepAspectRatio));
+            const QImage image = reader.read();
+            if (self.isNull()) return;
+            QMetaObject::invokeMethod(self.data(), [self, path, stamp, image] {
+                if (self) self->finish(path, stamp, image);
+            }, Qt::QueuedConnection);
+        });
+        return;
+    }
+    finish(path, stamp, makePreview(path));  // models and materials: the renderer lives on this thread
+}
+
+void ThumbnailCache::finish(const QString& path, qint64 stamp, const QImage& image) {
+    decoding_.remove(path);
+    const QFileInfo info(path);
     if (image.isNull()) {
         stamps_.insert(path, stamp);  // do not try again until it changes
         ready_.insert(path, typeIcon(info.suffix()));
@@ -188,7 +212,8 @@ void ThumbnailCache::processOne() {
 }
 
 void ThumbnailCache::processAll() {
-    while (!queue_.isEmpty()) processOne();
+    while (!queue_.isEmpty()) processOne(true);
+    while (!decoding_.isEmpty()) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
 }
 
 } // namespace lumora::editor

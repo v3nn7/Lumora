@@ -2,6 +2,16 @@
 include(FetchContent)
 set(FETCHCONTENT_QUIET ON)
 
+# Vulkan headers pinned for every platform (NVRHI needs 1.4.318+; distributions ship older ones).
+# The loader still comes from the system or the Vulkan SDK.
+FetchContent_Declare(VulkanHeaders
+    URL https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.4.352.tar.gz
+    URL_HASH SHA256=4850909d22a8a9767c27daea2b972e49d7c298560573d5b6221ee50db9bf49db
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SYSTEM)
+FetchContent_MakeAvailable(VulkanHeaders)
+# Before the system's include directory everywhere, so every file sees the same headers.
+include_directories(BEFORE SYSTEM ${vulkanheaders_SOURCE_DIR}/include)
 find_package(Vulkan 1.4 REQUIRED)
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Svg Network)
 find_package(Threads REQUIRED)
@@ -79,7 +89,21 @@ set(JSON_BuildTests OFF CACHE INTERNAL "")
 set(JSON_Install OFF CACHE INTERNAL "")
 set(VMA_ENABLE_INSTALL OFF CACHE INTERNAL "")
 
-FetchContent_MakeAvailable(glm EnTT VulkanMemoryAllocator nlohmann_json cgltf stb JoltPhysics miniaudio)
+# NVRHI (NVIDIA Rendering Hardware Interface, MIT): the renderer's GPU layer, with automatic
+# resource state tracking. Vulkan on every platform; D3D12 on Windows. Pinned commit (2026-10-28).
+FetchContent_Declare(nvrhi
+    URL https://github.com/NVIDIA-RTX/NVRHI/archive/bf0bbd9b666a7297492beb1999a4ddc0dfded143.tar.gz
+    URL_HASH SHA256=059ce649063d7bfe8fd7cb2f4cdd05a606f5526f7060237f9e37ecf75bc5f9e2
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SYSTEM)
+set(NVRHI_INSTALL OFF CACHE BOOL "" FORCE)
+set(NVRHI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(NVRHI_WITH_DX11 OFF CACHE BOOL "" FORCE)
+set(NVRHI_WITH_DX12 OFF CACHE BOOL "" FORCE)
+set(NVRHI_WITH_RTXMU OFF CACHE BOOL "" FORCE)
+set(NVRHI_FETCH_VULKAN_HEADERS OFF CACHE BOOL "" FORCE)  # the Vulkan SDK's headers (Vulkan::Headers)
+
+FetchContent_MakeAvailable(glm EnTT VulkanMemoryAllocator nlohmann_json cgltf stb JoltPhysics miniaudio nvrhi)
 add_library(stb INTERFACE)
 target_include_directories(stb SYSTEM INTERFACE ${stb_SOURCE_DIR})
 add_library(miniaudio INTERFACE)

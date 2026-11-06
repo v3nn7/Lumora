@@ -6,6 +6,7 @@
 #include <QIcon>
 #include <QImage>
 #include <QObject>
+#include <QSet>
 #include <QStringList>
 
 #include <functional>
@@ -33,7 +34,7 @@ public:
     /// The file changed: make its preview again.
     void invalidate(const QString& path);
     [[nodiscard]] bool hasPreview(const QString& path) const { return ready_.contains(path); }
-    [[nodiscard]] int pending() const noexcept { return static_cast<int>(queue_.size()); }
+    [[nodiscard]] int pending() const noexcept { return static_cast<int>(queue_.size() + decoding_.size()); }
     /// Makes every queued preview now (tests).
     void processAll();
 
@@ -46,7 +47,8 @@ signals:
     void previewReady(const QString& path);
 
 private:
-    void processOne();
+    void processOne(bool wait);
+    void finish(const QString& path, qint64 stamp, const QImage& image);
     [[nodiscard]] QString cacheFile(const QString& path, qint64 stamp) const;
     [[nodiscard]] QImage makePreview(const QString& path);
 
@@ -55,6 +57,7 @@ private:
     QHash<QString, QIcon> ready_;
     QHash<QString, qint64> stamps_;  // modification time the preview was made from
     QStringList queue_;
+    QSet<QString> decoding_;  // images being decoded on the thread pool
     QTimer* timer_ = nullptr;
 };
 

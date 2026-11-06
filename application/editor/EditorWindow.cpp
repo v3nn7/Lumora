@@ -20,6 +20,8 @@
 #include "scene/Camera.hpp"
 
 #include <QFileSystemWatcher>
+#include <QPointer>
+#include <QThreadPool>
 #include "editor/EntityFactory.hpp"
 
 #include <QDirIterator>
@@ -536,9 +538,9 @@ void EditorWindow::buildMenus() {
     playMenu->addSeparator();
     playMenu->addAction(tr("Input Settings…"), this, &EditorWindow::openInputSettings);
     playMenu->addAction(tr("Clear Saved Game Data"), this, [this] {
-        const auto file = project_.rootDir() / "Saved" / "GameSave.json";
+        const auto saveFile = project_.rootDir() / "Saved" / "GameSave.json";
         std::error_code ec;
-        std::filesystem::remove(file, ec);
+        std::filesystem::remove(saveFile, ec);
         statusBar()->showMessage(tr("Saved game data cleared"), 4000);
     });
 
@@ -1008,11 +1010,23 @@ void EditorWindow::watchContent() {
         dirs << dir;
     }
     contentWatcher_->addPaths(dirs);
-    for (const QString& dir : dirs) {
-        for (const QFileInfo& f : QDir(dir).entryInfoList(QDir::Files)) {
-            fileStamps_.insert(f.absoluteFilePath(), f.lastModified().toMSecsSinceEpoch());
+    // Reading every file's time is disk work: on the thread pool, merged back here.
+    QPointer<EditorWindow> self(this);
+    QThreadPool::globalInstance()->start([self, dirs] {
+        auto stamps = std::make_shared<QHash<QString, qint64>>();
+        for (const QString& dir : dirs) {
+            for (const QFileInfo& f : QDir(dir).entryInfoList(QDir::Files)) {
+                stamps->insert(f.absoluteFilePath(), f.lastModified().toMSecsSinceEpoch());
+            }
         }
-    }
+        if (self.isNull()) return;
+        QMetaObject::invokeMethod(self.data(), [self, stamps] {
+            if (!self) return;
+            for (auto s = stamps->cbegin(); s != stamps->cend(); ++s) {
+                if (!self->fileStamps_.contains(s.key())) self->fileStamps_.insert(s.key(), s.value());
+            }
+        }, Qt::QueuedConnection);
+    });
     connect(contentWatcher_, &QFileSystemWatcher::directoryChanged, this, [this](const QString& dir) {
         // Writers often replace a file in several steps: look once things settle.
         QTimer::singleShot(150, this, [this, dir] { reloadChangedIn(dir); });

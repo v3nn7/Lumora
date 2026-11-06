@@ -144,7 +144,8 @@ foreach(component editor hub)
 endforeach()
 install(TARGETS lumora-editor RUNTIME DESTINATION bin COMPONENT editor)
 foreach(component editor hub)
-    install(FILES ${CMAKE_SOURCE_DIR}/LICENSE ${CMAKE_SOURCE_DIR}/THIRD_PARTY.md DESTINATION . COMPONENT ${component})
+    install(FILES ${CMAKE_SOURCE_DIR}/LICENSE ${CMAKE_SOURCE_DIR}/THIRD_PARTY.md
+                  ${CMAKE_SOURCE_DIR}/engine/renderer/fonts/LICENSE-DejaVu.txt DESTINATION . COMPONENT ${component})
 endforeach()
 # Gameplay scripting SDK: the headers game libraries are compiled against.
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/sdk/include/ DESTINATION include COMPONENT editor)

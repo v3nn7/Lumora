@@ -392,9 +392,13 @@ CodeEditorPanel::CodeEditorPanel(QWidget* parent) : QWidget(parent) {
     auto* build = new QPushButton(tr("Build Scripts"));
     status_ = new QLabel(tr("Open a script from the Content Browser (Scripts folder) or Scripts > New Behaviour."));
     status_->setProperty("muted", true);
+    placement_ = new QPushButton;
+    connect(placement_, &QPushButton::clicked, this, &CodeEditorPanel::placementToggled);
+    setInMainArea(false);
     bar->addWidget(save);
     bar->addWidget(build);
     bar->addWidget(status_, 1);
+    bar->addWidget(placement_);
     layout->addLayout(bar);
 
     tabs_ = new QTabWidget;
@@ -429,6 +433,12 @@ CodeEdit* CodeEditorPanel::current() const { return qobject_cast<CodeEdit*>(tabs
 
 int CodeEditorPanel::openFileCount() const { return tabs_->count(); }
 int CodeEditorPanel::diagnosticCount() const { return diagnostics_->count(); }
+
+void CodeEditorPanel::setInMainArea(bool inMainArea) {
+    placement_->setText(inMainArea ? tr("Back to Dock") : tr("Open in Main Area"));
+    placement_->setToolTip(inMainArea ? tr("Move the code editor back to its panel")
+                                      : tr("Edit code in the middle of the editor, in a tab next to the scene"));
+}
 
 CodeEdit* CodeEditorPanel::openFile(const QString& path, int line) {
     const QString absolute = QFileInfo(path).absoluteFilePath();

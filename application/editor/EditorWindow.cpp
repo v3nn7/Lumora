@@ -66,6 +66,9 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QSettings>
+#include <QSignalBlocker>
+#include <QTabBar>
+#include <QTabWidget>
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QTimer>
@@ -371,7 +374,18 @@ void EditorWindow::buildCentral() {
     viewportError_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     viewportError_->setStyleSheet(QStringLiteral("background: #101114; color: #ec6a5e; padding: 40px; font-size: 11pt;"));
     viewportStack_->addWidget(viewportError_);
-    setCentralWidget(viewportFrame_);
+    // The middle of the window: the scene, and the code editor as a second tab when it is
+    // moved there (the tab bar shows only then).
+    centerTabs_ = new QTabWidget;
+    centerTabs_->setDocumentMode(true);
+    centerTabs_->setTabBarAutoHide(true);
+    centerTabs_->setTabsClosable(true);
+    centerTabs_->addTab(viewportFrame_, app::theme::icon(QStringLiteral("scene")), tr("Scene"));
+    centerTabs_->tabBar()->setTabButton(0, QTabBar::RightSide, nullptr);  // the scene stays
+    connect(centerTabs_, &QTabWidget::tabCloseRequested, this, [this](int index) {
+        if (centerTabs_->widget(index) == code_) setCodeInMainArea(false);
+    });
+    setCentralWidget(centerTabs_);
     container->setFocus();  // now inside this window, so it becomes the initial focus widget
 
     connect(viewport_, &app::VulkanViewport::renderFailed, this, &EditorWindow::onRenderFailed);
@@ -420,6 +434,7 @@ void EditorWindow::buildDocks() {
     auto* console = makeDock(this, tr("Console"), QStringLiteral("dock.console"), QStringLiteral("console"), new ConsolePanel(app_.logBridge()));
     code_ = new CodeEditorPanel;
     codeDock_ = makeDock(this, tr("Code"), QStringLiteral("dock.code"), QStringLiteral("console"), code_);
+    connect(code_, &CodeEditorPanel::placementToggled, this, [this] { setCodeInMainArea(!codeInMainArea()); });
     profiler_ = new ProfilerPanel(app_.renderContext(), [this]() -> const render::FrameStats* {
         render::Renderer* r = app_.renderer();
         return r ? &r->stats() : nullptr;
@@ -505,6 +520,12 @@ void EditorWindow::buildMenus() {
     for (QDockWidget* dock : findChildren<QDockWidget*>()) view->addAction(dock->toggleViewAction());
     view->addSeparator();
     view->addActions({grid_, vsync_});
+    view->addSeparator();
+    codeInMainAreaAction_ = view->addAction(tr("Code in Main Area"));
+    codeInMainAreaAction_->setCheckable(true);
+    codeInMainAreaAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
+    connect(codeInMainAreaAction_, &QAction::toggled, this, &EditorWindow::setCodeInMainArea);
+    view->addAction(tr("Show Scene"), QKeySequence(Qt::CTRL | Qt::Key_1), this, &EditorWindow::showScene);
     view->addSeparator();
     view->addAction(resetLayout_);
 
@@ -650,6 +671,7 @@ void EditorWindow::restoreLayout() {
     QSettings settings;
     restoreGeometry(settings.value(QStringLiteral("editor/geometry")).toByteArray());
     restoreState(settings.value(QStringLiteral("editor/state")).toByteArray());
+    if (settings.value(QStringLiteral("editor/codeInMainArea"), false).toBool()) setCodeInMainArea(true);
 }
 
 void EditorWindow::saveLayout() {
@@ -659,6 +681,7 @@ void EditorWindow::saveLayout() {
 }
 
 void EditorWindow::resetLayout() {
+    setCodeInMainArea(false);
     restoreState(defaultLayout_);
     for (QDockWidget* dock : findChildren<QDockWidget*>()) dock->show();
 }
@@ -781,9 +804,40 @@ void EditorWindow::createSceneFile(const QString& path) {
 
 void EditorWindow::openCode(const QString& path, int line) {
     code_->openFile(path, line);
+    if (codeInMainArea()) {
+        centerTabs_->setCurrentWidget(code_);
+        return;
+    }
     codeDock_->show();
     codeDock_->raise();
 }
+
+bool EditorWindow::codeInMainArea() const { return centerTabs_ != nullptr && centerTabs_->indexOf(code_) >= 0; }
+
+void EditorWindow::setCodeInMainArea(bool inMainArea) {
+    if (inMainArea == codeInMainArea()) return;
+    if (inMainArea) {
+        codeDock_->setWidget(new QWidget);  // takes the panel out of the dock
+        codeDock_->hide();
+        centerTabs_->addTab(code_, app::theme::icon(QStringLiteral("console")), tr("Code"));
+        centerTabs_->setCurrentWidget(code_);
+    } else {
+        centerTabs_->removeTab(centerTabs_->indexOf(code_));
+        delete codeDock_->widget();
+        codeDock_->setWidget(code_);
+        codeDock_->show();
+        codeDock_->raise();
+        centerTabs_->setCurrentIndex(0);
+    }
+    code_->setInMainArea(inMainArea);
+    if (codeInMainAreaAction_ != nullptr) {
+        const QSignalBlocker block(codeInMainAreaAction_);
+        codeInMainAreaAction_->setChecked(inMainArea);
+    }
+    QSettings().setValue(QStringLiteral("editor/codeInMainArea"), inMainArea);
+}
+
+void EditorWindow::showScene() { centerTabs_->setCurrentIndex(0); }
 
 glm::vec3 EditorWindow::placementSpot() const {
     // Where the camera looks: on the ground plane if the view ray hits it nearby.
@@ -1263,6 +1317,7 @@ void EditorWindow::updateTitle() {
 // ---- Play mode ------------------------------------------------------------------------------
 
 void EditorWindow::play() {
+    showScene();  // playing happens in the viewport
     if (simulation_) {
         paused_ = false;
         updatePlayState();

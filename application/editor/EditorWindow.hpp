@@ -22,6 +22,7 @@ class QAction;
 class QLabel;
 class QFrame;
 class QStackedWidget;
+class QTabWidget;
 
 namespace lumora {
 class Scene;
@@ -77,6 +78,11 @@ public:
     bool assignMaterial(Uuid entity, const QString& materialPath);
     /// Opens Config/Input.json in the code editor (written with the defaults first).
     void openInputSettings();
+    /// The code editor in the middle of the window (a tab next to the scene) or in its dock.
+    void setCodeInMainArea(bool inMainArea);
+    void openCode(const QString& path, int line = 0);
+    [[nodiscard]] bool codeInMainArea() const;
+    void showScene();
     /// Ctrl+P: the quick-open popup over the project's files and the scene's entities.
     class QuickOpenDialog* showQuickOpen();
     /// Preview picture of a model, prefab or material (Content Browser thumbnails).
@@ -155,7 +161,6 @@ private:
     void exportGameDialog();
     void saveSelectionAsPrefab(const QString& folder = {});
     void createSceneFile(const QString& path);
-    void openCode(const QString& path, int line = 0);
     entt::entity addPrefabToScene(const std::filesystem::path& path, std::optional<glm::vec3> where = std::nullopt);
     [[nodiscard]] glm::vec3 placementSpot() const;
     std::optional<std::string> pickMaterialAsset(QWidget* parent);
@@ -217,6 +222,8 @@ private:
     class ContentBrowserPanel* content_ = nullptr;
     class CodeEditorPanel* code_ = nullptr;
     class InspectorPanel* inspector_ = nullptr;
+    QTabWidget* centerTabs_ = nullptr;
+    QAction* codeInMainAreaAction_ = nullptr;
     class ThumbnailCache* thumbnails_ = nullptr;
     QFileSystemWatcher* contentWatcher_ = nullptr;
     QHash<QString, qint64> fileStamps_;

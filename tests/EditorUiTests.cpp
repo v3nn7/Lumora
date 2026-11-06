@@ -849,3 +849,66 @@ TEST_F(EditorUiTest, PreviewsRenderAndChangedModelsReload) {
     EXPECT_FALSE((*second)->images.empty()) << "the new file has a texture";
     EXPECT_EQ(editor->reloadChangedIn(app::toQString(models)), 0) << "nothing new";
 }
+
+#include <QSettings>
+#include <QTabWidget>
+
+TEST_F(EditorUiTest, CodeEditorMovesIntoTheMainArea) {
+    editor::EditorWindow* editor = openEditor();
+    ASSERT_NE(editor, nullptr);
+    auto* code = editor->findChild<editor::CodeEditorPanel*>();
+    ASSERT_NE(code, nullptr);
+    QTabWidget* center = qobject_cast<QTabWidget*>(editor->centralWidget());
+    ASSERT_NE(center, nullptr);
+    EXPECT_EQ(center->count(), 1) << "only the scene at first";
+    editor->setCodeInMainArea(true);
+    EXPECT_TRUE(editor->codeInMainArea());
+    EXPECT_EQ(center->count(), 2);
+    EXPECT_EQ(center->currentWidget(), code);
+    editor->showScene();
+    const auto script = editor->project().rootDir() / "Scripts" / "Note.cpp";
+    std::filesystem::create_directories(script.parent_path());
+    std::ofstream(script) << "// note\n";
+    editor->openCode(app::toQString(script));
+    EXPECT_EQ(center->currentWidget(), code) << "opening a file shows the code tab";
+    editor->play();
+    EXPECT_EQ(center->currentIndex(), 0) << "playing shows the scene";
+    editor->stop();
+    editor->setCodeInMainArea(false);
+    EXPECT_EQ(center->count(), 1);
+    auto* dock = qobject_cast<QDockWidget*>(code->parentWidget() ? code->parentWidget()->parentWidget() : nullptr);
+    EXPECT_TRUE(dock != nullptr || code->window() == editor) << "back in its dock";
+    EXPECT_EQ(code->window(), editor);
+    QSettings().setValue(QStringLiteral("editor/codeInMainArea"), false);
+}
+
+TEST_F(EditorUiTest, ContentBrowserSnapshot) {
+    // Visual check only: LUMORA_TEST_SNAPSHOT_DIR=... writes the browser with previews.
+    const QString dir = qEnvironmentVariable("LUMORA_TEST_SNAPSHOT_DIR");
+    if (dir.isEmpty()) GTEST_SKIP() << "set LUMORA_TEST_SNAPSHOT_DIR to write the picture";
+    editor::EditorWindow* editor = openEditor();
+    ASSERT_NE(editor, nullptr);
+    editor->resize(1600, 960);
+    const auto content = editor->project().contentDir();
+    std::filesystem::create_directories(content / "Mixed");
+    test::writeCubeGltf(content / "Mixed" / "cube.gltf", false);
+    MaterialAsset copper;
+    copper.baseColor = {0.9f, 0.4f, 0.15f};
+    copper.metallic = 1.0f;
+    copper.roughness = 0.3f;
+    ASSERT_TRUE(saveMaterial(copper, content / "Mixed" / "Copper.lmat").has_value());
+    for (const char* name : {"Player.cpp", "Player.hpp", "notes.md", "Input.json", "jump.wav", "Level.lscene"}) {
+        std::ofstream(content / "Mixed" / name) << "x";
+    }
+    QImage red(64, 64, QImage::Format_RGBA8888);
+    red.fill(QColor(200, 60, 60));
+    red.save(app::toQString(content / "Mixed" / "red.png"));
+    auto* browser = editor->findChild<editor::ContentBrowserPanel*>();
+    browser->navigate(app::toQString(content / "Mixed"));
+    (void)waitFor([&] { return false; }, 1500);  // let the folder listing arrive
+    for (int i = 0; i < 20; ++i) {
+        editor->thumbnails().processAll();
+        processEvents();
+    }
+    browser->grab().save(dir + QStringLiteral("/content_browser.png"));
+}

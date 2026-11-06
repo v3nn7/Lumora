@@ -14,6 +14,7 @@ class QLabel;
 class QModelIndex;
 class QStandardItemModel;
 class QListWidget;
+class QPushButton;
 class QTabWidget;
 
 namespace lumora::editor {
@@ -91,8 +92,13 @@ public:
     [[nodiscard]] int openFileCount() const;
     [[nodiscard]] int diagnosticCount() const;
 
+    /// Shows whether the panel sits in the editor's main area (next to the scene) or in a dock.
+    void setInMainArea(bool inMainArea);
+
 signals:
     void buildRequested();
+    /// The "Main Area" / "Dock" button: move the panel to the other place.
+    void placementToggled();
 
 private:
     [[nodiscard]] CodeEdit* current() const;
@@ -102,6 +108,7 @@ private:
     QTabWidget* tabs_ = nullptr;
     QListWidget* diagnostics_ = nullptr;
     QLabel* status_ = nullptr;
+    QPushButton* placement_ = nullptr;
 };
 
 } // namespace lumora::editor

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <filesystem>
 
+#include "core/Error.hpp"
 #include "scene/Hud.hpp"
 #include <cstdint>
 #include <memory>
@@ -52,6 +53,14 @@ public:
     void setScripts(std::shared_ptr<ScriptModule> module, const InputState* input);
     /// Project folder for assets scripts load at run time (prefabs).
     void setProjectRoot(std::filesystem::path root);
+    /// Replaces the scene's contents with a scene file (project-relative) and starts it over:
+    /// behaviours, physics, animation and sound are recreated and time() restarts at 0. Scripts
+    /// ask for it with loadScene(); the switch happens at the end of their step.
+    Result<> loadScene(const std::filesystem::path& relativePath);
+    /// Counts scene switches, so hosts can notice one (and refresh what shows the scene).
+    [[nodiscard]] std::uint64_t sceneLoads() const noexcept { return sceneLoads_; }
+    /// The scene file last loaded with loadScene() (project-relative), empty before any.
+    [[nodiscard]] const std::filesystem::path& loadedScene() const noexcept { return loadedScene_; }
     /// Plays the scene's Audio Sources (positions follow the entities every step).
     void setAudio(std::unique_ptr<AudioWorld> audio);
     [[nodiscard]] AudioWorld* audio() noexcept { return audio_.get(); }
@@ -69,6 +78,9 @@ private:
     double fixedStep_;
     double accumulator_ = 0.0;
     std::uint64_t steps_ = 0;
+    std::uint64_t sceneLoads_ = 0;
+    std::filesystem::path loadedScene_;
+    bool audioDevice_ = true;  // whether sound for a loaded scene goes to the audio device
     std::unique_ptr<PhysicsWorld> physics_;
     std::unique_ptr<AudioWorld> audio_;
     std::unique_ptr<AnimationSystem> animation_;

@@ -38,7 +38,7 @@
 #include <string_view>
 #include <vector>
 
-#define LUMORA_SCRIPT_ABI 2u
+#define LUMORA_SCRIPT_ABI 3u
 
 namespace lumora::script {
 
@@ -105,6 +105,8 @@ struct EngineApi {
     void (*drawText)(void* context, const char* utf8, const float* xySize, const float* rgba);
     void (*screenSize)(void* context, float* wh);
     int (*findAll)(void* context, const char* name, Entity* out, int capacity);  // returns the total
+    // ABI 3
+    int (*loadScene)(void* context, const char* path);  // queued for the end of the step; 0 if invalid
 };
 
 class Behaviour;
@@ -230,6 +232,13 @@ protected:
     }
     /// Removes an entity (and its children) at the end of this step.
     void destroy(Entity e) const { api_->destroy(api_->context, e); }
+
+    /// Switches to another scene (project-relative, e.g. "Content/Scenes/Level2.lscene") at the
+    /// end of this step: every behaviour of this scene stops, the new scene's start. time()
+    /// starts again from 0. False if the path is not a scene inside the project.
+    bool loadScene(std::string_view path) const {
+        return api_->loadScene(api_->context, std::string(path).c_str()) != 0;
+    }
 
     // Animation (the entity's Animator component: clips of the glTF model it was made from).
     /// Starts a clip by name (empty = the current one) from the beginning.

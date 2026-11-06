@@ -86,6 +86,8 @@ struct AudioWorld::Impl {
 AudioWorld::AudioWorld(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 AudioWorld::~AudioWorld() = default;
 
+bool AudioWorld::usesDevice() const noexcept { return impl_->device; }
+
 Result<std::unique_ptr<AudioWorld>> AudioWorld::create(Scene& scene, const Options& options) {
     auto impl = std::make_unique<Impl>(scene);
     impl->root = options.projectRoot;

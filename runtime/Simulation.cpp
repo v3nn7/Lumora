@@ -4,7 +4,11 @@
 #include "runtime/AudioWorld.hpp"
 #include "runtime/PhysicsWorld.hpp"
 #include "runtime/Scripting.hpp"
+#include "core/Log.hpp"
 #include "scene/Scene.hpp"
+#include "scene/SceneSerializer.hpp"
+
+#include <nlohmann/json.hpp>
 
 #include <glm/geometric.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -95,6 +99,7 @@ void Simulation::setProjectRoot(std::filesystem::path root) {
 
 void Simulation::setAudio(std::unique_ptr<AudioWorld> audio) {
     audio_ = std::move(audio);
+    if (audio_) audioDevice_ = audio_->usesDevice();
     if (scripts_) scripts_->setAudio(audio_.get());
 }
 
@@ -124,6 +129,55 @@ void Simulation::step() {
     }
     if (audio_) audio_->update();
     ++steps_;
+    if (scripts_) {
+        if (const std::string next = scripts_->takeSceneRequest(); !next.empty()) {
+            if (auto loaded = loadScene(next); !loaded) log::error("Simulation", "{}", loaded.error().message);
+        }
+    }
+}
+
+Result<> Simulation::loadScene(const std::filesystem::path& relativePath) {
+    const std::filesystem::path relative = relativePath.lexically_normal();
+    if (relative.is_absolute() || relative.empty() || *relative.begin() == "..") {
+        return makeError("loadScene: {} is not inside the project", relativePath.generic_string());
+    }
+    auto loaded = SceneSerializer::load(projectRoot_ / relative);
+    if (!loaded) return makeError("loadScene {}: {}", relative.generic_string(), loaded.error().message);
+    // Systems that hold on to entities go first, the behaviours (their destructors) before all.
+    if (scripts_) scripts_->restart();
+    physics_.reset();
+    animation_.reset();
+    const bool hadAudio = audio_ != nullptr;
+    audio_.reset();
+    oscillatorOrigins_.clear();
+    hud_.clear();
+    if (auto replaced = SceneSerializer::loadInto(scene_, SceneSerializer::toJson(**loaded)); !replaced) {
+        return makeError("loadScene {}: {}", relative.generic_string(), replaced.error().message);
+    }
+    scene_.updateWorldTransforms();
+    if (PhysicsWorld::sceneHasColliders(scene_)) physics_ = std::make_unique<PhysicsWorld>(scene_);
+    if (!projectRoot_.empty() && AnimationSystem::sceneHasAnimators(scene_)) {
+        animation_ = std::make_unique<AnimationSystem>(scene_, projectRoot_);
+    }
+    if (AudioWorld::sceneHasAudio(scene_) || hadAudio) {
+        auto audio = AudioWorld::create(scene_, {projectRoot_, audioDevice_});
+        if (audio) {
+            audio_ = std::move(*audio);
+        } else {
+            log::warn("Simulation", "{} - no sound in {}", audio.error().message, relative.generic_string());
+        }
+    }
+    if (scripts_) {
+        scripts_->setPhysics(physics_.get());
+        scripts_->setAnimation(animation_.get());
+        scripts_->setAudio(audio_.get());
+    }
+    steps_ = 0;
+    accumulator_ = 0.0;
+    loadedScene_ = relative;
+    ++sceneLoads_;
+    log::info("Simulation", "loaded scene {}", relative.generic_string());
+    return {};
 }
 
 } // namespace lumora

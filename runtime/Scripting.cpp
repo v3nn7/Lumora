@@ -314,6 +314,23 @@ int apiSound(void* c, script::Entity entity, int command) {
     }
 }
 
+int apiLoadScene(void* c, const char* path) {
+    Context& ctx = context(c);
+    if (path == nullptr) return 0;
+    const std::filesystem::path relative = std::filesystem::path(path).lexically_normal();
+    if (relative.is_absolute() || relative.empty() || *relative.begin() == ".." || relative.extension() != ".lscene") {
+        log::warn("Script", "loadScene: '{}' must be a .lscene file inside the project", path);
+        return 0;
+    }
+    std::error_code ec;
+    if (!ctx.projectRoot.empty() && !std::filesystem::is_regular_file(ctx.projectRoot / relative, ec)) {
+        log::warn("Script", "loadScene: {} does not exist", relative.generic_string());
+        return 0;
+    }
+    ctx.pendingScene = relative.generic_string();
+    return 1;
+}
+
 /// "speed=4, jump = 6.5; name=2" -> the number for `key`, or `fallback`.
 double apiParameter(void* c, script::Entity entity, const char* key, double fallback) {
     const entt::entity e = liveEntity(c, entity);
@@ -439,6 +456,7 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.drawText = apiDrawText;
     api_.screenSize = apiScreenSize;
     api_.findAll = apiFindAll;
+    api_.loadScene = apiLoadScene;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }
@@ -574,6 +592,13 @@ void ScriptRunner::update(float dt, double simulatedSeconds) {
         }
     }
     finishStep();
+}
+
+void ScriptRunner::restart() {
+    destroyInstances();
+    context_.pendingDestroy.clear();
+    context_.pendingScene.clear();
+    created_ = false;
 }
 
 void ScriptRunner::reload(std::shared_ptr<ScriptModule> module) {

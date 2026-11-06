@@ -363,3 +363,71 @@ TEST_F(ScriptTest, PlatformerTemplatePlays) {
     const glm::vec3 cameraAfter = level.registry().get<TransformComponent>(camera).position;
     EXPECT_LT(cameraAfter.x, cameraBefore.x - 1.0f) << "the camera followed the player to the left";
 }
+
+TEST_F(ScriptTest, LoadSceneSwitchesLevels) {
+    const std::filesystem::path project = dir.path();
+    writeScript(project, "Levels.cpp", R"cpp(#include <lumora/Script.hpp>
+using namespace lumora::script;
+// Level 1: after 0.1 s go to level 2 (and reject paths outside the project).
+class Exit : public Behaviour {
+public:
+    void update(float) override {
+        if (!asked_ && time() >= 0.1) {
+            asked_ = true;
+            if (loadScene("../outside.lscene")) warn("accepted a path outside the project");
+            if (!loadScene("Content/Scenes/Level2.lscene")) warn("loadScene refused level 2");
+        }
+    }
+private:
+    bool asked_ = false;
+};
+LUMORA_BEHAVIOUR(Exit);
+// Level 2: counts its own time from 0.
+class Clock : public Behaviour {
+public:
+    void start() override { setPosition(Vec3{static_cast<float>(time()), 0.0f, 0.0f}); }
+    void update(float dt) override { setPosition(position() + Vec3{0.0f, dt, 0.0f}); }
+};
+LUMORA_BEHAVIOUR(Clock);
+)cpp");
+    {
+        Scene level2("Level 2");
+        level2.registry().emplace<ScriptComponent>(level2.createEntity("Clock")).behaviour = "Clock";
+        (void)level2.createEntity("Scenery");
+        auto& c = level2.registry().emplace<ColliderComponent>(level2.createEntity("Floor"));
+        c.size = {10.0f, 1.0f, 10.0f};
+        ASSERT_TRUE(SceneSerializer::save(level2, project / "Content" / "Scenes" / "Level2.lscene").has_value());
+    }
+    app::ScriptBuilder builder(QString::fromStdString(project.string()));
+    QString log;
+    ASSERT_TRUE(builder.buildBlocking(&log)) << log.toStdString();
+    auto module = ScriptModule::load(builder.libraryPath().toStdString(), builder.loadDir().toStdString());
+    ASSERT_TRUE(module.has_value()) << module.error().message;
+
+    Scene scene("Level 1");
+    scene.registry().emplace<ScriptComponent>(scene.createEntity("Door")).behaviour = "Exit";
+    Simulation sim(scene);
+    sim.setProjectRoot(project);
+    sim.setScripts(*module, nullptr);
+    EXPECT_EQ(sim.physics(), nullptr) << "level 1 has no colliders";
+    for (int i = 0; i < 6; ++i) sim.step();  // t = 0.1 s at the end of step 6
+    EXPECT_EQ(sim.sceneLoads(), 0u);
+    sim.step();
+    ASSERT_EQ(sim.sceneLoads(), 1u);
+    EXPECT_EQ(sim.loadedScene().generic_string(), "Content/Scenes/Level2.lscene");
+    EXPECT_EQ(scene.name(), "Level 2");
+    EXPECT_EQ(scene.entityCount(), 3u);
+    EXPECT_EQ(sim.stepCount(), 0u) << "time starts over";
+    ASSERT_NE(sim.physics(), nullptr) << "level 2's colliders get a physics world";
+    EXPECT_EQ(sim.physics()->bodyCount(), 1u);
+    for (int i = 0; i < 60; ++i) sim.step();
+    EXPECT_EQ(sim.scriptInstances(), 1u) << "only level 2's behaviour runs";
+    entt::entity clock = entt::null;
+    for (auto [e, name] : scene.registry().view<NameComponent>().each()) {
+        if (name.name == "Clock") clock = e;
+    }
+    ASSERT_TRUE(clock != entt::null);
+    const glm::vec3 p = scene.registry().get<TransformComponent>(clock).position;
+    EXPECT_NEAR(p.x, 0.0f, 1e-6f) << "started at time 0";
+    EXPECT_NEAR(p.y, 1.0f, 1e-3f) << "ran for a second";
+}

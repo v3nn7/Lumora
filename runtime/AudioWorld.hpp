@@ -33,6 +33,8 @@ public:
     AudioWorld& operator=(const AudioWorld&) = delete;
 
     void update();
+    /// false when created without an audio device (headless).
+    [[nodiscard]] bool usesDevice() const noexcept;
     void setListener(const glm::vec3& position, const glm::vec3& forward, const glm::vec3& up);
     /// Places the listener at a camera (its view matrix).
     void setListenerFromView(const glm::mat4& view);

@@ -88,6 +88,11 @@ public:
     /// Project folder that spawn("Content/Prefabs/X.lprefab") resolves against.
     void setProjectRoot(std::filesystem::path root) { context_.projectRoot = std::move(root); }
     [[nodiscard]] std::size_t instanceCount() const noexcept { return instances_.size(); }
+    /// The scene a behaviour asked for with loadScene() (project-relative), once; empty if none.
+    [[nodiscard]] std::string takeSceneRequest() { return std::exchange(context_.pendingScene, {}); }
+    /// Destroys every behaviour instance; new ones are created on the next update (after the
+    /// scene was replaced).
+    void restart();
 
     // EngineApi::context: what the C callbacks reach (public for the callback functions).
     struct Context {
@@ -100,6 +105,7 @@ public:
         std::filesystem::path projectRoot;
         std::unordered_map<std::string, std::shared_ptr<const nlohmann::json>> prefabs;  // loaded once
         std::vector<entt::entity> pendingDestroy;
+        std::string pendingScene;  // loadScene() request, handled by the Simulation
         double time = 0.0;
         std::string nameScratch;
     };

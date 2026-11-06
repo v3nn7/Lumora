@@ -124,7 +124,15 @@ EditorWindow::EditorWindow(app::AppContext& app, Project project, QWidget* paren
     resize(1600, 960);
 
     client_->onSimulate = [this](float dt) {
-        if (simulation_ && !paused_) simulation_->advance(dt);
+        if (simulation_ && !paused_) {
+            const std::uint64_t loads = simulation_->sceneLoads();
+            simulation_->advance(dt);
+            if (simulation_->sceneLoads() != loads) {
+                // A script switched scenes: the hierarchy and inspector show the new one.
+                ctx_.setScene(playScene_.get(), true);
+                log::info("Editor", "play mode: now in {}", simulation_->loadedScene().generic_string());
+            }
+        }
         if (simulation_) {
             // The HUD is laid out in the viewport's pixels.
             const qreal dpr = viewport_->devicePixelRatio();

@@ -319,6 +319,7 @@ What a behaviour can do:
 | `raycast(origin, direction, maxDistance, hit)` | Closest collider along a ray: `hit.entity`, `hit.point`, `hit.normal`, `hit.distance` |
 | `onCollision(Entity other)` | Override: this entity's collider (or character) started touching another, triggers included |
 | `spawn("Content/Prefabs/X.lprefab", position)` | Add a copy of a prefab |
+| `loadScene("Content/Scenes/Level2.lscene")` | Switch to another scene at the end of the step (menus, levels); `time()` starts again from 0. In the editor, Stop returns to the scene you were editing |
 | `move(velocity)`, `jump(speed)`, `grounded()` | Character Controller: walk, jump, stand |
 | `clone(e)`, `destroy(e)` | Copy an entity with its children, components and scripts; remove one at the end of the step |
 | `param("speed", 4.0f)` | A number from the Script component's **Parameters** field, e.g. `speed=6, jump=4` |

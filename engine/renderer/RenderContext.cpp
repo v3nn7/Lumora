@@ -238,7 +238,7 @@ nvrhi::GraphicsPipelineHandle RenderContext::createPipeline(const PipelineDesc& 
 }
 
 nvrhi::BufferHandle RenderContext::createBuffer(std::span<const std::byte> bytes, bool vertex, bool index,
-                                                const char* name) {
+                                                const char* name, bool sharedHeap) {
     nvrhi::BufferDesc desc;
     desc.byteSize = std::max<std::uint64_t>(bytes.size(), 4);
     desc.debugName = name;
@@ -249,8 +249,8 @@ nvrhi::BufferHandle RenderContext::createBuffer(std::span<const std::byte> bytes
     desc.initialState = vertex ? nvrhi::ResourceStates::VertexBuffer
                                : index ? nvrhi::ResourceStates::IndexBuffer : nvrhi::ResourceStates::ShaderResource;
     desc.keepInitialState = true;
-    desc.isVirtual = true;  // memory from a shared heap
-    nvrhi::BufferHandle buffer = gpu_->createBuffer(desc);
+    desc.isVirtual = sharedHeap;  // memory from a shared heap
+    nvrhi::BufferHandle buffer = sharedHeap ? gpu_->createBuffer(desc) : nullptr;
     if (buffer && !placeInHeap(buffer)) buffer = nullptr;
     if (!buffer) {  // e.g. larger than a heap: a buffer of its own
         desc.isVirtual = false;

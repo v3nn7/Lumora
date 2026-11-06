@@ -13,8 +13,8 @@ struct VSInput {
 #endif
 };
 
-float4 VSMain(VSInput input) : SV_Position {
-    GpuObject object = gObjects[gPush.index0];
+float4 VSMain(VSInput input, uint instance : SV_InstanceID) : SV_Position {
+    GpuObject object = gObjects[gPush.index0 + instance];
     float3 position = input.position;
 #if defined(LUMORA_SKINNED)
     position = mul(skinMatrix(input.joints, input.weights, (uint)object.flags.z), float4(position, 1.0)).xyz;

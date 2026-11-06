@@ -234,6 +234,58 @@ ComponentRegistry makeBuiltin() {
         reg.add(std::move(d));
     }
     {
+        auto d = R::describe<TerrainComponent>("Terrain", "Terrain");
+        using T = TerrainComponent;
+        d.fields = {
+            ranged(R::field(&T::size, "size", "Size", FieldKind::Float), 1.0f, 100000.0f, 1.0f),
+            ranged(R::field(&T::height, "height", "Height", FieldKind::Float), 0.0f, 10000.0f, 0.5f),
+            ranged(R::field(&T::resolution, "resolution", "Resolution", FieldKind::Int), 2.0f, 1025.0f, 1.0f),
+            R::field(&T::heightmap, "heightmap", "Heightmap", FieldKind::Asset),
+            ranged(R::field(&T::seed, "seed", "Seed", FieldKind::Int), 0.0f, 1e6f, 1.0f),
+            ranged(R::field(&T::hillSize, "hillSize", "Hill Size", FieldKind::Float), 1.0f, 100000.0f, 1.0f),
+            R::field(&T::grassColor, "grassColor", "Grass Color", FieldKind::Color),
+            R::field(&T::rockColor, "rockColor", "Rock Color", FieldKind::Color),
+            R::field(&T::texture, "texture", "Texture", FieldKind::Asset),
+            ranged(R::field(&T::textureTiling, "textureTiling", "Texture Tiling", FieldKind::Float), 0.05f, 1000.0f, 0.1f),
+        };
+        reg.add(std::move(d));
+    }
+    {
+        auto d = R::describe<WaterComponent>("Water", "Water");
+        using W = WaterComponent;
+        d.fields = {
+            ranged(R::field(&W::width, "width", "Width", FieldKind::Float), 0.1f, 100000.0f, 1.0f),
+            ranged(R::field(&W::length, "length", "Length", FieldKind::Float), 0.1f, 100000.0f, 1.0f),
+            R::field(&W::shallowColor, "shallowColor", "Shallow Color", FieldKind::Color),
+            R::field(&W::deepColor, "deepColor", "Deep Color", FieldKind::Color),
+            ranged(R::field(&W::clarity, "clarity", "Clarity", FieldKind::Float), 0.05f, 1000.0f, 0.1f),
+            ranged(R::field(&W::waveHeight, "waveHeight", "Wave Height", FieldKind::Float), 0.0f, 20.0f, 0.01f),
+            ranged(R::field(&W::waveLength, "waveLength", "Wave Length", FieldKind::Float), 0.1f, 1000.0f, 0.1f),
+            ranged(R::field(&W::waveSpeed, "waveSpeed", "Wave Speed", FieldKind::Float), 0.0f, 20.0f, 0.05f),
+            ranged(R::field(&W::buoyancy, "buoyancy", "Buoyancy", FieldKind::Float), 0.0f, 10.0f, 0.05f),
+        };
+        reg.add(std::move(d));
+    }
+    {
+        auto d = R::describe<FoliageComponent>("Foliage", "Foliage");
+        using F = FoliageComponent;
+        d.fields = {
+            enumerated(R::field(&F::mesh, "mesh", "Mesh", FieldKind::Enum), {"Cube", "Sphere", "Plane", "Cylinder"}),
+            R::field(&F::meshAsset, "meshAsset", "Mesh Asset", FieldKind::Asset),
+            R::field(&F::material, "material", "Material", FieldKind::Asset),
+            R::field(&F::color, "color", "Color", FieldKind::Color),
+            ranged(R::field(&F::count, "count", "Count", FieldKind::Int), 0.0f, 200000.0f, 1.0f),
+            ranged(R::field(&F::radius, "radius", "Radius", FieldKind::Float), 0.1f, 100000.0f, 0.5f),
+            ranged(R::field(&F::seed, "seed", "Seed", FieldKind::Int), 0.0f, 1e6f, 1.0f),
+            ranged(R::field(&F::minScale, "minScale", "Min Scale", FieldKind::Float), 0.01f, 100.0f, 0.05f),
+            ranged(R::field(&F::maxScale, "maxScale", "Max Scale", FieldKind::Float), 0.01f, 100.0f, 0.05f),
+            R::field(&F::randomRotation, "randomRotation", "Random Rotation", FieldKind::Bool),
+            R::field(&F::onTerrain, "onTerrain", "On Terrain", FieldKind::Bool),
+            ranged(R::field(&F::maxSlope, "maxSlope", "Max Slope", FieldKind::Float), 0.0f, 90.0f, 1.0f),
+        };
+        reg.add(std::move(d));
+    }
+    {
         auto d = R::describe<ParticleEmitterComponent>("ParticleEmitter", "Particle Emitter");
         using P = ParticleEmitterComponent;
         d.fields = {

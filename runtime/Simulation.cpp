@@ -103,6 +103,8 @@ void Simulation::setSaveFile(std::filesystem::path file) {
 void Simulation::setProjectRoot(std::filesystem::path root) {
     projectRoot_ = std::move(root);
     if (scripts_) scripts_->setProjectRoot(projectRoot_);
+    if (physics_) physics_->setProjectRoot(projectRoot_);
+    navigation_->setProjectRoot(projectRoot_);
     if (AnimationSystem::sceneHasAnimators(scene_)) {
         animation_ = std::make_unique<AnimationSystem>(scene_, projectRoot_);
         if (scripts_) scripts_->setAnimation(animation_.get());
@@ -133,6 +135,7 @@ void Simulation::step() {
     if (!physics_ && PhysicsWorld::sceneHasColliders(scene_)) {
         // Colliders appeared during play (a script cloned one): start the physics world now.
         physics_ = std::make_unique<PhysicsWorld>(scene_);
+        physics_->setProjectRoot(projectRoot_);
         if (scripts_) scripts_->setPhysics(physics_.get());
     }
     navigation_->update(dt, physics_.get());  // agents' steps go into this physics step
@@ -169,11 +172,15 @@ Result<> Simulation::loadScene(const std::filesystem::path& relativePath) {
     hud_.clear();
     debug_.clear();
     navigation_ = std::make_unique<NavigationWorld>(scene_);
+    navigation_->setProjectRoot(projectRoot_);
     if (auto replaced = SceneSerializer::loadInto(scene_, SceneSerializer::toJson(**loaded)); !replaced) {
         return makeError("loadScene {}: {}", relative.generic_string(), replaced.error().message);
     }
     scene_.updateWorldTransforms();
-    if (PhysicsWorld::sceneHasColliders(scene_)) physics_ = std::make_unique<PhysicsWorld>(scene_);
+    if (PhysicsWorld::sceneHasColliders(scene_)) {
+        physics_ = std::make_unique<PhysicsWorld>(scene_);
+        physics_->setProjectRoot(projectRoot_);
+    }
     if (!projectRoot_.empty() && AnimationSystem::sceneHasAnimators(scene_)) {
         animation_ = std::make_unique<AnimationSystem>(scene_, projectRoot_);
     }

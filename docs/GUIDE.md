@@ -292,6 +292,25 @@ glows with bloom (sparks, fire); **Alpha** suits smoke and dust. Effects run in 
 well, so they can be tuned without playing. Scripts call `emitParticles(30)` for a burst and
 `setParticlesPlaying(false)` to stop one.
 
+### Terrain, water and foliage
+
+**Terrain.** *Add Component → Terrain* makes ground centred on the entity: **Size** (metres per
+side), **Height**, **Resolution** (vertices per side) and either a **Heightmap** (a grayscale
+image in the project, white = Height) or generated hills (**Seed**, **Hill Size**). Flat ground
+gets the **Grass Color**, slopes the **Rock Color**; a **Texture** tiles over it every
+**Texture Tiling** metres. It is solid in play mode and characters and Nav Agents walk on it.
+
+**Water.** A **Water** component is a surface at the entity's height, **Width** × **Length**
+metres: waves (**Wave Height**, **Wave Length**, **Wave Speed**), a colour from **Shallow** to
+**Deep** as the water gets deeper (**Clarity**: how far down one sees), sky reflections, sun
+glints and foam where it meets the shore. Dynamic bodies float in it (**Buoyancy**; 0 turns it
+off).
+
+**Foliage.** A **Foliage** component scatters **Count** copies of a mesh (a primitive, a
+**Mesh Asset** from a model, with a **Material** or **Color**) within **Radius** metres of the
+entity, at random sizes and turns, standing on the terrain below and leaving ground steeper than
+**Max Slope** bare. Copies are drawn with GPU instancing, so thousands cost little.
+
 ### Physics
 
 Give an entity a **Collider** (box, sphere or capsule) to make it solid. Add a **Rigid Body** to

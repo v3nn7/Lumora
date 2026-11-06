@@ -63,6 +63,23 @@ const GpuMesh* MeshCache::asset(AssetLibrary& library, const std::string& key, b
     return &assets_.emplace(*canonical, std::move(gpu)).first->second;
 }
 
+const GpuMesh* MeshCache::procedural(const std::string& slot, std::uint64_t key, const std::function<MeshData()>& build) {
+    auto it = procedural_.find(slot);
+    if (it != procedural_.end() && it->second.key == key) return &it->second.mesh;
+    const MeshData data = build();
+    if (data.indices.empty()) return nullptr;
+    GpuMesh gpu;
+    gpu.vertices = ctx_.createBuffer(std::as_bytes(std::span(data.vertices)), true, false, (slot + ".vertices").c_str(), false);
+    gpu.indices = ctx_.createBuffer(std::as_bytes(std::span(data.indices)), false, true, (slot + ".indices").c_str(), false);
+    gpu.indexCount = static_cast<std::uint32_t>(data.indices.size());
+    gpu.bounds = data.bounds;
+    // The old buffers stay alive until the GPU is done with the frames that use them (NVRHI).
+    Procedural& p = procedural_[slot];
+    p.key = key;
+    p.mesh = std::move(gpu);
+    return &p.mesh;
+}
+
 const GpuMesh& MeshCache::primitive(MeshPrimitive p) const {
     const auto i = static_cast<std::size_t>(p);
     return primitives_[i < primitives_.size() ? i : 0];

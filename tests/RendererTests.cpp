@@ -1111,3 +1111,105 @@ TEST_F(RendererTest, HudDrawsRectanglesAndTextOnTop) {
     EXPECT_GT(textPixels, 60) << "white glyph pixels where the text is";
     EXPECT_EQ(changedElsewhere, 0) << "nothing else changes";
 }
+
+// ---- Terrain, foliage, water ------------------------------------------------------------------
+
+TEST_F(RendererTest, TerrainIsGrassOnFlatGroundAndRockOnSlopes) {
+    auto scene = sceneWithSun();
+    scene->environment().fogDensity = 0.0f;
+    const auto ground = scene->createEntity("Ground");
+    auto& t = scene->registry().emplace<TerrainComponent>(ground);
+    t.size = 40.0f;
+    t.height = 0.0f;  // flat
+    t.resolution = 33;
+    t.grassColor = {0.0f, 0.8f, 0.0f};
+    t.rockColor = {0.8f, 0.0f, 0.0f};
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 10.0f, 0.01f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const glm::uvec2 size(64, 64);
+    RenderSettings settings;
+    settings.bloom = false;
+    auto flat = renderer_->capture(*scene, cam.view(1.0f), {size.x, size.y}, settings);
+    ASSERT_TRUE(flat.has_value());
+    const auto f = pixel(*flat, 32, 32);
+    EXPECT_GT(f.g, f.r + 30) << "grass";
+    t.height = 60.0f;  // steep hills everywhere
+    t.hillSize = 6.0f;
+    auto steep = renderer_->capture(*scene, cam.view(1.0f), {size.x, size.y}, settings);
+    ASSERT_TRUE(steep.has_value());
+    int red = 0, green = 0;
+    for (std::uint32_t y = 8; y < 56; ++y) {
+        for (std::uint32_t x = 8; x < 56; ++x) {
+            const auto p = pixel(*steep, x, y);
+            red += p.r > p.g ? 1 : 0;
+            green += p.g > p.r ? 1 : 0;
+        }
+    }
+    EXPECT_GT(red, green) << "mostly rock on steep ground";
+}
+
+TEST_F(RendererTest, FoliageCopiesAreDrawnInstanced) {
+    auto scene = sceneWithSun();
+    const auto patch = scene->createEntity("Rocks");
+    auto& f = scene->registry().emplace<FoliageComponent>(patch);
+    f.count = 400;
+    f.radius = 6.0f;
+    f.minScale = f.maxScale = 0.2f;
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 25.0f, 0.01f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    RenderSettings settings;
+    settings.shadows = false;
+    auto image = renderer_->capture(*scene, cam.view(1.0f), {64, 64}, settings);
+    ASSERT_TRUE(image.has_value());
+    EXPECT_EQ(renderer_->stats().scene.visibleObjects, 400u);
+    EXPECT_LE(renderer_->stats().scene.drawCalls, 10u) << "400 copies in one instanced draw per pass";
+}
+
+TEST_F(RendererTest, WaterIsDeeperColouredAndHidesBehindGeometry) {
+    auto scene = sceneWithSun();
+    scene->environment().fogDensity = 0.0f;
+    // A white floor sloping from 0.2 m to 8 m under the water.
+    const auto floor = scene->createEntity("Floor");
+    auto& mesh = scene->registry().emplace<MeshRendererComponent>(floor);
+    mesh.mesh = MeshPrimitive::Plane;
+    mesh.baseColor = glm::vec3(0.9f);
+    auto& ft = scene->registry().get<TransformComponent>(floor);
+    ft.scale = {30.0f, 1.0f, 30.0f};
+    ft.position.y = -4.0f;
+    ft.rotationDeg.z = -15.0f;  // deeper towards +X
+    const auto pool = scene->createEntity("Pool");
+    auto& w = scene->registry().emplace<WaterComponent>(pool);
+    w.width = w.length = 30.0f;
+    w.waveHeight = 0.0f;
+    w.shallowColor = {0.0f, 0.6f, 0.6f};
+    w.deepColor = {0.0f, 0.0f, 0.3f};
+    w.clarity = 2.0f;
+    // A red box sticking out of the water.
+    const auto box = scene->createEntity("Box");
+    scene->registry().emplace<MeshRendererComponent>(box).baseColor = {0.9f, 0.0f, 0.0f};
+    scene->registry().get<TransformComponent>(box).position = {-3.0f, 0.5f, 0.0f};
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 14.0f, 0.01f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const glm::uvec2 size(96, 96);
+    const CameraView view = cam.view(1.0f);
+    RenderSettings settings;
+    settings.bloom = false;
+    settings.shadows = false;
+    auto image = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(image.has_value());
+    const glm::ivec2 shallow = toPixel(view, glm::vec3(-8.0f, 0.0f, 3.0f), size);
+    const glm::ivec2 deep = toPixel(view, glm::vec3(8.0f, 0.0f, 3.0f), size);
+    const glm::ivec2 top = toPixel(view, glm::vec3(-3.0f, 1.0f, 0.0f), size);
+    const auto s = pixel(*image, shallow.x, shallow.y);
+    const auto d = pixel(*image, deep.x, deep.y);
+    const auto b = pixel(*image, top.x, top.y);
+    EXPECT_GT(int(s.g), int(d.g) + 20) << "shallow water is lighter and greener than deep water";
+    EXPECT_GT(d.b, d.r) << "deep water is blue";
+    EXPECT_GT(b.r, b.b + 60) << "the box above the water is not covered by it";
+}

@@ -5,6 +5,7 @@
 #include <entt/entity/entity.hpp>
 #include <glm/vec3.hpp>
 
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -33,7 +34,9 @@ public:
     NavigationWorld(const NavigationWorld&) = delete;
     NavigationWorld& operator=(const NavigationWorld&) = delete;
 
-    /// (Re)builds the navigation mesh from the scene's static colliders now.
+    /// Project folder terrain heightmaps are read from.
+    void setProjectRoot(std::filesystem::path root);
+    /// (Re)builds the navigation mesh from the scene's static colliders and terrains now.
     Result<> build();
     [[nodiscard]] bool built() const noexcept;
     [[nodiscard]] std::size_t polygonCount() const;

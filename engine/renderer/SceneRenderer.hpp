@@ -120,6 +120,7 @@ private:
     nvrhi::GraphicsPipelineHandle bloomDown_;
     nvrhi::GraphicsPipelineHandle bloomUp_;
     nvrhi::GraphicsPipelineHandle decal_;
+    nvrhi::GraphicsPipelineHandle water_;
     nvrhi::GraphicsPipelineHandle depthOfField_;
     nvrhi::GraphicsPipelineHandle shafts_;
     nvrhi::GraphicsPipelineHandle shaftsAdd_;
@@ -130,6 +131,16 @@ private:
     std::unique_ptr<HudFont> hudFont_;  // built on first use
     nvrhi::TextureHandle hudAtlas_;
     std::uint32_t hudAtlasIndex_ = UINT32_MAX;
+    /// Terrains and foliage: how they look (as a Mesh Renderer would) and their copies' world
+    /// matrices, rebuilt when their key changes; dropped when unused for a while.
+    struct LandscapeEntry {
+        std::uint64_t key = 0;
+        MeshRendererComponent look;
+        std::vector<glm::mat4> worlds;
+        std::uint64_t lastFrame = 0;
+    };
+    std::unordered_map<std::uint64_t, LandscapeEntry> landscape_;
+    std::uint64_t frameCounter_ = 0;
 };
 
 } // namespace lumora::render

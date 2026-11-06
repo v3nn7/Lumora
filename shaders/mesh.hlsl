@@ -17,10 +17,13 @@ struct VSOutput {
     float3 normal : TEXCOORD1;
     float2 uv : TEXCOORD2;
     float4 tangent : TEXCOORD3;  // world-space tangent, w = bitangent sign
+    nointerpolation uint objectIndex : TEXCOORD4;
 };
 
-VSOutput VSMain(VSInput input) {
-    GpuObject object = gObjects[gPush.index0];
+// Instanced draws: copies of one mesh are consecutive objects starting at gPush.index0.
+VSOutput VSMain(VSInput input, uint instance : SV_InstanceID) {
+    const uint objectIndex = gPush.index0 + instance;
+    GpuObject object = gObjects[objectIndex];
     float3 position = input.position;
     float3 normal = input.normal;
     float3 tangent = input.tangent.xyz;
@@ -38,6 +41,7 @@ VSOutput VSMain(VSInput input) {
     o.normal = mul((float3x3)object.normalMatrix, normal);
     o.uv = input.uv;
     o.tangent = float4(mul((float3x3)object.world, tangent), input.tangent.w);
+    o.objectIndex = objectIndex;
     return o;
 }
 
@@ -53,8 +57,8 @@ float gridMask(float2 coord, float cell) {
 
 /// Procedural prototyping patterns, projected along the dominant normal axis (world metres).
 float surfacePattern(float3 p, float3 n, uint pattern) {
-    if (pattern == 0u) {
-        return 1.0;
+    if (pattern == 0u || pattern == 3u) {
+        return 1.0;  // (3 = terrain: coloured in terrainAlbedo)
     }
     float3 an = abs(n);
     float2 coord = (an.y >= an.x && an.y >= an.z) ? p.xz : (an.x >= an.z ? p.zy : p.xy);
@@ -66,6 +70,30 @@ float surfacePattern(float3 p, float3 n, uint pattern) {
     float2 cell = floor(coord);
     float parity = abs(fmod(cell.x + cell.y, 2.0));
     return lerp(0.72, 1.0, parity);
+}
+
+float terrainHash(float2 p) {
+    return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+}
+
+float terrainNoise(float2 p) {
+    float2 i = floor(p), f = frac(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(terrainHash(i), terrainHash(i + float2(1, 0)), f.x),
+                lerp(terrainHash(i + float2(0, 1)), terrainHash(i + float2(1, 1)), f.x), f.y);
+}
+
+/// Terrain: grass on flat ground, rock (packed in flags.z as sqrt-encoded RGB8) on slopes, with
+/// a little large-scale variation so wide fields do not look flat.
+float3 terrainAlbedo(float3 grass, float packedRock, float3 position, float3 normal) {
+    uint packed = (uint)packedRock;
+    float3 rock = float3(packed & 255u, (packed >> 8) & 255u, (packed >> 16) & 255u) / 255.0;
+    rock *= rock;
+    float variation = terrainNoise(position.xz * 0.08) * 0.6 + terrainNoise(position.xz * 0.5) * 0.4;
+    float slope = 1.0 - saturate(normal.y);
+    float rocky = smoothstep(0.22, 0.38, slope + (variation - 0.5) * 0.12);
+    float3 g = grass * lerp(0.82, 1.15, variation);
+    return lerp(g, rock * lerp(0.85, 1.1, variation), rocky);
 }
 
 // ---- Spot and point light shadows: 4x4 tiles of a second depth atlas ----------------------
@@ -229,7 +257,7 @@ float4 sampleMaterial(uint textureIndex, float2 uv) {
 }
 
 float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
-    GpuObject object = gObjects[gPush.index0];
+    GpuObject object = gObjects[input.objectIndex];
     // Screen-space derivatives must be taken in uniform control flow (used by shadow filtering).
     float3 dpdx = ddx(input.worldPosition);
     float3 dpdy = ddy(input.worldPosition);
@@ -252,6 +280,9 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     s.geometricNormal = geometricNormal;
     s.view = normalize(gFrame.cameraPositionTime.xyz - input.worldPosition);
     float3 albedo = object.baseColorMetallic.rgb;
+    if ((uint)object.flags.y == 3u) {
+        albedo = terrainAlbedo(albedo, object.flags.z, input.worldPosition, geometricNormal);
+    }
     if (object.textures.x != NO_TEXTURE) {
         albedo *= sampleMaterial(object.textures.x, input.uv).rgb;  // sRGB view: sampled in linear
     }

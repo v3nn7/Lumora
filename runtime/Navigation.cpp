@@ -3,6 +3,7 @@
 #include "core/Log.hpp"
 #include "core/Timer.hpp"
 #include "runtime/PhysicsWorld.hpp"
+#include "scene/Landscape.hpp"
 #include "scene/Scene.hpp"
 
 #include <DetourCrowd.h>
@@ -31,7 +32,16 @@ constexpr unsigned short kWalkable = 1;
 const float kExtents[3] = {2.0f, 4.0f, 2.0f};  // search box for points near the mesh
 
 /// Triangles of the static colliders (world space): the ground the agents stand on.
-void collectGeometry(const Scene& scene, std::vector<float>& vertices, std::vector<int>& triangles) {
+void collectGeometry(const Scene& scene, const std::filesystem::path& root, std::vector<float>& vertices,
+                     std::vector<int>& triangles) {
+    for (auto [e, terrain] : scene.registry().view<TerrainComponent>().each()) {
+        std::vector<glm::vec3> points;
+        std::vector<std::uint32_t> indices;
+        terrainTriangles(*terrainData(terrain, root), scene.worldMatrix(e), points, indices);
+        const int first = static_cast<int>(vertices.size() / 3);
+        for (const glm::vec3& p : points) vertices.insert(vertices.end(), {p.x, p.y, p.z});
+        for (const std::uint32_t i : indices) triangles.push_back(first + static_cast<int>(i));
+    }
     const auto& reg = scene.registry();
     auto vertex = [&](const glm::vec3& p) {
         vertices.insert(vertices.end(), {p.x, p.y, p.z});
@@ -98,6 +108,7 @@ void collectGeometry(const Scene& scene, std::vector<float>& vertices, std::vect
 
 struct NavigationWorld::Impl {
     Scene& scene;
+    std::filesystem::path root;
     NavMeshSettings settings;
     dtNavMesh* mesh = nullptr;
     dtNavMeshQuery* query = nullptr;
@@ -141,6 +152,8 @@ NavigationWorld::NavigationWorld(Scene& scene, NavMeshSettings settings)
 NavigationWorld::~NavigationWorld() = default;
 
 bool NavigationWorld::sceneHasAgents(const Scene& scene) { return !scene.registry().view<NavAgentComponent>().empty(); }
+void NavigationWorld::setProjectRoot(std::filesystem::path root) { impl_->root = std::move(root); }
+
 bool NavigationWorld::built() const noexcept { return impl_->query != nullptr; }
 std::size_t NavigationWorld::polygonCount() const { return impl_->polygons; }
 
@@ -151,7 +164,7 @@ Result<> NavigationWorld::build() {
     Stopwatch timer;
     std::vector<float> verts;
     std::vector<int> tris;
-    collectGeometry(w.scene, verts, tris);
+    collectGeometry(w.scene, w.root, verts, tris);
     if (tris.empty()) return makeError("no static colliders to walk on");
     const NavMeshSettings& s = w.settings;
 

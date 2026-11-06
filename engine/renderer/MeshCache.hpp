@@ -5,6 +5,7 @@
 #include "renderer/Gpu.hpp"
 
 #include <array>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -40,6 +41,8 @@ public:
     [[nodiscard]] std::size_t assetCount() const noexcept { return assets_.size(); }
     /// Lets meshes that failed to load be tried again.
     void forgetFailures() { failed_.clear(); }
+    /// A mesh made by code (terrain, water grid) in `slot`, rebuilt with `build` when `key` changes.
+    [[nodiscard]] const GpuMesh* procedural(const std::string& slot, std::uint64_t key, const std::function<MeshData()>& build);
     /// Drops the meshes of a model file (absolute, generic form); the GPU must be idle.
     std::size_t invalidateFile(const std::string& file);
 
@@ -48,6 +51,11 @@ private:
     std::array<GpuMesh, static_cast<std::size_t>(MeshPrimitive::Count)> primitives_;
     std::unordered_map<std::string, GpuMesh> assets_;
     std::unordered_set<std::string> failed_;
+    struct Procedural {
+        std::uint64_t key = 0;
+        GpuMesh mesh;
+    };
+    std::unordered_map<std::string, Procedural> procedural_;
 };
 
 } // namespace lumora::render

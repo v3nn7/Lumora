@@ -1,6 +1,7 @@
 #include "runtime/PhysicsWorld.hpp"
 
 #include "core/Log.hpp"
+#include "scene/Landscape.hpp"
 #include "scene/Scene.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -25,6 +26,7 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/GroupFilterTable.h>
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
@@ -289,6 +291,92 @@ struct PhysicsWorld::Impl {
     };
     std::unordered_map<entt::entity, RagdollInstance> ragdolls;
     JPH::CollisionGroup::GroupID nextRagdollGroup = 1;
+    std::filesystem::path projectRoot;
+    struct TerrainBody {
+        JPH::BodyID id;
+        std::uint64_t key = 0;
+    };
+    std::unordered_map<entt::entity, TerrainBody> terrains;
+
+    static std::uint64_t terrainBodyKey(const TerrainComponent& t, const glm::mat4& world, const std::filesystem::path& folder) {
+        std::uint64_t h = terrainKey(t, folder);
+        for (int c = 0; c < 4; ++c) {
+            for (int r = 0; r < 4; ++r) h = h * 1099511628211ull ^ std::hash<float>{}(world[c][r]);
+        }
+        return h;
+    }
+
+    void removeTerrain(const TerrainBody& t) {
+        JPH::BodyInterface& bi = system.GetBodyInterface();
+        bi.RemoveBody(t.id);
+        bi.DestroyBody(t.id);
+    }
+
+    /// Terrains are static triangle meshes in world space (rebuilt when they change).
+    void syncTerrains() {
+        auto& reg = scene.registry();
+        for (auto it = terrains.begin(); it != terrains.end();) {
+            const auto* t = reg.valid(it->first) ? reg.try_get<TerrainComponent>(it->first) : nullptr;
+            if (t == nullptr || terrainBodyKey(*t, scene.worldMatrix(it->first), projectRoot) != it->second.key) {
+                releaseConstraintsOf(it->first);
+                removeTerrain(it->second);
+                it = terrains.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto [e, terrain] : reg.view<TerrainComponent>().each()) {
+            if (terrains.contains(e)) continue;
+            const glm::mat4 world = scene.worldMatrix(e);
+            const auto data = terrainData(terrain, projectRoot);
+            std::vector<glm::vec3> vertices;
+            std::vector<std::uint32_t> indices;
+            terrainTriangles(*data, world, vertices, indices);
+            JPH::VertexList joltVertices;
+            joltVertices.reserve(vertices.size());
+            for (const glm::vec3& v : vertices) joltVertices.push_back(JPH::Float3(v.x, v.y, v.z));
+            JPH::IndexedTriangleList triangles;
+            triangles.reserve(indices.size() / 3);
+            for (std::size_t i = 0; i + 2 < indices.size(); i += 3) triangles.push_back(JPH::IndexedTriangle(indices[i], indices[i + 1], indices[i + 2]));
+            JPH::MeshShapeSettings mesh(std::move(joltVertices), std::move(triangles));
+            auto shape = mesh.Create();
+            if (!shape.IsValid()) {
+                log::error("Physics", "terrain '{}': {}", scene.nameOf(e), shape.GetError().c_str());
+                continue;
+            }
+            JPH::BodyCreationSettings settings(shape.Get(), JPH::RVec3::sZero(), JPH::Quat::sIdentity(), JPH::EMotionType::Static,
+                                               Layers::kStatic);
+            settings.mUserData = static_cast<JPH::uint64>(entt::to_integral(e));
+            const JPH::BodyID id = system.GetBodyInterface().CreateAndAddBody(settings, JPH::EActivation::DontActivate);
+            if (id.IsInvalid()) continue;
+            terrains.emplace(e, TerrainBody{id, terrainBodyKey(terrain, world, projectRoot)});
+            system.OptimizeBroadPhase();
+        }
+    }
+
+    /// Dynamic bodies inside a Water volume float: Jolt's buoyancy with drag.
+    void applyBuoyancy(float dt) {
+        auto& reg = scene.registry();
+        auto waters = reg.view<WaterComponent>();
+        if (waters.begin() == waters.end()) return;
+        JPH::BodyInterface& bi = system.GetBodyInterface();
+        const JPH::Vec3 gravity = system.GetGravity();
+        for (auto [w, water] : waters.each()) {
+            if (water.buoyancy <= 0.0f) continue;
+            const glm::mat4 world = scene.worldMatrix(w);
+            const glm::mat4 inverse = glm::inverse(world);
+            const glm::vec3 up = glm::normalize(glm::vec3(world[1]));
+            for (const auto& [entity, body] : bodies) {
+                if (body.motion != BodyMotion::Dynamic) continue;
+                const glm::vec3 p = fromJolt(JPH::Vec3(bi.GetCenterOfMassPosition(body.id)));
+                const glm::vec3 local(inverse * glm::vec4(p, 1.0f));
+                if (std::abs(local.x) > water.width * 0.5f || std::abs(local.z) > water.length * 0.5f) continue;
+                const glm::vec3 surface(world * glm::vec4(local.x, 0.0f, local.z, 1.0f));
+                bi.ApplyBuoyancyImpulse(body.id, JPH::RVec3(toJolt(surface)), toJolt(up), water.buoyancy, 0.5f, 0.05f,
+                                        JPH::Vec3::sZero(), gravity, dt);
+            }
+        }
+    }
 
     explicit Impl(Scene& s) : scene(s) {}
 
@@ -773,6 +861,7 @@ struct PhysicsWorld::Impl {
             }
         }
         if (added) system.OptimizeBroadPhase();
+        syncTerrains();
         syncJoints();
         syncVehicles();
         syncRagdolls();
@@ -807,6 +896,8 @@ PhysicsWorld::~PhysicsWorld() {
     impl_->vehicles.clear();
     for (auto& [entity, ragdoll] : impl_->ragdolls) impl_->removeRagdoll(ragdoll);
     impl_->ragdolls.clear();
+    for (const auto& [entity, terrain] : impl_->terrains) impl_->removeTerrain(terrain);
+    impl_->terrains.clear();
     for (const auto& [entity, body] : impl_->bodies) impl_->removeBody(body);
     impl_->bodies.clear();
     impl_.reset();
@@ -815,7 +906,8 @@ PhysicsWorld::~PhysicsWorld() {
 
 bool PhysicsWorld::sceneHasColliders(const Scene& scene) {
     return !scene.registry().view<ColliderComponent>().empty() ||
-           !scene.registry().view<CharacterControllerComponent>().empty();
+           !scene.registry().view<CharacterControllerComponent>().empty() ||
+           !scene.registry().view<TerrainComponent>().empty();
 }
 
 bool PhysicsWorld::moveCharacter(entt::entity entity, const glm::vec3& velocity) {
@@ -841,6 +933,13 @@ bool PhysicsWorld::characterGrounded(entt::entity entity) const {
 std::size_t PhysicsWorld::characterCount() const { return impl_->characters.size(); }
 
 std::size_t PhysicsWorld::bodyCount() const { return impl_->bodies.size(); }
+
+void PhysicsWorld::setProjectRoot(std::filesystem::path root) {
+    impl_->projectRoot = std::move(root);
+    impl_->syncTerrains();  // heightmaps can be read now
+}
+
+std::size_t PhysicsWorld::terrainCount() const { return impl_->terrains.size(); }
 
 std::size_t PhysicsWorld::jointCount() const {
     return static_cast<std::size_t>(std::ranges::count_if(impl_->joints, [](const auto& j) { return j.second.constraint != nullptr; }));
@@ -939,6 +1038,7 @@ void PhysicsWorld::step(float dt) {
         bi.MoveKinematic(body.id, JPH::RVec3(toJolt(pose.position)), toJolt(pose.rotation), dt);
     }
 
+    impl_->applyBuoyancy(dt);
     const JPH::EPhysicsUpdateError error = impl_->system.Update(dt, 1, impl_->temp.get(), impl_->jobs.get());
     if (error != JPH::EPhysicsUpdateError::None) {
         log::warn("Physics", "update reported limits being exceeded (error {})", static_cast<int>(error));

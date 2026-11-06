@@ -64,8 +64,10 @@ public:
         gpu_->executeCommandLists(&list, 1);
     }
     /// Static buffer filled with `bytes` (vertex, index or structured data).
+    /// `sharedHeap`: placed in a shared heap (never freed until shutdown); off for buffers that
+    /// get replaced (procedural meshes), which get memory of their own.
     [[nodiscard]] nvrhi::BufferHandle createBuffer(std::span<const std::byte> bytes, bool vertex, bool index,
-                                                   const char* name);
+                                                   const char* name, bool sharedHeap = true);
     /// Sampled texture from mip levels (level 0 first).
     [[nodiscard]] nvrhi::TextureHandle createTexture(std::span<const std::span<const std::byte>> levels,
                                                      std::uint32_t width, std::uint32_t height, nvrhi::Format format,

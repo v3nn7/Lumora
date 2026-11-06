@@ -7,6 +7,7 @@
 #include "renderer/GpuTypes.hpp"
 #include "renderer/LightGrid.hpp"
 #include "renderer/RenderContext.hpp"
+#include "scene/Landscape.hpp"
 #include "scene/Scene.hpp"
 
 #include <glm/geometric.hpp>
@@ -285,6 +286,14 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     decal.blend = BlendMode::Multiply;
     decal.colorFormats = {hdr};
     decal_ = make(decal);
+    PipelineDesc water;
+    water.name = "Water";
+    water.vertexShader = "water.vert";
+    water.pixelShader = "water.frag";
+    water.input = VertexInput::MeshPosition;
+    water.blend = BlendMode::Alpha;
+    water.colorFormats = {hdr};
+    water_ = make(water);
 
     PipelineDesc post;
     post.vertexShader = "postfx.vert";
@@ -501,6 +510,20 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         std::uint32_t object;
         glm::vec3 center;  // world AABB
         glm::vec3 extent;
+        std::uint32_t count = 1;  // instances: objects object .. object + count - 1
+    };
+    // Copies of one mesh in consecutive objects become one instanced draw.
+    auto instanced = [](const std::vector<Draw>& list) {
+        std::vector<Draw> out;
+        out.reserve(list.size());
+        for (const Draw& d : list) {
+            if (!out.empty() && out.back().mesh == d.mesh && out.back().object + out.back().count == d.object) {
+                ++out.back().count;
+            } else {
+                out.push_back(d);
+            }
+        }
+        return out;
     };
     std::vector<Draw> draws;    // visible to the camera
     std::vector<Draw> casters;  // may cast into a shadow cascade (also off-screen objects)
@@ -514,8 +537,54 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         const glm::mat4* world;
         const GpuMesh* gpuMesh;
         std::shared_ptr<const MaterialAsset> material;  // the .lmat it uses, if any
+        float pattern = -1.0f;  // overrides the surface pattern (3 = terrain)
+        float extra = 0.0f;     // flags.z for the pattern (terrain: packed rock colour)
     };
     std::vector<Candidate> candidates;
+    ++frameCounter_;
+    const std::filesystem::path projectRoot = settings.assets != nullptr ? settings.assets->root() : std::filesystem::path();
+    auto landscapeEntry = [&](entt::entity e, std::uint64_t kind) -> LandscapeEntry& {
+        const std::uint64_t slot = (static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&scene)) * 0x9E3779B97F4A7C15ull) ^
+                                   (static_cast<std::uint64_t>(entt::to_integral(e)) << 2) ^ kind;
+        LandscapeEntry& entry = landscape_[slot];
+        entry.lastFrame = frameCounter_;
+        return entry;
+    };
+    // Terrains: a procedural mesh each, grass/rock coloured by slope in the shader.
+    for (auto [e, terrain, world] : reg.view<TerrainComponent, WorldTransformComponent>().each()) {
+        const std::uint64_t key = terrainKey(terrain, projectRoot) ^ (static_cast<std::uint64_t>(std::bit_cast<std::uint32_t>(terrain.textureTiling)) << 17);
+        const GpuMesh* gpuMesh = ctx_.meshes().procedural("terrain:" + scene.uuidOf(e).toString(), key, [&] {
+            return buildTerrainMesh(*terrainData(terrain, projectRoot), terrain.textureTiling);
+        });
+        if (gpuMesh == nullptr) continue;
+        LandscapeEntry& entry = landscapeEntry(e, 1);
+        entry.look.baseColor = terrain.grassColor;
+        entry.look.roughness = 0.92f;
+        entry.look.baseColorTexture = terrain.texture;
+        auto channel = [](float c) { return static_cast<std::uint32_t>(std::lround(std::sqrt(std::clamp(c, 0.0f, 1.0f)) * 255.0f)); };
+        const std::uint32_t rock = channel(terrain.rockColor.r) | (channel(terrain.rockColor.g) << 8) | (channel(terrain.rockColor.b) << 16);
+        candidates.push_back({e, &entry.look, &world.matrix, gpuMesh, nullptr, 3.0f, static_cast<float>(rock)});
+    }
+    // Foliage: one candidate per copy; consecutive objects of one mesh become instanced draws.
+    for (auto [e, foliage] : reg.view<FoliageComponent>().each()) {
+        LandscapeEntry& entry = landscapeEntry(e, 2);
+        const std::uint64_t key = foliageKey(scene, e, projectRoot);
+        if (entry.key != key || entry.worlds.empty() != (foliage.count == 0)) {
+            entry.key = key;
+            entry.worlds = foliageInstances(scene, e, projectRoot);
+        }
+        entry.look.mesh = foliage.mesh;
+        entry.look.meshAsset = foliage.meshAsset;
+        entry.look.material = foliage.material;
+        entry.look.baseColor = foliage.color;
+        entry.look.roughness = 0.8f;
+        const GpuMesh* gpuMesh = meshFor(entry.look, settings.assets, settings.blockOnAssets);
+        if (gpuMesh == nullptr) continue;
+        std::shared_ptr<const MaterialAsset> material;
+        if (!foliage.material.empty() && settings.assets != nullptr) material = settings.assets->material(foliage.material);
+        for (const glm::mat4& m : entry.worlds) candidates.push_back({e, &entry.look, &m, gpuMesh, material});
+    }
+    std::erase_if(landscape_, [&](const auto& item) { return item.second.lastFrame + 300 < frameCounter_; });
     for (auto [e, mesh, world] : reg.view<MeshRendererComponent, WorldTransformComponent>().each()) {
         if (!mesh.visible) continue;
         const GpuMesh* gpuMeshPtr = meshFor(mesh, settings.assets, settings.blockOnAssets);
@@ -558,17 +627,24 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 obj.baseColorMetallic = glm::vec4(mesh.baseColor, mesh.metallic);
                 obj.emissiveRoughness = glm::vec4(mesh.emissive * mesh.emissiveStrength, mesh.roughness);
             }
-            const float pattern = static_cast<float>(mat != nullptr ? mat->pattern : static_cast<std::int32_t>(mesh.pattern));
+            const float pattern = c.pattern >= 0.0f ? c.pattern
+                                                    : static_cast<float>(mat != nullptr ? mat->pattern : static_cast<std::int32_t>(mesh.pattern));
             const bool highlighted = c.entity == settings.selected ||
                                      std::ranges::find(settings.alsoSelected, c.entity) != settings.alsoSelected.end();
-            obj.flags = glm::vec4(highlighted ? 1.0f : 0.0f, pattern, 0.0f, 0.0f);
+            obj.flags = glm::vec4(highlighted ? 1.0f : 0.0f, pattern, c.extra, 0.0f);
         }
     });
 
     // 3. Textures (serial: the cache may start uploads) and the draw lists, in scene order.
     objects.reserve(candidates.size());
     std::vector<glm::mat4> joints;  // skinning palettes of every skinned object, back to back
-    for (std::size_t i = 0; i < candidates.size(); ++i) {
+    // Objects grouped by mesh (unskinned first), so copies of a mesh sit next to each other.
+    std::vector<std::size_t> order(candidates.size());
+    for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::ranges::stable_sort(order, std::less<>{}, [&](std::size_t i) {
+        return std::pair(candidates[i].gpuMesh->skinned(), candidates[i].gpuMesh);
+    });
+    for (const std::size_t i : order) {
         Prepared& p = prepared[i];
         if (!p.visible) {
             ++stats.culledObjects;
@@ -600,8 +676,8 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     }
     // Unskinned first, then skinned (one pipeline switch); within each, grouped by mesh.
     auto byPipelineAndMesh = [](const Draw& d) { return std::pair(d.mesh->skinned(), d.mesh); };
-    std::ranges::sort(draws, std::less<>{}, byPipelineAndMesh);
-    std::ranges::sort(casters, std::less<>{}, byPipelineAndMesh);
+    std::ranges::stable_sort(draws, std::less<>{}, byPipelineAndMesh);
+    std::ranges::stable_sort(casters, std::less<>{}, byPipelineAndMesh);
     // Decals are objects too: world, inverse world (in normalMatrix), colour + opacity, texture.
     std::vector<std::uint32_t> decals;
     for (auto [e, decal, world] : reg.view<DecalComponent, WorldTransformComponent>().each()) {
@@ -619,6 +695,24 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         decals.push_back(static_cast<std::uint32_t>(objects.size()));
         objects.push_back(obj);
     }
+    // Water surfaces: objects too (a unit grid scaled to the surface; wave settings in flags).
+    std::vector<std::uint32_t> waters;
+    const GpuMesh* waterGrid = nullptr;
+    for (auto [e, water, world] : reg.view<WaterComponent, WorldTransformComponent>().each()) {
+        const glm::mat4 surface = world.matrix * glm::scale(glm::mat4(1.0f), glm::vec3(water.width, 1.0f, water.length));
+        const glm::vec3 center(surface[3]);
+        const glm::mat3 m(surface);
+        const glm::vec3 halfExtent = (glm::abs(m[0]) + glm::abs(m[2])) * 0.5f + glm::vec3(0.0f, water.waveHeight * 1.5f, 0.0f);
+        if (settings.frustumCulling && !frustum.intersectsAabb(center, halfExtent)) continue;
+        if (waterGrid == nullptr) waterGrid = ctx_.meshes().procedural("water:grid", 256, [] { return buildWaterGrid(256); });
+        GpuObject obj;
+        obj.world = surface;
+        obj.baseColorMetallic = glm::vec4(water.shallowColor, 0.0f);
+        obj.emissiveRoughness = glm::vec4(water.deepColor, 0.0f);
+        obj.flags = glm::vec4(water.waveHeight, water.waveLength, water.waveSpeed, water.clarity);
+        waters.push_back(static_cast<std::uint32_t>(objects.size()));
+        objects.push_back(obj);
+    }
     if (objects.empty()) objects.emplace_back();  // structured buffers may not be empty
     if (joints.empty()) joints.emplace_back(1.0f);
     frame.objects.write(gpu, std::as_bytes(std::span(objects)), DynamicBuffer::Kind::Structured, sizeof(GpuObject),
@@ -629,6 +723,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     for (const Draw& d : draws) {
         stats.triangles += d.mesh->indexCount / 3;
     }
+    draws = instanced(draws);
     stats.drawCalls = static_cast<std::uint32_t>(draws.size()) * 2 + 2 + (settings.showGrid ? 1u : 0u);  // prepass + shading
 
     // ---- Render graph ----------------------------------------------------------------------
@@ -658,6 +753,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 for (const Draw& d : casters) {
                     if (box.intersectsAabb(d.center, d.extent)) cascadeCasters[c].push_back(d);
                 }
+                cascadeCasters[c] = instanced(cascadeCasters[c]);
             }
         });
         std::size_t casterDraws = 0;
@@ -693,7 +789,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                             pc.index0 = d.object;
                             pc.index1 = static_cast<std::uint32_t>(c);
                             push(cmd, pc);
-                            cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount));
+                            cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount).setInstanceCount(d.count));
                         }
                     }
                 });
@@ -712,6 +808,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     if (glm::length(d.center - tile.lightPosition) - glm::length(d.extent) > tile.range) continue;
                     if (frustumOfTile.intersectsAabb(d.center, d.extent)) tileCasters[t].push_back(d);
                 }
+                tileCasters[t] = instanced(tileCasters[t]);
             }
         });
         for (const auto& list : tileCasters) stats.drawCalls += static_cast<std::uint32_t>(list.size());
@@ -739,7 +836,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                         pc.index1 = static_cast<std::uint32_t>(t);
                         pc.flags = 1u;  // a local shadow tile
                         push(ctx.cmd, pc);
-                        ctx.cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount));
+                        ctx.cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount).setInstanceCount(d.count));
                     }
                 }
             });
@@ -769,7 +866,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     PushConstants pc;
                     pc.index0 = d.object;
                     push(cmd, pc);
-                    cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount));
+                    cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount).setInstanceCount(d.count));
                 }
             });
         });
@@ -856,7 +953,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     pc.flags = flags;
                     pc.param0 = localAtlasIndex;
                     push(cmd, pc);
-                    cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount));
+                    cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount).setInstanceCount(d.count));
                 }
             });
         });
@@ -884,6 +981,30 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 }
             });
         stats.drawCalls += static_cast<std::uint32_t>(decals.size());
+    }
+
+    if (!waters.empty()) {
+        const std::uint32_t sampler = ctx_.linearClampSampler();
+        graph.addRasterPass(
+            "Water",
+            [&](PassBuilder& b) {
+                b.writeColor(hdr, LoadOp::Load);
+                b.sample(depth);
+            },
+            [this, stateFor, waterGrid, depth, sampler, waters](PassContext& ctx) {
+                nvrhi::GraphicsState state = stateFor(water_, ctx);
+                bindMesh(state, *waterGrid);
+                ctx.cmd->setGraphicsState(state);
+                for (const std::uint32_t object : waters) {
+                    PushConstants pc;
+                    pc.index0 = object;
+                    pc.index1 = ctx.bindlessIndex(depth);
+                    pc.index2 = sampler;
+                    push(ctx.cmd, pc);
+                    ctx.cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(waterGrid->indexCount));
+                }
+            });
+        stats.drawCalls += static_cast<std::uint32_t>(waters.size());
     }
 
     if (settings.showGrid) {

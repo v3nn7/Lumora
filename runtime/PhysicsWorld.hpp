@@ -3,6 +3,7 @@
 #include <entt/entity/entity.hpp>
 #include <glm/vec3.hpp>
 
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -18,7 +19,8 @@ class Scene;
 /// otherwise static/kinematic/dynamic as configured. Every step: bodies are added/removed to
 /// match the scene, kinematic bodies move to their entity's transform, the world advances and
 /// dynamic bodies write their pose back (converted into parent space). Shapes include the
-/// entity's world scale at creation time.
+/// entity's world scale at creation time. Terrains are static triangle meshes; Water makes
+/// dynamic bodies float.
 class PhysicsWorld {
 public:
     explicit PhysicsWorld(Scene& scene);
@@ -30,6 +32,9 @@ public:
     [[nodiscard]] static bool sceneHasColliders(const Scene& scene);
 
     void step(float dt);
+    /// Project folder terrain heightmaps are read from.
+    void setProjectRoot(std::filesystem::path root);
+    [[nodiscard]] std::size_t terrainCount() const;
 
     [[nodiscard]] std::size_t bodyCount() const;
     void setGravity(const glm::vec3& gravity);

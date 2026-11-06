@@ -137,6 +137,53 @@ struct DecalComponent {
     float opacity = 1.0f;
 };
 
+/// Ground from a heightmap (a grayscale image, white = `height`) or generated hills, centred on
+/// the entity. Solid in play mode and walkable for navigation. Grass on flat ground blends into
+/// rock on slopes.
+struct TerrainComponent {
+    float size = 200.0f;          // metres per side
+    float height = 25.0f;         // metres from black to white
+    int resolution = 129;         // vertices per side
+    std::string heightmap;        // project-relative image; empty = generated hills
+    int seed = 1;
+    float hillSize = 60.0f;       // metres across a typical hill (generated)
+    glm::vec3 grassColor{0.28f, 0.42f, 0.16f};
+    glm::vec3 rockColor{0.40f, 0.38f, 0.35f};
+    std::string texture;          // tiling ground texture, multiplied (optional)
+    float textureTiling = 4.0f;   // metres per repeat
+};
+
+/// A water surface at the entity's height: waves, a colour that deepens with depth, reflections
+/// of the sky and the sun. Dynamic bodies in it float (Buoyancy > 0).
+struct WaterComponent {
+    float width = 100.0f;   // X, metres
+    float length = 100.0f;  // Z, metres
+    glm::vec3 shallowColor{0.10f, 0.42f, 0.45f};
+    glm::vec3 deepColor{0.01f, 0.08f, 0.14f};
+    float clarity = 3.0f;      // metres one sees down
+    float waveHeight = 0.2f;
+    float waveLength = 8.0f;
+    float waveSpeed = 1.0f;
+    float buoyancy = 1.2f;     // 1 = floats level with the surface when as dense as water
+};
+
+/// Scatters copies of a mesh around the entity (grass, bushes, rocks, trees), on the terrain
+/// below when there is one. Drawn with GPU instancing: thousands of copies stay cheap.
+struct FoliageComponent {
+    MeshPrimitive mesh = MeshPrimitive::Cube;
+    std::string meshAsset;  // overrides `mesh`
+    std::string material;   // .lmat; empty = Color
+    glm::vec3 color{0.25f, 0.45f, 0.18f};
+    int count = 500;
+    float radius = 20.0f;   // scattered within this distance (a square) of the entity
+    int seed = 1;
+    float minScale = 0.7f;
+    float maxScale = 1.3f;
+    bool randomRotation = true;
+    bool onTerrain = true;  // snap to a Terrain below
+    float maxSlope = 35.0f; // degrees; steeper ground stays bare (on a terrain)
+};
+
 /// Run-time state of an emitter (not saved): the live particles.
 struct ParticleStateComponent {
     struct Particle {

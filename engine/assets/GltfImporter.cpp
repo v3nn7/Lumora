@@ -306,8 +306,19 @@ void cutOutPaddedBackground(ImageData& image) {
     }
 }
 
+float partialAlphaShare(const ImageData& image) {
+    std::size_t visible = 0, partial = 0;
+    for (std::size_t i = 3; i < image.rgba.size(); i += 4) {
+        const std::uint8_t a = image.rgba[i];
+        if (a <= 16) continue;
+        ++visible;
+        if (a < 240) ++partial;
+    }
+    return visible == 0 ? 0.0f : static_cast<float>(partial) / static_cast<float>(visible);
+}
+
 float importedAlphaCutoff(const ImportedMaterial& m) {
-    if (m.baseColorTexture < 0) return 0.0f;
+    if (m.baseColorTexture < 0 || m.translucent) return 0.0f;
     float cutoff = 0.0f;
     if (m.alphaMode == ImportedMaterial::AlphaMode::Mask) cutoff = std::clamp(m.alphaCutoff, 0.01f, 1.0f);
     else if (m.alphaMode == ImportedMaterial::AlphaMode::Blend || m.baseColorHasAlpha) cutoff = 0.5f;
@@ -486,6 +497,15 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
             image.cutOutBackground = true;
             mat.baseColorHasAlpha = true;  // cut out like a map with alpha
             model.warnings.push_back(std::format("material '{}': leaf map without alpha, background cut out", mat.name));
+        }
+    }
+    // BLEND: see-through only where the alpha is really partial; leaf cards stay cut out.
+    for (ImportedMaterial& mat : model.materials) {
+        if (mat.alphaMode != ImportedMaterial::AlphaMode::Blend) continue;
+        mat.translucent = mat.baseColor.a < 0.999f;
+        if (!mat.translucent && mat.baseColorHasAlpha && !model.images[static_cast<std::size_t>(mat.baseColorTexture)].cutOutBackground) {
+            auto decoded = decodeImage(model.images[static_cast<std::size_t>(mat.baseColorTexture)].encoded);
+            mat.translucent = decoded && partialAlphaShare(*decoded) > 0.3f;
         }
     }
 

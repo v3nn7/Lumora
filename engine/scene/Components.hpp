@@ -73,6 +73,10 @@ struct MeshRendererComponent {
     /// Drawn from behind too (thin things: leaves, cloth, paper). Imported models' two-sided
     /// materials are always drawn so.
     bool doubleSided = false;
+    /// Below 1 the surface is see-through (glass, ghosts, liquids): blended over what is
+    /// behind it, sorted back to front, casting no shadow. The base colour map's alpha
+    /// multiplies it. Imported see-through materials (glTF BLEND) are drawn so at any value.
+    float opacity = 1.0f;
 };
 
 enum class LightType : std::int32_t { Directional = 0, Point = 1, Spot = 2 };

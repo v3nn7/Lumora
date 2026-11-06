@@ -74,6 +74,7 @@ struct SceneDrawStats {
     std::uint32_t triangles = 0;
     std::uint32_t visibleObjects = 0;
     std::uint32_t culledObjects = 0;
+    std::uint32_t transparentObjects = 0;  // see-through objects drawn (blended, back to front)
     std::uint32_t lodObjects = 0;  // visible objects drawn with a simpler level of detail
     std::uint32_t lights = 0;
     std::uint32_t particles = 0;
@@ -124,6 +125,8 @@ private:
     struct ModelSurface {
         float alphaCutoff = 0.0f;
         bool twoSided = false;
+        bool transparent = false;  // glTF BLEND with partial alpha
+        float opacity = 1.0f;      // the base colour factor's alpha (see-through materials)
     };
     [[nodiscard]] ModelSurface modelSurface(AssetLibrary& assets, const std::string& meshAsset);
     std::unordered_map<std::string, ModelSurface> modelSurfaces_;
@@ -138,6 +141,10 @@ private:
     nvrhi::GraphicsPipelineHandle opaque_;
     nvrhi::GraphicsPipelineHandle opaqueSkinned_;
     nvrhi::GraphicsPipelineHandle opaqueTwoSided_;
+    // See-through surfaces: blended over the shaded scene, sorted back to front, no depth writes.
+    nvrhi::GraphicsPipelineHandle transparent_;
+    nvrhi::GraphicsPipelineHandle transparentTwoSided_;
+    nvrhi::GraphicsPipelineHandle transparentSkinned_;
     nvrhi::GraphicsPipelineHandle grid_;
     nvrhi::GraphicsPipelineHandle particlesAlpha_;
     nvrhi::GraphicsPipelineHandle particlesAdditive_;

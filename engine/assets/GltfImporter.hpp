@@ -28,7 +28,8 @@ struct ImportedMaterial {
     int occlusionTexture = -1;  // ambient occlusion (red channel)
     float normalScale = 1.0f;   // normalTexture.scale: how strongly the map bends the normal
     /// glTF alphaMode: MASK cuts holes where the base colour's alpha is below alphaCutoff;
-    /// BLEND (leaf cards, decals) is drawn cut out at 0.5 too, the closest an opaque pass gets.
+    /// BLEND is see-through (`translucent`) when its alpha really is partial (glass, visors),
+    /// otherwise (leaf cards whose alpha is only 0 or 1) it is drawn cut out at 0.5.
     enum class AlphaMode { Opaque, Mask, Blend };
     AlphaMode alphaMode = AlphaMode::Opaque;
     float alphaCutoff = 0.5f;
@@ -36,6 +37,9 @@ struct ImportedMaterial {
     /// The base colour map is a PNG with an alpha channel (or transparency chunk): exporters
     /// often lose alphaMode, so an "opaque" material with such a map is cut out anyway.
     bool baseColorHasAlpha = false;
+    /// BLEND with partial alpha (the factor's, or a map where much of the coverage is neither
+    /// clear nor solid): blended over what is behind instead of cut out.
+    bool translucent = false;
 };
 
 /// Still-encoded image (PNG/JPEG) taken from the model: embedded in a .glb buffer, a data URI,
@@ -134,6 +138,9 @@ struct ImportedModel {
 /// The alpha cutoff a model's material asks for: its MASK cutoff, 0.5 for BLEND or a base map
 /// with transparency, 0 = opaque.
 [[nodiscard]] float importedAlphaCutoff(const ImportedMaterial& material);
+/// Share of an image's visible texels (alpha above ~6%) that are neither clear nor solid: near 0
+/// for cut-outs with soft edges, large for glass.
+[[nodiscard]] float partialAlphaShare(const struct ImageData& image);
 
 /// Files a model depends on (external buffers and images referenced by relative URI), so an
 /// importer can copy them next to the model. Data URIs and .glb chunks are not listed.

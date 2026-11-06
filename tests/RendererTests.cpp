@@ -1588,3 +1588,65 @@ TEST_F(RendererTest, BlockCompressedTexturesUploadRowsOfBlocks) {
     EXPECT_NO_THROW(texture = context_->createTexture(levels, 8, 8, nvrhi::Format::BC1_UNORM, "BC1Test"));
     EXPECT_TRUE(texture);
 }
+
+TEST_F(RendererTest, TransparentSurfacesBlendBackToFrontAndHideBehindGeometry) {
+    auto scene = sceneWithSun();
+    scene->environment().fogDensity = 0.0f;
+    auto plate = [&](const char* name, glm::vec3 position, glm::vec3 scale, glm::vec3 color, float opacity) {
+        const auto e = scene->createEntity(name);
+        auto& m = scene->registry().emplace<MeshRendererComponent>(e);
+        m.mesh = MeshPrimitive::Plane;
+        m.baseColor = glm::vec3(0.0f);
+        m.roughness = 1.0f;
+        m.emissive = color;  // unlit colours: the blend is easy to read
+        m.emissiveStrength = 1.0f;
+        m.opacity = opacity;
+        auto& t = scene->registry().get<TransformComponent>(e);
+        t.position = position;
+        t.scale = scale;
+        return e;
+    };
+    plate("Floor", {0.0f, 0.0f, 0.0f}, {20.0f, 1.0f, 20.0f}, {1.0f, 0.0f, 0.0f}, 1.0f);
+    // Half see-through blue over the left of the floor; green over blue on the right (created
+    // first, so only sorting puts the nearer green last).
+    plate("Green", {3.0f, 2.0f, 0.0f}, {4.0f, 1.0f, 4.0f}, {0.0f, 1.0f, 0.0f}, 0.75f);
+    plate("Blue", {-1.0f, 1.0f, 0.0f}, {10.0f, 1.0f, 4.0f}, {0.0f, 0.0f, 1.0f}, 0.5f);
+    // An opaque white box on the floor, partly under the blue plate's far side but above it.
+    const auto box = scene->createEntity("Box");
+    auto& bm = scene->registry().emplace<MeshRendererComponent>(box);
+    bm.baseColor = glm::vec3(0.0f);
+    bm.emissive = glm::vec3(1.0f);
+    bm.emissiveStrength = 1.0f;
+    auto& bt = scene->registry().get<TransformComponent>(box);
+    bt.position = {-4.0f, 1.5f, 0.0f};
+    bt.scale = glm::vec3(1.0f, 3.0f, 1.0f);  // pokes through the blue plate
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 14.0f, 0.01f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const glm::uvec2 size(96, 96);
+    const CameraView view = cam.view(1.0f);
+    RenderSettings settings;
+    settings.bloom = false;
+    settings.shadows = false;
+    settings.ambientOcclusion = false;
+    auto image = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(image.has_value());
+    EXPECT_EQ(renderer_->stats().scene.transparentObjects, 2u);
+    auto at = [&](glm::vec3 world) {
+        const glm::ivec2 p = toPixel(view, world, size);
+        return pixel(*image, p.x, p.y);
+    };
+    const auto floor = at({0.0f, 0.0f, 6.0f});
+    const auto blue = at({-2.0f, 1.0f, 0.0f});
+    const auto both = at({3.0f, 2.0f, 0.0f});
+    const auto top = at({-4.0f, 3.0f, 0.0f});
+    EXPECT_GT(floor.r, 200);
+    EXPECT_LT(floor.b, 30);
+    EXPECT_GT(blue.r, 60) << "the floor shows through the blue plate";
+    EXPECT_GT(blue.b, 60) << "the blue plate tints it";
+    EXPECT_GT(both.g, both.b + 40) << "the nearer green plate is blended last";
+    EXPECT_GT(both.b, 20) << "the blue plate shows through the green one";
+    EXPECT_GT(top.r, 200);
+    EXPECT_GT(top.g, 200) << "the box above the plate is not tinted by it";
+}

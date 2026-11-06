@@ -222,6 +222,17 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     opaque.vertexShader = "mesh.skinned.vert";
     opaque.input = VertexInput::MeshSkinned;
     opaqueSkinned_ = make(opaque);
+    PipelineDesc transparent = opaque;  // depth tested against the opaque scene, never written
+    transparent.name = "TransparentPBRSkinned";
+    transparent.blend = BlendMode::Alpha;
+    transparentSkinned_ = make(transparent);
+    transparent.name = "TransparentPBR";
+    transparent.vertexShader = "mesh.vert";
+    transparent.input = VertexInput::Mesh;
+    transparent_ = make(transparent);
+    transparent.name = "TransparentPBRTwoSided";
+    transparent.cull = nvrhi::RasterCullMode::None;
+    transparentTwoSided_ = make(transparent);
 
     PipelineDesc grid;
     grid.name = "EditorGrid";
@@ -390,7 +401,7 @@ SceneRenderer::ModelSurface SceneRenderer::modelSurface(AssetLibrary& assets, co
             const int material = (*model)->meshes[static_cast<std::size_t>(ref->index)].material;
             if (material >= 0 && static_cast<std::size_t>(material) < (*model)->materials.size()) {
                 const ImportedMaterial& m = (*model)->materials[static_cast<std::size_t>(material)];
-                surface = {importedAlphaCutoff(m), m.doubleSided};
+                surface = {importedAlphaCutoff(m), m.doubleSided, m.translucent, m.translucent ? std::clamp(m.baseColor.a, 0.0f, 1.0f) : 1.0f};
             }
         }
     }
@@ -661,6 +672,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     };
     std::vector<Draw> draws;    // visible to the camera
     std::vector<Draw> casters;  // may cast into a shadow cascade (also off-screen objects)
+    std::vector<Draw> transparents;  // see-through, visible to the camera (drawn after water)
     std::vector<GpuObject> objects;
     const Frustum frustum = Frustum::fromViewProjection(fc.viewProjection);
 
@@ -830,17 +842,24 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         const MeshRendererComponent& look = *candidates[i].mesh;
         float cutoff = look.alphaCutoff;
         bool twoSided = look.doubleSided;
+        float opacity = std::clamp(look.opacity, 0.0f, 1.0f);
+        bool transparent = opacity < 1.0f;
         if (!look.meshAsset.empty() && settings.assets != nullptr) {
             const ModelSurface surface = modelSurface(*settings.assets, look.meshAsset);
             if (cutoff < 0.0f) cutoff = surface.alphaCutoff;
             twoSided = twoSided || surface.twoSided;
+            transparent = transparent || surface.transparent;
+            opacity *= surface.opacity;
         }
-        const bool masked = cutoff > 0.0f && obj.textures.x != kNoTexture;
+        const bool masked = !transparent && cutoff > 0.0f && obj.textures.x != kNoTexture;
         std::uint32_t occlusion = kNoTexture;
         if (p.visible && settings.assets != nullptr && !look.occlusionTexture.empty()) {
             occlusion = ctx_.textures().index(*settings.assets, look.occlusionTexture, TextureColorSpace::Linear, settings.blockOnAssets);
         }
-        obj.surface = glm::vec4(masked ? cutoff : 0.0f, twoSided ? 1.0f : 0.0f, std::bit_cast<float>(occlusion), look.normalStrength);
+        // x: cutoff (opaque) or opacity (see-through); y: bit 0 two-sided, bit 1 see-through.
+        obj.surface = glm::vec4(transparent ? opacity : masked ? cutoff : 0.0f,
+                                static_cast<float>((twoSided ? 1 : 0) | (transparent ? 2 : 0)),
+                                std::bit_cast<float>(occlusion), look.normalStrength);
         const auto variant = static_cast<std::uint8_t>((masked ? kMasked : 0) | (twoSided ? kTwoSided : 0));
         const Draw draw{drawn,
                         static_cast<std::uint32_t>(objects.size()),
@@ -850,10 +869,16 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                         static_cast<std::uint64_t>(entt::to_integral(candidates[i].entity)),
                         state,
                         candidates[i].gpuMesh->skinned() ? std::uint8_t{0} : variant};
-        if (p.visible) draws.push_back(draw);
-        if (anyShadows) casters.push_back(draw);
+        if (transparent) {
+            if (p.visible && opacity > 0.0f) transparents.push_back(draw);
+        } else {
+            if (p.visible) draws.push_back(draw);
+            if (anyShadows) casters.push_back(draw);
+        }
         objects.push_back(obj);
     }
+    // See-through surfaces back to front (by bounds centre), so nearer ones blend over farther.
+    std::ranges::stable_sort(transparents, std::greater<>{}, [&](const Draw& d) { return glm::length(d.center - camera.position); });
     // Unskinned first, then skinned (one pipeline switch); within each, grouped by mesh.
     auto byPipelineAndMesh = [](const Draw& d) { return std::tuple(d.mesh->skinned(), d.variant, d.mesh); };
     std::ranges::stable_sort(draws, std::less<>{}, byPipelineAndMesh);
@@ -1334,6 +1359,54 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 }
             });
         stats.drawCalls += static_cast<std::uint32_t>(waters.size());
+    }
+
+    if (!transparents.empty()) {
+        graph.addRasterPass(
+            "Transparent",
+            [&](PassBuilder& b) {
+                b.writeColor(hdr, LoadOp::Load);
+                b.readDepth(depth);  // hidden behind opaque surfaces, but writes no depth
+                if (shadows && !virtualShadows) b.sample(shadowMap);
+                if (virtualShadows) {
+                    b.sample(vsmPool);
+                    b.sample(vsmPageTable);
+                }
+                if (localShadows) b.sample(localAtlas);
+            },
+            [this, stateFor, shadows, shadowMap, virtualShadows, vsmPool, vsmPageTable, localShadows, localAtlas,
+             debugCascades = settings.debugCascades, draws = transparents](PassContext& ctx) {
+                const std::uint32_t shadowIndex = virtualShadows ? ctx.bindlessIndex(vsmPool) : shadows ? ctx.bindlessIndex(shadowMap) : 0u;
+                const float pageTableIndex = std::bit_cast<float>(virtualShadows ? ctx.bindlessIndex(vsmPageTable) : 0u);
+                const float localAtlasIndex = std::bit_cast<float>(localShadows ? ctx.bindlessIndex(localAtlas) : 0u);
+                // No ambient occlusion: it was computed for the opaque surfaces behind.
+                const std::uint32_t flags = (shadows ? 1u : 0u) | (shadows && debugCascades ? 2u : 0u);
+                nvrhi::GraphicsState state = stateFor(transparent_, ctx);
+                nvrhi::IGraphicsPipeline* bound = nullptr;
+                const GpuMesh* mesh = nullptr;
+                for (const Draw& d : draws) {  // in order: back to front
+                    nvrhi::IGraphicsPipeline* pipeline = d.mesh->skinned()                ? transparentSkinned_.Get()
+                                                         : (d.variant & kTwoSided) != 0 ? transparentTwoSided_.Get()
+                                                                                         : transparent_.Get();
+                    if (pipeline != bound || d.mesh != mesh) {
+                        bound = pipeline;
+                        mesh = d.mesh;
+                        state.pipeline = pipeline;
+                        bindMesh(state, *mesh);
+                        ctx.cmd->setGraphicsState(state);
+                    }
+                    PushConstants pc;
+                    pc.index0 = d.object;
+                    pc.index1 = shadowIndex;
+                    pc.flags = flags;
+                    pc.param0 = localAtlasIndex;
+                    pc.param1 = pageTableIndex;
+                    push(ctx.cmd, pc);
+                    ctx.cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount));
+                }
+            });
+        stats.drawCalls += static_cast<std::uint32_t>(transparents.size());
+        stats.transparentObjects = static_cast<std::uint32_t>(transparents.size());
     }
 
     if (settings.showGrid) {

@@ -4,6 +4,7 @@
 #include "assets/AssetImport.hpp"
 #include "assets/AssetLibrary.hpp"
 #include "assets/GltfImporter.hpp"
+#include "assets/Image.hpp"
 #include "scene/ModelInstance.hpp"
 #include "scene/Scene.hpp"
 #include "scene/SceneSerializer.hpp"
@@ -522,4 +523,30 @@ TEST(GltfMaterials, OcclusionNormalStrengthAndAlphaFactor) {
     const auto& mesh = scene.registry().get<MeshRendererComponent>(scene.childrenOf(scene.childrenOf(root)[0])[0]);
     EXPECT_EQ(mesh.occlusionTexture, "Content/Models/detailed.gltf#tex0");
     EXPECT_FLOAT_EQ(mesh.normalStrength, 0.4f);
+}
+
+TEST(GltfMaterials, BlendWithPartialAlphaIsSeeThroughAndLeafCardsStayCutOut) {
+    test::TempDir dir;
+    const auto glass = editedCube(dir.path(), "glass.gltf", [](nlohmann::json& doc) {
+        doc["materials"][0]["alphaMode"] = "BLEND";
+        doc["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"] = {0.8, 0.9, 1.0, 0.3};
+    });
+    auto model = importGltf(glass);
+    ASSERT_TRUE(model.has_value()) << model.error().message;
+    EXPECT_TRUE(model->materials[0].translucent);
+    EXPECT_FLOAT_EQ(importedAlphaCutoff(model->materials[0]), 0.0f) << "blended, not cut out";
+
+    const auto card = editedCube(dir.path(), "card.gltf", [](nlohmann::json& doc) {
+        doc["materials"][0]["alphaMode"] = "BLEND";  // opaque factor, map without partial alpha
+    });
+    auto leaves = importGltf(card);
+    ASSERT_TRUE(leaves.has_value());
+    EXPECT_FALSE(leaves->materials[0].translucent);
+
+    // Soft-edged cut-out: mostly clear or solid. Tinted glass: partial everywhere.
+    ImageData image{4, 4, std::vector<std::uint8_t>(64, 0)};
+    for (int i = 0; i < 16; ++i) image.rgba[static_cast<std::size_t>(i * 4 + 3)] = i < 8 ? 0 : i < 15 ? 255 : 128;
+    EXPECT_NEAR(partialAlphaShare(image), 1.0f / 8.0f, 1e-6f);
+    for (int i = 0; i < 16; ++i) image.rgba[static_cast<std::size_t>(i * 4 + 3)] = 90;
+    EXPECT_FLOAT_EQ(partialAlphaShare(image), 1.0f);
 }

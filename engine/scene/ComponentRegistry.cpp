@@ -93,6 +93,7 @@ ComponentRegistry makeBuiltin() {
             R::field(&MeshRendererComponent::visible, "visible", "Visible", FieldKind::Bool),
             ranged(R::field(&MeshRendererComponent::alphaCutoff, "alphaCutoff", "Alpha Cutoff (-1 = model)", FieldKind::Float), -1.0f, 1.0f, 0.01f),
             R::field(&MeshRendererComponent::doubleSided, "doubleSided", "Two-Sided", FieldKind::Bool),
+            ranged(R::field(&MeshRendererComponent::opacity, "opacity", "Opacity", FieldKind::Float), 0.0f, 1.0f, 0.01f),
         };
         reg.add(std::move(d));
     }

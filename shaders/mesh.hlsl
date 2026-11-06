@@ -339,10 +339,15 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     if ((uint)object.flags.y == 3u) {
         albedo = terrainAlbedo(albedo, object.flags.z, input.worldPosition, geometricNormal);
     }
+    // See-through (surface.y bit 1): surface.x is the opacity, which the map's alpha scales.
+    const bool seeThrough = ((uint)object.surface.y & 2u) != 0u;
+    float alpha = seeThrough ? object.surface.x : 1.0;
     if (object.textures.x != NO_TEXTURE) {
         float4 base = sampleMaterial(object.textures.x, input.uv);  // sRGB view: sampled in linear
         albedo *= base.rgb;
-        if (base.a < object.surface.x) {
+        if (seeThrough) {
+            alpha *= base.a;
+        } else if (base.a < object.surface.x) {
             discard;  // cut out (leaves, fences): the depth prepass cut the same hole
         }
     }
@@ -419,6 +424,6 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
         float rim = pow(1.0 - saturate(dot(s.normal, s.view)), 3.0);
         color = lerp(color, color * 0.85 + float3(1.0, 0.55, 0.1) * 0.15, 0.5) + float3(1.0, 0.45, 0.05) * rim * 2.0;
     }
-    return float4(color, 1.0);
+    return float4(color, saturate(alpha));
 }
 #endif

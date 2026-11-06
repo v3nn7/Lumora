@@ -32,7 +32,11 @@ nvrhi::IBuffer* DynamicBuffer::write(nvrhi::IDevice* device, std::span<const std
 }
 
 nvrhi::CommandListHandle FrameResources::nextList(nvrhi::IDevice* device) {
-    if (usedLists == lists.size()) lists.push_back(device->createCommandList());
+    // Not "immediate": several of them are recorded at once (parallel passes), which NVRHI allows
+    // only for deferred command lists.
+    if (usedLists == lists.size()) {
+        lists.push_back(device->createCommandList(nvrhi::CommandListParameters().setEnableImmediateExecution(false)));
+    }
     nvrhi::CommandListHandle list = lists[usedLists++];
     list->open();
     return list;

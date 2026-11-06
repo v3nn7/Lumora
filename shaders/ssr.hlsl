@@ -7,7 +7,8 @@
 //  - With temporal anti-aliasing (flags bit0) each frame reflects a different GGX direction of
 //    the lobe and starts the march at a different offset; TAA turns that into glossy, smooth
 //    reflections. Without it the ray is the mirror direction.
-//  - The march takes 40 even steps between the surface and the screen edge (or `maxDistance`),
+//  - The march takes 40 even steps between the surface and the screen edge (or `maxDistance`)
+//    and tests the end,
 //    then 6 bisection steps around the first crossing. A crossing counts when the ray is behind
 //    the depth buffer by less than a thickness that grows with distance.
 //
@@ -113,14 +114,12 @@ void CSTrace(uint3 id : SV_DispatchThreadID) {
 
     float hitT = -1.0;
     float previousT = 0.0;
-    [loop] for (int i = 0; i < kSteps; ++i) {
-        float t = (float(i) + startOffset) / float(kSteps);
+    [loop] for (int i = 0; i <= kSteps; ++i) {
+        float t = min((float(i) + startOffset) / float(kSteps), 1.0);  // the last step tests the end
         float2 s = lerp(s0, s1, t);
         float rayDepth = 1.0 / lerp(k0, k1, t);
-        int2 q = int2((s * 0.5 + 0.5) * gFrame.viewportSize.xy);
-        if (any(q < 0) || any(q >= size)) {
-            break;
-        }
+        // The segment ends at the screen edge, so only the end can land a pixel outside.
+        int2 q = clamp(int2((s * 0.5 + 0.5) * gFrame.viewportSize.xy), int2(0, 0), size - 1);
         float sceneDepth = viewDepth(depthTex.Load(int3(q, 0)).r, near);
         float stepDepth = abs(rayDepth - 1.0 / lerp(k0, k1, max(t - 1.0 / float(kSteps), 0.0)));
         float thickness = 0.1 + 0.02 * sceneDepth + stepDepth;
@@ -220,8 +219,9 @@ void CSResolve(uint3 id : SV_DispatchThreadID) {
         trust *= 1.0 - smoothstep(fadeRoughness * 0.65, fadeRoughness, roughness);
         const float2 uv = (float2(p) + 0.5) * gFrame.viewportSize.zw;
         float4 w = mul(gFrame.inverseViewProjection, float4(uv * 2.0 - 1.0, depth, 1.0));
-        const float3 V = normalize(gFrame.cameraPositionTime.xyz - w.xyz / w.w);
-        float3 environment = environmentSpecular(N, V, roughness) * gFrame.skyZenith.w;
+        const float3 position = w.xyz / w.w;
+        const float3 V = normalize(gFrame.cameraPositionTime.xyz - position);
+        float3 environment = environmentSpecular(position, N, V, roughness) * gFrame.skyZenith.w;
         float3 weight = gTextures[asuint(gPush.param1)].Load(int3(p, 0)).rgb;
         result = max(color.rgb + weight * (reflected - environment) * trust, 0.0);
     }

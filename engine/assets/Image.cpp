@@ -6,7 +6,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
+#include <format>
 #include <memory>
 #include <string>
 
@@ -79,6 +81,34 @@ bool isHdrFile(const std::filesystem::path& file) {
     std::string ext = file.extension().string();
     std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return ext == ".hdr";
+}
+
+Result<> saveHdrFile(const std::filesystem::path& file, const HdrImage& image) {
+    if (image.width == 0 || image.height == 0 || image.rgb.size() != static_cast<std::size_t>(image.width) * image.height * 3) {
+        return makeError("{}: invalid HDR image", file.filename().string());
+    }
+    const std::string header = std::format("#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {} +X {}\n", image.height, image.width);
+    std::vector<std::byte> bytes(header.size() + static_cast<std::size_t>(image.width) * image.height * 4);
+    std::memcpy(bytes.data(), header.data(), header.size());
+    std::byte* out = bytes.data() + header.size();
+    for (std::size_t i = 0; i < static_cast<std::size_t>(image.width) * image.height; ++i) {
+        const float r = std::max(image.rgb[i * 3], 0.0f), g = std::max(image.rgb[i * 3 + 1], 0.0f), b = std::max(image.rgb[i * 3 + 2], 0.0f);
+        const float v = std::max({r, g, b});
+        std::uint8_t rgbe[4] = {0, 0, 0, 0};
+        if (v >= 1e-32f && std::isfinite(v)) {
+            int e = 0;
+            const float scale = std::frexp(v, &e) * 256.0f / v;
+            rgbe[0] = static_cast<std::uint8_t>(std::min(r * scale, 255.0f));
+            rgbe[1] = static_cast<std::uint8_t>(std::min(g * scale, 255.0f));
+            rgbe[2] = static_cast<std::uint8_t>(std::min(b * scale, 255.0f));
+            rgbe[3] = static_cast<std::uint8_t>(std::clamp(e + 128, 0, 255));
+        }
+        std::memcpy(out + i * 4, rgbe, 4);
+    }
+    if (std::error_code ec; !std::filesystem::create_directories(file.parent_path(), ec) && ec) {
+        return makeError("{}: {}", file.parent_path().string(), ec.message());
+    }
+    return fs::writeFileAtomic(file, bytes);
 }
 
 } // namespace lumora

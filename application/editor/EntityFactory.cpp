@@ -182,6 +182,12 @@ void populateCreateMenu(QMenu& menu, EditorContext& ctx, bool asChild) {
             t.rotationDeg = {-90.0f, 0.0f, 0.0f};  // pointing down
         }, asChild);
     });
+    menu.addAction(icon(QStringLiteral("sun")), QObject::tr("Reflection Probe"), [&ctx, asChild] {
+        ctx.createEntity(QObject::tr("Reflection Probe"), [](Scene& scene, entt::entity e) {
+            scene.registry().emplace<ReflectionProbeComponent>(e);
+            scene.registry().get<TransformComponent>(e).position.y = 2.0f;
+        }, asChild);
+    });
     menu.addAction(icon(QStringLiteral("camera")), QObject::tr("Camera"), [&ctx, asChild] {
         ctx.createEntity(QObject::tr("Camera"), [](Scene& scene, entt::entity e) {
             scene.registry().emplace<CameraComponent>(e).primary = scene.primaryCamera() == entt::null;

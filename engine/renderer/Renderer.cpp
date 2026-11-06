@@ -282,4 +282,60 @@ Result<CapturedImage> Renderer::capture(const Scene& scene, const CameraView& ca
     return image;
 }
 
+Result<HdrImage> Renderer::captureHdr(const Scene& scene, const CameraView& camera, VkExtent2D extent,
+                                      RenderSettings settings) {
+    if (extent.width == 0 || extent.height == 0 || extent.width > 16384 || extent.height > 16384) {
+        return makeError("invalid capture size {}x{}", extent.width, extent.height);
+    }
+    settings.linearOutput = true;
+    nvrhi::IDevice* gpu = ctx_.gpu();
+    nvrhi::TextureDesc desc;
+    desc.width = extent.width;
+    desc.height = extent.height;
+    desc.format = nvrhi::Format::RGBA32_FLOAT;
+    desc.debugName = "CaptureTargetHdr";
+    desc.isRenderTarget = true;
+    desc.initialState = nvrhi::ResourceStates::RenderTarget;
+    desc.keepInitialState = true;
+    nvrhi::TextureHandle target = gpu->createTexture(desc);
+    nvrhi::StagingTextureHandle readback = gpu->createStagingTexture(desc, nvrhi::CpuAccessMode::Read);
+    if (!target || !readback) return makeError("could not create a {}x{} HDR capture target", extent.width, extent.height);
+
+    FrameResources& frame = beginFrame();
+    ImportedImage output;
+    output.texture = target;
+    std::vector<nvrhi::CommandListHandle> lists =
+        record(frame, scene, camera, settings, output, [&](RenderGraph& graph, RGImage out) {
+            graph.addPass(
+                "Readback", [&](PassBuilder& b) { b.copyFrom(out); },
+                [&readback, out](PassContext& ctx) {
+                    ctx.cmd->copyTexture(readback, nvrhi::TextureSlice(), ctx.texture(out), nvrhi::TextureSlice());
+                });
+        });
+    submit(frame, lists);
+    finish(frame);
+    advance();
+    ++frameNumber_;
+
+    std::size_t pitch = 0;
+    const auto* mapped = static_cast<const std::uint8_t*>(
+        gpu->mapStagingTexture(readback, nvrhi::TextureSlice(), nvrhi::CpuAccessMode::Read, &pitch));
+    if (mapped == nullptr) return makeError("could not read the HDR capture back");
+    HdrImage image;
+    image.width = extent.width;
+    image.height = extent.height;
+    image.rgb.resize(static_cast<std::size_t>(extent.width) * extent.height * 3);
+    for (std::uint32_t y = 0; y < extent.height; ++y) {
+        const auto* row = reinterpret_cast<const float*>(mapped + y * pitch);
+        for (std::uint32_t x = 0; x < extent.width; ++x) {
+            float* dst = &image.rgb[(static_cast<std::size_t>(y) * extent.width + x) * 3];
+            dst[0] = row[x * 4];
+            dst[1] = row[x * 4 + 1];
+            dst[2] = row[x * 4 + 2];
+        }
+    }
+    gpu->unmapStagingTexture(readback);
+    return image;
+}
+
 } // namespace lumora::render

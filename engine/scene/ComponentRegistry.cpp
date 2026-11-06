@@ -16,7 +16,7 @@ namespace {
 std::string categoryOf(std::string_view id) {
     static const std::pair<std::string_view, std::string_view> kCategories[] = {
         {"MeshRenderer", "Rendering"}, {"Light", "Rendering"},       {"Decal", "Rendering"},
-        {"ParticleEmitter", "Rendering"},                           {"Terrain", "Environment"},
+        {"ParticleEmitter", "Rendering"}, {"ReflectionProbe", "Rendering"}, {"Terrain", "Environment"},
         {"Water", "Environment"},      {"Foliage", "Environment"},   {"RigidBody", "Physics"},
         {"Collider", "Physics"},       {"CharacterController", "Physics"}, {"Joint", "Physics"},
         {"Ragdoll", "Physics"},        {"Vehicle", "Physics"},       {"Animator", "Animation"},
@@ -293,6 +293,19 @@ ComponentRegistry makeBuiltin() {
             ranged(R::field(&W::waveLength, "waveLength", "Wave Length", FieldKind::Float), 0.1f, 1000.0f, 0.1f),
             ranged(R::field(&W::waveSpeed, "waveSpeed", "Wave Speed", FieldKind::Float), 0.0f, 20.0f, 0.05f),
             ranged(R::field(&W::buoyancy, "buoyancy", "Buoyancy", FieldKind::Float), 0.0f, 10.0f, 0.05f),
+        };
+        reg.add(std::move(d));
+    }
+    {
+        auto d = R::describe<ReflectionProbeComponent>("ReflectionProbe", "Reflection Probe");
+        using P = ReflectionProbeComponent;
+        d.fields = {
+            ranged(R::field(&P::size, "size", "Size", FieldKind::Vec3), 0.1f, 1e5f, 0.1f),
+            ranged(R::field(&P::blendDistance, "blendDistance", "Blend Distance", FieldKind::Float), 0.0f, 100.0f, 0.05f),
+            R::field(&P::boxProjection, "boxProjection", "Box Projection", FieldKind::Bool),
+            ranged(R::field(&P::intensity, "intensity", "Intensity", FieldKind::Float), 0.0f, 16.0f, 0.05f),
+            ranged(R::field(&P::resolution, "resolution", "Resolution", FieldKind::Int), 16, 1024, 16),
+            R::field(&P::baked, "baked", "Baked", FieldKind::Asset),
         };
         reg.add(std::move(d));
     }

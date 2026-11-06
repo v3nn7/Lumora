@@ -5,6 +5,7 @@
 #define MAX_LIGHTS 16
 #define SHADOW_CASCADES 4
 #define LOCAL_SHADOW_TILES 16
+#define MAX_REFLECTION_PROBES 8
 #define LIGHT_DIRECTIONAL 0
 #define LIGHT_POINT 1
 #define LIGHT_SPOT 2
@@ -16,6 +17,13 @@ struct GpuLight {
     float4 colorIntensity;  // rgb color, w intensity
     float4 directionType;   // xyz direction the light travels, w type
     float4 spot;            // x cos(outer angle), y cos(inner angle), z first shadow tile (-1 = none)
+};
+
+struct GpuReflectionProbe {
+    float4 boxMin;    // w blend distance (m)
+    float4 boxMax;    // w intensity
+    float4 position;  // where it was captured; w 1 = box projection
+    uint4 textures;   // x prefiltered specular (bindless), y its highest mip
 };
 
 struct FrameData {
@@ -51,6 +59,8 @@ struct FrameData {
     float4 vsmDepth;            // x depth min, y depth scale, z page texels, w pool pages per side
     column_major float4x4 previousViewProjection;  // last frame's, without jitter (motion vectors)
     float4 jitter;              // xy this frame's sub-pixel offset (NDC), zw last frame's
+    uint4 probeCount;           // x reflection probes
+    GpuReflectionProbe probes[MAX_REFLECTION_PROBES];
     GpuLight lights[MAX_LIGHTS];  // directional lights
 };
 
@@ -157,6 +167,11 @@ float2 environmentUv(float3 dir) {
     float s = sin(gFrame.environmentParams.z);
     float c = cos(gFrame.environmentParams.z);
     float3 d = float3(c * dir.x + s * dir.z, dir.y, -s * dir.x + c * dir.z);
+    return float2(0.5 + atan2(d.x, -d.z) / (2.0 * PI), acos(clamp(d.y, -1.0, 1.0)) / PI);
+}
+
+/// Equirectangular uv of a world direction (baked reflection probes: not rotated).
+float2 equirectUv(float3 d) {
     return float2(0.5 + atan2(d.x, -d.z) / (2.0 * PI), acos(clamp(d.y, -1.0, 1.0)) / PI);
 }
 

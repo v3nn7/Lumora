@@ -134,9 +134,8 @@ float3 dominantReflection(float3 normal, float3 view, float roughness) {
 }
 
 /// Radiance the environment (HDR map or procedural sky) reflects into a lobe of this roughness,
-/// before the ambient intensity. Screen-space reflections replace it where they find the scene.
-float3 environmentSpecular(float3 normal, float3 view, float roughness) {
-    float3 dominant = dominantReflection(normal, view, roughness);
+/// before the ambient intensity.
+float3 skySpecular(float3 normal, float3 dominant, float roughness) {
 #if defined(LUMORA_STAGE_FRAG) || defined(LUMORA_STAGE_COMP)
     if (environmentEnabled()) {
         return environmentRadiance(dominant, roughness * gFrame.environmentParams.w);
@@ -145,6 +144,47 @@ float3 environmentSpecular(float3 normal, float3 view, float roughness) {
     // Sharp lobes see the sky in one direction; wide ones approach the average around the normal.
     float alpha = roughness * roughness;
     return lerp(skyGradient(dominant), skyAverage(normal, 0.8), saturate(alpha * 1.6));
+}
+
+/// Specular radiance from the surroundings: reflection probes whose boxes hold the point
+/// (smaller boxes first, each fading out over its blend distance beyond the box), the sky for
+/// the rest.
+/// Screen-space reflections replace it where they find the scene.
+float3 environmentSpecular(float3 position, float3 normal, float3 view, float roughness) {
+    float3 dominant = dominantReflection(normal, view, roughness);
+    float3 sky = skySpecular(normal, dominant, roughness);
+#if defined(LUMORA_STAGE_FRAG) || defined(LUMORA_STAGE_COMP)
+    float3 probes = 0.0;
+    float covered = 0.0;
+    uint count = min(gFrame.probeCount.x, (uint)MAX_REFLECTION_PROBES);
+    for (uint i = 0; i < count && covered < 0.999; ++i) {
+        GpuReflectionProbe probe = gFrame.probes[i];
+        // Full inside the box (surfaces on its walls too), fading out over the blend distance.
+        float blend = probe.boxMin.w;
+        float3 inside = min(position - probe.boxMin.xyz, probe.boxMax.xyz - position) + blend;
+        float edge = min(inside.x, min(inside.y, inside.z));
+        if (edge <= 0.0) {
+            continue;
+        }
+        float weight = blend > 0.0 ? saturate(edge / blend) : 1.0;
+        float3 dir = dominant;
+        if (probe.position.w > 0.5) {
+            // Box projection: where the reflected ray leaves the box, seen from the capture point.
+            float3 far = max((probe.boxMax.xyz - position) / dominant, (probe.boxMin.xyz - position) / dominant);
+            float t = min(far.x, min(far.y, far.z));
+            dir = position + dominant * t - probe.position.xyz;
+        }
+        float lod = roughness * float(probe.textures.y);
+        float3 radiance = gTextures[probe.textures.x].SampleLevel(gSamplers[gFrame.counts.z], equirectUv(normalize(dir)), lod).rgb;
+        float take = weight * (1.0 - covered);
+        // Baked radiance is final: undo the ambient intensity evaluateAmbient applies.
+        probes += radiance * probe.boxMax.w / max(gFrame.skyZenith.w, 1e-3) * take;
+        covered += take;
+    }
+    return probes + sky * (1.0 - covered);
+#else
+    return sky;
+#endif
 }
 
 /// Ambient light from the environment: irradiance around the normal, specular from the
@@ -168,7 +208,7 @@ float3 evaluateAmbient(Surface s, out float3 specularWeight) {
         // light yet, and full sky light would flatten every shadow.
         diffuseLight = skyAverage(s.normal, 0.8) * 0.5;
     }
-    float3 envSpecular = environmentSpecular(s.normal, s.view, s.roughness);
+    float3 envSpecular = environmentSpecular(s.position, s.normal, s.view, s.roughness);
     float3 diffuse = (1.0 - F) * (1.0 - s.metallic) * s.albedo * diffuseLight;
     specularWeight = (F0 * envBrdf.x + envBrdf.y) * energyCompensation(envBrdf, F0) * horizonOcclusion(R, s.geometricNormal);
     return (diffuse + envSpecular * specularWeight) * gFrame.skyZenith.w;

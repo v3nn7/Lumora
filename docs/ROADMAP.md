@@ -64,6 +64,10 @@ Warunek dla kompresji tekstur (1.7).
 ### 1.3 Odbicia: SSR i sondy (L), zależy od 0.1
 - **Stan SSR: zrobione.** Marsz liniowy w przestrzeni ekranu (40 kroków + 6 bisekcji) zamiast hi-Z,
   promienie GGX z TAA, przestrzenny resolve między sąsiadami. Hi-Z zostaje jako optymalizacja.
+- **Stan sond: zrobione.** `ReflectionProbe` (pudełko, blend na zewnątrz, box projection),
+  Lighting > Bake Reflection Probes, `Saved/Probes/*.hdr` przez `EnvironmentCache`; do 8 sond na
+  klatkę. Woda: sondy + własny marsz w przestrzeni ekranu. Sondy dają tylko odbicia, światło
+  rozproszone przyjdzie z 1.4.
 - **SSR:** hi-Z z głębi (compute), marsz promienia w przestrzeni ekranu, mieszanie z IBL po szorstkości.
 - **Sondy odbić:** komponent `ReflectionProbe` (pudełko wpływu, paralaksa), przechwycenie
   6 widoków sceny w edytorze, prefiltracja istniejącym `EnvironmentMap.cpp::prefilterEnvironment`,

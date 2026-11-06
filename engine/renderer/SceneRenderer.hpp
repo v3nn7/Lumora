@@ -69,6 +69,11 @@ struct RenderSettings {
     bool screenSpaceReflections = false;
     float reflectionDistance = 60.0f;  // metres a reflected ray travels at most
     float reflectionRoughness = 0.7f;  // roughness where screen-space reflections have faded out
+    /// Reflection probes light glossy surfaces inside their boxes (off while baking them).
+    bool reflectionProbes = true;
+    /// The output gets the scene's linear HDR radiance instead of the tone-mapped image
+    /// (no bloom blend, grading, vignette or dithering): probe baking reads it back.
+    bool linearOutput = false;
     /// Levels of detail: imported meshes switch to simpler versions as they get smaller on
     /// screen. Larger values keep detail longer; 0 always draws full detail.
     float lodBias = 1.0f;
@@ -88,6 +93,7 @@ struct SceneDrawStats {
     bool virtualShadows = false;              // the sun used the virtual shadow map
     bool temporalAntiAliasing = false;        // TAA resolved the frame (with history when valid)
     bool screenSpaceReflections = false;
+    std::uint32_t reflectionProbes = 0;       // baked probes the frame used
     std::uint32_t virtualPagesRequested = 0;  // pages the view needed
     std::uint32_t virtualPagesCached = 0;     // of those, kept from earlier frames
     std::uint32_t virtualPagesRendered = 0;   // drawn this frame

@@ -180,6 +180,20 @@ struct WaterComponent {
     float buoyancy = 1.2f;     // 1 = floats level with the surface when as dense as water
 };
 
+/// Reflections of the surroundings captured at the entity's position, for glossy surfaces inside
+/// its box (rooms, corridors, caves) instead of the sky. Baked in the editor (Lighting > Bake
+/// Reflection Probes): six views of the scene, prefiltered like the sky texture.
+struct ReflectionProbeComponent {
+    glm::vec3 size{10.0f, 4.0f, 10.0f};  // box of influence, metres, centred on the entity (not rotated)
+    float blendDistance = 1.0f;          // fades out over this distance beyond the box
+    /// Reflections are corrected for the box (parallax): right for room-shaped boxes that
+    /// match the walls; off for open areas.
+    bool boxProjection = true;
+    float intensity = 1.0f;
+    int resolution = 128;                // pixels per cube face when baked
+    std::string baked;                   // the baked environment (.hdr, project-relative); set by baking
+};
+
 /// Scatters copies of a mesh around the entity (grass, bushes, rocks, trees), on the terrain
 /// below when there is one. Drawn with GPU instancing: thousands of copies stay cheap.
 struct FoliageComponent {

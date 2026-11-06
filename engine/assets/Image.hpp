@@ -32,5 +32,7 @@ struct HdrImage {
 /// Loads a Radiance .hdr file (equirectangular environment maps).
 [[nodiscard]] Result<HdrImage> loadHdrFile(const std::filesystem::path& file);
 [[nodiscard]] bool isHdrFile(const std::filesystem::path& file);
+/// Writes a Radiance .hdr file (RGBE, uncompressed scanlines), atomically.
+[[nodiscard]] Result<> saveHdrFile(const std::filesystem::path& file, const HdrImage& image);
 
 } // namespace lumora

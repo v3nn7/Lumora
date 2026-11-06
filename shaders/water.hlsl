@@ -1,10 +1,13 @@
 // Water: a grid displaced by four Gerstner waves, coloured by how much water the view ray passes
-// through (scene depth behind the surface), with sky reflection (Fresnel), sun glints and foam
+// through (scene depth behind the surface), with reflections (Fresnel), sun glints and foam
 // at the shore. Alpha-blended over the opaque scene; tested against the scene depth by hand.
-// gPush: index0 = object, index1 = scene depth (bindless), index2 = sampler.
+// Reflections: the scene on screen where a short screen-space march finds it (when the frame
+// has screen-space reflections), else reflection probes and the sky.
+// gPush: index0 = object, index1 = scene depth (bindless), index2 = sampler,
+//        param0 = asfloat(scene colour before water, bindless), flags bit0 = it is there.
 // Object: baseColorMetallic.rgb shallow colour, emissiveRoughness.rgb deep colour,
 //         flags = (wave height, wave length, wave speed, clarity).
-#include "common.hlsli"
+#include "lighting.hlsli"
 
 struct VSOutput {
     float4 position : SV_Position;
@@ -46,6 +49,40 @@ VSOutput VSMain([[vk::location(0)]] float3 position : POSITION, uint instance : 
 }
 
 #if defined(LUMORA_STAGE_FRAG)
+/// The scene colour the reflected ray meets on screen (rgb) and how much to trust it (a).
+float4 screenReflection(float3 origin, float3 R, Texture2D depthTex, Texture2D colorTex, float2 pixel) {
+    float4 c0 = mul(gFrame.viewProjection, float4(origin, 1.0));
+    float4 c1 = mul(gFrame.viewProjection, float4(origin + R * 80.0, 1.0));
+    const float near = c0.z;  // reverse-Z infinite: clip z is the near distance
+    if (c1.w < near * 1.01) {
+        c1 = lerp(c0, c1, (c0.w - near * 1.01) / max(c0.w - c1.w, 1e-6));
+    }
+    float2 s0 = c0.xy / c0.w, s1 = c1.xy / c1.w;
+    float k0 = 1.0 / c0.w, k1 = 1.0 / c1.w;
+    float jitter = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
+    const int steps = 32;
+    float previous = 0.0;
+    [loop] for (int i = 0; i < steps; ++i) {
+        float t = (float(i) + jitter) / float(steps);
+        t *= t;  // finer near the surface
+        float2 uv = lerp(s0, s1, t) * 0.5 + 0.5;
+        if (any(uv < 0.0) || any(uv > 1.0)) {
+            break;
+        }
+        float rayDepth = 1.0 / lerp(k0, k1, t);
+        float d = depthTex.SampleLevel(gSamplers[gPush.index2], uv, 0.0).r;
+        float sceneDepth = d > 0.0 ? near / d : 1e9;
+        float stepDepth = abs(rayDepth - 1.0 / lerp(k0, k1, previous));
+        if (rayDepth > sceneDepth && rayDepth - sceneDepth < 0.2 + 0.03 * sceneDepth + stepDepth) {
+            float2 edge = smoothstep(0.0, 0.08, min(uv, 1.0 - uv));
+            float3 color = colorTex.SampleLevel(gSamplers[gPush.index2], uv, 0.0).rgb;
+            return float4(min(color, 256.0), edge.x * edge.y * (1.0 - smoothstep(0.7, 1.0, t)));
+        }
+        previous = t;
+    }
+    return 0.0;
+}
+
 float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     GpuObject object = gObjects[input.objectIndex];
     float2 uv = input.position.xy * gFrame.viewportSize.zw;
@@ -70,7 +107,12 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
         lit += water * gFrame.sunColor.rgb * saturate(dot(n, l)) * 0.25;
     }
     float fresnel = 0.02 + 0.98 * pow(1.0 - saturate(dot(n, v)), 5.0);
-    float3 reflection = skyGradient(reflect(-v, n));
+    float3 reflection = environmentSpecular(input.worldPosition, n, v, 0.04) * gFrame.skyZenith.w;
+    if ((gPush.flags & 1u) != 0u) {
+        float4 seen = screenReflection(input.worldPosition + n * 0.02, reflect(-v, n), gTextures[gPush.index1],
+                                       gTextures[asuint(gPush.param0)], input.position.xy);
+        reflection = lerp(reflection, seen.rgb, seen.a);
+    }
     float3 color = lerp(lit, reflection, fresnel);
     if (gFrame.sunDirection.w > 0.0) {
         float3 h = normalize(l + v);

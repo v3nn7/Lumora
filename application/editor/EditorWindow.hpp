@@ -80,6 +80,8 @@ public:
     bool attachScript(Uuid entity, const QString& scriptPath);
     /// Opens Config/Input.json in the code editor (written with the defaults first).
     void openInputSettings();
+    /// Lighting > Bake Reflection Probes: one undo step.
+    void bakeReflectionProbes();
     /// Any panel can sit in the middle of the window, as a tab next to the scene, instead of in
     /// its dock (the title bar's button, View > Main Area, or the tab's close button to go back).
     void setDockInMainArea(QDockWidget* dock, bool inMainArea);

@@ -106,3 +106,55 @@ TEST(Environment, RougherLevelsAreBlurrier) {
     // Energy is kept roughly (the spot spreads, its total does not vanish or explode).
     EXPECT_NEAR(mean(env.specular.back()) / mean(env.specular[0]), 1.0, 0.5);
 }
+
+#include "TestUtils.hpp"
+#include "renderer/ReflectionProbes.hpp"
+
+TEST(ReflectionProbes, CubeFacesBecomeTheEquirectDirectionsTheyLookAlong) {
+    std::array<HdrImage, 6> faces;
+    for (std::size_t f = 0; f < 6; ++f) {
+        faces[f].width = faces[f].height = 8;
+        faces[f].rgb.assign(8 * 8 * 3, static_cast<float>(f + 1));
+    }
+    // One face gets a gradient in its "up" direction: brighter towards the top of its image.
+    for (std::uint32_t y = 0; y < 8; ++y) {
+        for (std::uint32_t x = 0; x < 8; ++x) faces[4].rgb[(y * 8 + x) * 3] = 10.0f + static_cast<float>(7 - y);
+    }
+    const HdrImage equirect = cubeToEquirect(faces, 64);
+    ASSERT_EQ(equirect.width, 64u);
+    ASSERT_EQ(equirect.height, 32u);
+    auto along = [&](glm::vec3 dir) {
+        // Inverse of equirectDirection: u = 0.5 + atan2(x, -z) / 2pi, v = acos(y) / pi.
+        const float u = 0.5f + std::atan2(dir.x, -dir.z) / (2.0f * std::numbers::pi_v<float>);
+        const float v = std::acos(std::clamp(dir.y, -1.0f, 1.0f)) / std::numbers::pi_v<float>;
+        const auto x = std::min(static_cast<std::uint32_t>(u * 64.0f), 63u);
+        const auto y = std::min(static_cast<std::uint32_t>(v * 32.0f), 31u);
+        return equirect.rgb[(y * 64 + x) * 3 + 1];  // green: the face's constant
+    };
+    for (std::size_t f = 0; f < 6; ++f) {
+        EXPECT_FLOAT_EQ(along(cubeFaces()[f].forward), static_cast<float>(f + 1)) << "face " << f;
+    }
+    auto red = [&](glm::vec3 dir) {
+        const float u = 0.5f + std::atan2(dir.x, -dir.z) / (2.0f * std::numbers::pi_v<float>);
+        const float v = std::acos(std::clamp(dir.y, -1.0f, 1.0f)) / std::numbers::pi_v<float>;
+        return equirect.rgb[(std::min(static_cast<std::uint32_t>(v * 32.0f), 31u) * 64 + std::min(static_cast<std::uint32_t>(u * 64.0f), 63u)) * 3];
+    };
+    EXPECT_GT(red(glm::normalize(glm::vec3(0.0f, 0.5f, 1.0f))), red(glm::normalize(glm::vec3(0.0f, -0.5f, 1.0f))))
+        << "the +Z face's top is up";
+}
+
+TEST(ReflectionProbes, HdrFilesRoundTrip) {
+    test::TempDir dir;
+    HdrImage image{3, 2, {0.0f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 100.0f, 0.01f, 0.25f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 3.0f, 0.1f, 0.2f}};
+    const auto file = dir.path() / "Saved" / "probe.hdr";
+    ASSERT_TRUE(saveHdrFile(file, image).has_value());
+    auto loaded = loadHdrFile(file);
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().message;
+    ASSERT_EQ(loaded->width, 3u);
+    ASSERT_EQ(loaded->height, 2u);
+    for (std::size_t i = 0; i < image.rgb.size(); ++i) {
+        // RGBE keeps 8 bits of mantissa relative to the brightest channel.
+        const float brightest = std::max({image.rgb[i / 3 * 3], image.rgb[i / 3 * 3 + 1], image.rgb[i / 3 * 3 + 2]});
+        EXPECT_NEAR(loaded->rgb[i], image.rgb[i], brightest / 100.0f + 1e-6f) << i;
+    }
+}

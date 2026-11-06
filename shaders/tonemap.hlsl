@@ -2,7 +2,8 @@
 #include "fullscreen.hlsli"
 
 // gPush: index0 = HDR scene, index1 = sampler, index2 = bloom texture, flags bit0 = encode sRGB,
-//        bit1 = bloom present, bit2 = perceptual luma into alpha (input of FXAA);
+//        bit1 = bloom present, bit2 = perceptual luma into alpha (input of FXAA),
+//        bit3 = linear output: the scene's HDR radiance unchanged (probe baking);
 //        param0 = exposure, param1 = bloom strength, param2 = vignette,
 //        param3 = bloom normalisation (1 / number of summed chain levels).
 
@@ -33,6 +34,9 @@ float gradientNoise(float2 pixel) {
 
 float4 PSMain(FullscreenOut input) : SV_Target0 {
     float3 hdr = gTextures[gPush.index0].SampleLevel(gSamplers[gPush.index1], input.uv, 0.0).rgb;
+    if ((gPush.flags & 8u) != 0u) {
+        return float4(hdr, 1.0);
+    }
     if ((gPush.flags & 2u) != 0u) {
         float3 bloom = gTextures[gPush.index2].SampleLevel(gSamplers[gPush.index1], input.uv, 0.0).rgb;
         hdr = lerp(hdr, bloom * gPush.param3, gPush.param1);

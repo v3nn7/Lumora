@@ -505,6 +505,39 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         }
     }
 
+    // Baked reflection probes: the nearest kMaxReflectionProbes to the camera, then the smallest
+    // boxes first (a room's probe wins over the courtyard's around it).
+    if (settings.reflectionProbes && settings.assets != nullptr) {
+        struct Probe {
+            GpuReflectionProbe gpu;
+            float distance;
+            float volume;
+        };
+        std::vector<Probe> probes;
+        for (auto [e, probe, world] : reg.view<ReflectionProbeComponent, WorldTransformComponent>().each()) {
+            if (probe.baked.empty()) continue;
+            const auto* baked = ctx_.environments().get(*settings.assets, probe.baked, settings.blockOnAssets);
+            if (baked == nullptr) continue;  // loading
+            const glm::vec3 center(world.matrix[3]);
+            const glm::vec3 half = glm::max(probe.size, glm::vec3(0.01f)) * 0.5f;
+            Probe p;
+            p.gpu.boxMin = glm::vec4(center - half, std::max(probe.blendDistance, 0.0f));
+            p.gpu.boxMax = glm::vec4(center + half, std::max(probe.intensity, 0.0f));
+            p.gpu.position = glm::vec4(center, probe.boxProjection ? 1.0f : 0.0f);
+            p.gpu.textures = glm::uvec4(baked->specularIndex, baked->specularLevels - 1, 0u, 0u);
+            const glm::vec3 outside = glm::max(glm::abs(camera.position - center) - half, glm::vec3(0.0f));
+            p.distance = glm::length(outside);
+            p.volume = half.x * half.y * half.z;
+            probes.push_back(p);
+        }
+        std::ranges::sort(probes, std::less<>{}, &Probe::distance);
+        if (probes.size() > kMaxReflectionProbes) probes.resize(kMaxReflectionProbes);
+        std::ranges::sort(probes, std::less<>{}, &Probe::volume);
+        for (std::size_t i = 0; i < probes.size(); ++i) fc.probes[i] = probes[i].gpu;
+        fc.probeCount.x = static_cast<std::uint32_t>(probes.size());
+        stats.reflectionProbes = fc.probeCount.x;
+    }
+
     // Directional lights go into the constants (few, they light everything); point lights into
     // a storage buffer, binned into screen tiles so each pixel only visits the ones near it.
     std::uint32_t lightCount = 0;
@@ -1369,7 +1402,9 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         stats.drawCalls += static_cast<std::uint32_t>(decals.size());
     }
 
+    RGImage opaqueColor{};  // the shaded opaque scene, before SSR (water reflects it)
     if (reflections) {
+        opaqueColor = hdr;
         // Screen-space reflections: one ray per pixel, then shared between neighbours and put
         // into a new colour image, which the later passes draw over.
         const RGImage rays = graph.createImage("ReflectionRays", {kSurfaceFormat, extent.width, extent.height, true});
@@ -1429,8 +1464,9 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             [&](PassBuilder& b) {
                 b.writeColor(hdr, LoadOp::Load);
                 b.sample(depth);
+                if (opaqueColor.valid()) b.sample(opaqueColor);
             },
-            [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, waterGrid, depth, sampler, waters](PassContext& ctx) {
+            [this, stateFor, waterGrid, depth, sampler, waters, opaqueColor](PassContext& ctx) {
                 nvrhi::GraphicsState state = stateFor(water_, ctx);
                 bindMesh(state, *waterGrid);
                 ctx.cmd->setGraphicsState(state);
@@ -1439,6 +1475,10 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     pc.index0 = object;
                     pc.index1 = ctx.bindlessIndex(depth);
                     pc.index2 = sampler;
+                    if (opaqueColor.valid()) {  // the scene before SSR, to reflect on screen
+                        pc.param0 = std::bit_cast<float>(ctx.bindlessIndex(opaqueColor));
+                        pc.flags = 1u;
+                    }
                     push(ctx.cmd, pc);
                     ctx.cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(waterGrid->indexCount));
                 }
@@ -1742,7 +1782,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
 
     // With FXAA the tonemapper writes a gamma-encoded LDR image (luma in alpha) that FXAA then
     // resolves into the output; without, it writes the output directly.
-    const bool fxaa = settings.antiAliasing && !temporal;
+    const bool fxaa = settings.antiAliasing && !temporal && !settings.linearOutput;
     // Half floats: the gamma-encoded image is quantised only once, when FXAA writes the output.
     constexpr nvrhi::Format kLdrFormat = nvrhi::Format::RGBA16_FLOAT;
     const RGImage ldr = fxaa ? graph.createImage("LDR", {kLdrFormat, extent.width, extent.height}) : output;
@@ -1760,6 +1800,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     const float bloomNormalisation = haveBloom ? 1.0f / static_cast<float>(bloomChain.size()) : 1.0f;
     const float exposure = env.exposure;
     const float vignette = std::clamp(env.vignette, 0.0f, 1.0f);
+    const bool linear = settings.linearOutput;
     graph.addRasterPass(
         "Tonemap",
         [&](PassBuilder& b) {
@@ -1772,7 +1813,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             pc.index0 = ctx.bindlessIndex(sceneColor);
             pc.index1 = sampler;
             pc.index2 = haveBloom ? ctx.bindlessIndex(bloomResult) : 0u;
-            pc.flags = (shaderSrgb ? 1u : 0u) | (haveBloom ? 2u : 0u) | (fxaa ? 4u : 0u);
+            pc.flags = (shaderSrgb ? 1u : 0u) | (haveBloom ? 2u : 0u) | (fxaa ? 4u : 0u) | (linear ? 8u : 0u);
             pc.param0 = exposure;
             pc.param1 = bloomStrength;
             pc.param2 = vignette;

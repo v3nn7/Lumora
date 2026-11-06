@@ -370,7 +370,8 @@ TEST_F(RendererTest, VirtualShadowMapsCastLikeCascadesAndKeepTheirPages) {
     const SceneDrawStats firstStats = renderer_->stats().scene;
     EXPECT_TRUE(firstStats.virtualShadows);
     EXPECT_GT(firstStats.virtualPagesRequested, 0u);
-    EXPECT_EQ(firstStats.virtualPagesRendered, firstStats.virtualPagesRequested);
+    EXPECT_EQ(firstStats.virtualPagesRendered + firstStats.virtualPagesCached, firstStats.virtualPagesRequested)
+        << "every page drawn (or still cached from an earlier capture of the same scene)";
     EXPECT_LT(darkness(*first, {0.0f, 2.0f, 0.0f}), 0.6f) << "the cube's shadow";
     EXPECT_NEAR(darkness(*first, {0.0f, 2.0f, 0.0f}), darkness(*classic, {0.0f, 2.0f, 0.0f}), 0.15f) << "as dark as with cascades";
 
@@ -1695,4 +1696,74 @@ TEST_F(RendererTest, ScreenSpaceReflectionsShowTheSceneInGlossyFloors) {
     const auto besidePlain = pixel(*plain, open.x, open.y);
     EXPECT_NEAR(int(beside.r), int(besidePlain.r), 12) << "where the ray misses, the environment stays";
     EXPECT_NEAR(int(beside.b), int(besidePlain.b), 12);
+}
+
+#include "renderer/ReflectionProbes.hpp"
+
+TEST_F(RendererTest, BakedReflectionProbesReflectTheirSurroundings) {
+    test::TempDir project;
+    AssetLibrary assets(project.path());
+    auto scene = sceneWithSun();
+    scene->environment().fogDensity = 0.0f;
+    const auto floor = scene->createEntity("Floor");
+    auto& fm = scene->registry().emplace<MeshRendererComponent>(floor);
+    fm.mesh = MeshPrimitive::Plane;
+    fm.baseColor = glm::vec3(0.95f);
+    fm.metallic = 1.0f;
+    fm.roughness = 0.05f;
+    scene->registry().get<TransformComponent>(floor).scale = {12.0f, 1.0f, 12.0f};
+    // A red wall far behind the floor: what the floor's reflection looks at.
+    const auto wall = scene->createEntity("Wall");
+    auto& wm = scene->registry().emplace<MeshRendererComponent>(wall);
+    wm.baseColor = glm::vec3(0.0f);
+    wm.emissive = {1.0f, 0.0f, 0.0f};
+    wm.emissiveStrength = 2.0f;
+    auto& wt = scene->registry().get<TransformComponent>(wall);
+    wt.position = {0.0f, 10.0f, -20.0f};
+    wt.scale = {60.0f, 20.0f, 1.0f};
+    const auto probe = scene->createEntity("Probe");
+    auto& p = scene->registry().emplace<ReflectionProbeComponent>(probe);
+    p.size = {12.0f, 6.0f, 12.0f};
+    p.boxProjection = false;  // open surroundings
+    p.resolution = 64;
+    scene->registry().get<TransformComponent>(probe).position = {0.0f, 1.0f, 0.0f};
+    scene->updateWorldTransforms();
+
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 3.0f, 6.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const glm::uvec2 size(96, 96);
+    const CameraView view = cam.view(1.0f);
+    RenderSettings settings;
+    settings.bloom = false;
+    settings.shadows = false;
+    settings.assets = &assets;
+    settings.blockOnAssets = true;
+    auto unbaked = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(unbaked.has_value());
+    EXPECT_EQ(renderer_->stats().scene.reflectionProbes, 0u);
+
+    auto baked = bakeReflectionProbes(*renderer_, *scene, assets, settings);
+    ASSERT_TRUE(baked.has_value()) << baked.error().message;
+    EXPECT_EQ(*baked, 1);
+    const std::string first = scene->registry().get<ReflectionProbeComponent>(probe).baked;
+    ASSERT_TRUE(first.starts_with("Saved/Probes/")) << first;
+    EXPECT_TRUE(std::filesystem::exists(project.path() / first));
+
+    auto reflecting = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(reflecting.has_value());
+    EXPECT_EQ(renderer_->stats().scene.reflectionProbes, 1u);
+    const glm::ivec2 onFloor = toPixel(view, {0.0f, 0.0f, 1.0f}, size);
+    const auto before = pixel(*unbaked, onFloor.x, onFloor.y);
+    const auto after = pixel(*reflecting, onFloor.x, onFloor.y);
+    EXPECT_LT(int(before.r), int(before.b) + 20) << "unbaked, the floor reflects the sky";
+    EXPECT_GT(int(after.r), int(after.b) + 60) << "baked, it reflects the red wall";
+
+    // Baking again replaces the file.
+    auto again = bakeReflectionProbes(*renderer_, *scene, assets, settings);
+    ASSERT_TRUE(again.has_value());
+    const std::string second = scene->registry().get<ReflectionProbeComponent>(probe).baked;
+    EXPECT_NE(second, first);
+    EXPECT_TRUE(std::filesystem::exists(project.path() / second));
+    EXPECT_FALSE(std::filesystem::exists(project.path() / first));
 }

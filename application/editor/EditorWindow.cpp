@@ -37,6 +37,7 @@
 #include "editor/SceneHierarchyPanel.hpp"
 #include "project/ProjectTemplates.hpp"
 #include "renderer/RenderContext.hpp"
+#include "renderer/ReflectionProbes.hpp"
 #include "renderer/Renderer.hpp"
 #include "runtime/AudioWorld.hpp"
 #include "runtime/Scripting.hpp"
@@ -649,6 +650,10 @@ void EditorWindow::buildMenus() {
         std::filesystem::remove(saveFile, ec);
         statusBar()->showMessage(tr("Saved game data cleared"), 4000);
     });
+
+    QMenu* lighting = menuBar()->addMenu(tr("&Lighting"));
+    lighting->addAction(app::theme::icon(QStringLiteral("sun")), tr("Bake Reflection Probes"), this,
+                        &EditorWindow::bakeReflectionProbes);
 
     QMenu* scriptsMenu = menuBar()->addMenu(tr("&Scripts"));
     scriptsMenu->addActions({newBehaviour_, buildScripts_});
@@ -2071,6 +2076,32 @@ entt::entity EditorWindow::addPrefabToScene(const std::filesystem::path& path, s
     if (!error.isEmpty()) QMessageBox::critical(this, tr("Cannot place prefab"), error);
     if (root != entt::null) ctx_.select(editScene_->uuidOf(root));
     return root;
+}
+
+void EditorWindow::bakeReflectionProbes() {
+    if (ctx_.scene() == nullptr || ctx_.isPlaying()) {
+        statusBar()->showMessage(tr("Stop playing to bake reflection probes"), 4000);
+        return;
+    }
+    render::Renderer* renderer = app_.renderer();
+    if (renderer == nullptr) {
+        statusBar()->showMessage(tr("No renderer: %1").arg(app_.rendererError()), 6000);
+        return;
+    }
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    Result<int> baked = 0;
+    ctx_.edit(tr("Bake Reflection Probes"), [&](Scene& scene) {
+        baked = render::bakeReflectionProbes(*renderer, scene, assets_, {}, true);
+    });
+    QApplication::restoreOverrideCursor();
+    if (!baked) {
+        log::error("Editor", "baking reflection probes failed: {}", baked.error().message);
+        statusBar()->showMessage(tr("Baking reflection probes failed: %1").arg(QString::fromStdString(baked.error().message)), 8000);
+    } else if (*baked == 0) {
+        statusBar()->showMessage(tr("The scene has no Reflection Probe (Create > Reflection Probe)"), 6000);
+    } else {
+        statusBar()->showMessage(tr("Baked %n reflection probe(s)", nullptr, *baked), 4000);
+    }
 }
 
 } // namespace lumora::editor

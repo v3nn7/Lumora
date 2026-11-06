@@ -1,5 +1,6 @@
 #pragma once
 
+#include "assets/Image.hpp"
 #include "core/Error.hpp"
 #include "renderer/FrameResources.hpp"
 #include "renderer/GpuProfiler.hpp"
@@ -81,6 +82,11 @@ public:
     [[nodiscard]] Result<CapturedImage> capture(const Scene& scene, const CameraView& camera, VkExtent2D extent,
                                                 const RenderSettings& settings,
                                                 const std::function<void(RenderGraph&, RGImage)>& extraPasses = {});
+
+    /// Renders offscreen and reads the scene's linear HDR radiance back (blocking); for baking
+    /// reflection probes. `settings.linearOutput` is implied.
+    [[nodiscard]] Result<HdrImage> captureHdr(const Scene& scene, const CameraView& camera, VkExtent2D extent,
+                                              RenderSettings settings);
 
     [[nodiscard]] const FrameStats& stats() const noexcept { return stats_; }
     [[nodiscard]] RenderContext& context() noexcept { return ctx_; }

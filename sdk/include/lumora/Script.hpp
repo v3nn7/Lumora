@@ -130,6 +130,8 @@ struct EngineApi {
     int (*particles)(void* context, Entity entity, int command, int count);  // 0 stop, 1 play, 2 burst, 3 alive
     void (*debugDraw)(void* context, int kind, const float* a, const float* b, const float* rgba);  // 0 line, 1 box, 2 sphere
     int (*animationBlend)(void* context, Entity entity, const char* clip, float seconds);
+    // command: 0 find path (a -> b, points into out, returns the count), 1 move to a, 2 stop, 3 moving?
+    int (*navigation)(void* context, Entity entity, int command, const float* a, const float* b, float* out, int capacity);
     // kind: 0 action down, 1 action pressed, 2 axis, 3 gamepad connected, 4 pad button down,
     // 5 pad button pressed, 6 pad axis (code = button or axis, name = action or axis)
     float (*input)(void* context, int kind, int code, const char* name);
@@ -418,6 +420,25 @@ protected:
             if (t.id == id) t.id = 0;
         }
     }
+
+    // Navigation (a mesh built from the scene's static colliders).
+    /// Corners of the shortest walkable way, start and end included; empty if there is none.
+    [[nodiscard]] std::vector<Vec3> findPath(Vec3 from, Vec3 to) const {
+        const float a[3] = {from.x, from.y, from.z};
+        const float b[3] = {to.x, to.y, to.z};
+        std::vector<float> out(3 * 128);
+        const int n = api_->navigation(api_->context, entity_, 0, a, b, out.data(), 128);
+        std::vector<Vec3> path;
+        for (int i = 0; i < n && i < 128; ++i) path.push_back({out[i * 3], out[i * 3 + 1], out[i * 3 + 2]});
+        return path;
+    }
+    /// Nav Agent: walk to a point around obstacles and other agents; false if unreachable.
+    bool moveTo(Vec3 target) const {
+        const float a[3] = {target.x, target.y, target.z};
+        return api_->navigation(api_->context, entity_, 1, a, nullptr, nullptr, 0) != 0;
+    }
+    void stopMoving() const { api_->navigation(api_->context, entity_, 2, nullptr, nullptr, nullptr, 0); }
+    [[nodiscard]] bool isMoving() const { return api_->navigation(api_->context, entity_, 3, nullptr, nullptr, nullptr, 0) != 0; }
 
     // Particles (the entity's Particle Emitter).
     /// Emits `count` particles at once (an explosion, a hit).

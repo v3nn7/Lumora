@@ -4,6 +4,7 @@
 #include "input/InputState.hpp"
 #include "runtime/AnimationSystem.hpp"
 #include "runtime/AudioWorld.hpp"
+#include "runtime/Navigation.hpp"
 #include "runtime/PhysicsWorld.hpp"
 #include "assets/Material.hpp"
 #include "scene/DebugDraw.hpp"
@@ -283,6 +284,30 @@ int apiAnimationBlend(void* c, script::Entity entity, const char* clip, float se
     const entt::entity e = liveEntity(c, entity);
     if (animation == nullptr || e == entt::null || clip == nullptr) return 0;
     return animation->crossfade(e, clip, seconds) ? 1 : 0;
+}
+
+int apiNavigation(void* c, script::Entity entity, int command, const float* a, const float* b, float* out, int capacity) {
+    NavigationWorld* nav = context(c).navigation;
+    if (nav == nullptr) return 0;
+    const entt::entity e = liveEntity(c, entity);
+    switch (command) {
+        case 0: {
+            if (a == nullptr || b == nullptr) return 0;
+            const auto path = nav->findPath({a[0], a[1], a[2]}, {b[0], b[1], b[2]});
+            const int n = static_cast<int>(std::min<std::size_t>(path.size(), static_cast<std::size_t>(std::max(capacity, 0))));
+            for (int i = 0; out != nullptr && i < n; ++i) {
+                out[i * 3] = path[static_cast<std::size_t>(i)].x;
+                out[i * 3 + 1] = path[static_cast<std::size_t>(i)].y;
+                out[i * 3 + 2] = path[static_cast<std::size_t>(i)].z;
+            }
+            return n;
+        }
+        case 1: return e != entt::null && a != nullptr && nav->moveTo(e, {a[0], a[1], a[2]}) ? 1 : 0;
+        case 2:
+            if (e != entt::null) nav->stop(e);
+            return 1;
+        default: return e != entt::null && nav->isMoving(e) ? 1 : 0;
+    }
 }
 
 int apiCharacter(void* c, script::Entity entity, int command, const float* xyz) {
@@ -640,6 +665,7 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.particles = apiParticles;
     api_.debugDraw = apiDebugDraw;
     api_.animationBlend = apiAnimationBlend;
+    api_.navigation = apiNavigation;
     api_.input = apiInput;
     api_.save = apiSave;
 }

@@ -94,6 +94,7 @@ public:
     /// Also reads the project's input settings (Config/Input.json).
     void setProjectRoot(std::filesystem::path root);
     void setSaveData(SaveData* save) noexcept { context_.save = save; }
+    void setNavigation(class NavigationWorld* navigation) noexcept { context_.navigation = navigation; }
     [[nodiscard]] std::size_t instanceCount() const noexcept { return instances_.size(); }
     /// The scene a behaviour asked for with loadScene() (project-relative), once; empty if none.
     [[nodiscard]] std::string takeSceneRequest() { return std::exchange(context_.pendingScene, {}); }
@@ -117,6 +118,7 @@ public:
         GameUi ui;
         InputActions actions = InputActions::defaults();
         SaveData* save = nullptr;
+        class NavigationWorld* navigation = nullptr;
         double time = 0.0;
         std::string nameScratch;
     };

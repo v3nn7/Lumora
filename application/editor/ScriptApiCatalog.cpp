@@ -71,6 +71,11 @@ constexpr ScriptApiEntry kApi[] = {
     {S::Behaviour, "after", "TimerId after(float seconds, [this] { ... })", "Run code once, later"},
     {S::Behaviour, "every", "TimerId every(float seconds, [this] { ... })", "Run code repeatedly"},
     {S::Behaviour, "cancelTimer", "void cancelTimer(TimerId id)", "Stop a timer"},
+    // Navigation
+    {S::Behaviour, "findPath", "std::vector<Vec3> findPath(Vec3 from, Vec3 to)", "Shortest walkable way"},
+    {S::Behaviour, "moveTo", "bool moveTo(Vec3 target)", "Nav Agent: walk there"},
+    {S::Behaviour, "stopMoving", "void stopMoving()", "Nav Agent: stop"},
+    {S::Behaviour, "isMoving", "bool isMoving()", "Nav Agent: still on its way"},
     // Particles
     {S::Behaviour, "emitParticles", "void emitParticles(int count)", "Particle Emitter: a burst now"},
     {S::Behaviour, "setParticlesPlaying", "void setParticlesPlaying(bool playing)", "Start or stop emitting"},

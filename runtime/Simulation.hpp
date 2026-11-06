@@ -23,6 +23,7 @@ class PhysicsWorld;
 class ScriptModule;
 class ScriptRunner;
 class SaveData;
+class NavigationWorld;
 
 /// Drives gameplay systems at a fixed timestep, decoupled from the render frame rate.
 /// Given the same sequence of step counts the result is deterministic.
@@ -48,6 +49,8 @@ public:
     [[nodiscard]] double alpha() const noexcept { return accumulator_ / fixedStep_; }
     /// Physics world, present when the scene contains colliders at start.
     [[nodiscard]] PhysicsWorld* physics() noexcept { return physics_.get(); }
+    /// Navigation mesh and agents (the mesh is built from the static colliders on first use).
+    [[nodiscard]] NavigationWorld& navigation() noexcept { return *navigation_; }
 
     /// Runs the game library's behaviours (ScriptComponent) every step; `input` is read by
     /// keyDown() and may be null. Called again with a new library (hot reload), the running
@@ -90,6 +93,7 @@ private:
     std::filesystem::path loadedScene_;
     bool audioDevice_ = true;  // whether sound for a loaded scene goes to the audio device
     std::unique_ptr<SaveData> save_;
+    std::unique_ptr<NavigationWorld> navigation_;
     std::unique_ptr<PhysicsWorld> physics_;
     std::unique_ptr<AudioWorld> audio_;
     std::unique_ptr<AnimationSystem> animation_;

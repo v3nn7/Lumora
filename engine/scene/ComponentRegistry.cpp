@@ -176,6 +176,16 @@ ComponentRegistry makeBuiltin() {
         reg.add(std::move(d));
     }
     {
+        auto d = R::describe<NavAgentComponent>("NavAgent", "Nav Agent");
+        d.fields = {
+            ranged(R::field(&NavAgentComponent::speed, "speed", "Speed", FieldKind::Float), 0.0f, 100.0f, 0.1f),
+            ranged(R::field(&NavAgentComponent::acceleration, "acceleration", "Acceleration", FieldKind::Float), 0.1f, 1000.0f, 0.1f),
+            ranged(R::field(&NavAgentComponent::radius, "radius", "Radius", FieldKind::Float), 0.05f, 10.0f, 0.01f),
+            ranged(R::field(&NavAgentComponent::height, "height", "Height", FieldKind::Float), 0.1f, 20.0f, 0.05f),
+        };
+        reg.add(std::move(d));
+    }
+    {
         auto d = R::describe<DecalComponent>("Decal", "Decal");
         d.fields = {
             R::field(&DecalComponent::texture, "decalTexture", "Texture", FieldKind::Asset),

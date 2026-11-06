@@ -266,6 +266,15 @@ button layout. Saved values (`saveNumber`, `saveText`) live in `Saved/GameSave.j
 playing in the editor (*Play → Clear Saved Game Data* resets them) and in the player's data
 folder in exported games.
 
+### Navigation
+
+Give a character a **Nav Agent** component and a script can send it anywhere it can walk:
+`moveTo(target)` finds the way around walls and other agents (`isMoving()` turns false on
+arrival, `stopMoving()` stops it); `findPath(from, to)` returns the corners of the way. The
+navigation mesh is built from the scene's static colliders when play starts (what characters can
+stand on, minus the agent's radius, steps up to 0.4 m, slopes up to 45°). An agent with a
+Character Controller walks through the physics; without one it is moved directly.
+
 ### Decals
 
 *Create → Effects → Decal* (or a **Decal** component) projects a texture or a plain colour down
@@ -379,6 +388,7 @@ What a behaviour can do:
 | `saveNumber(key, v)`, `loadNumber(key, fallback)`, `saveText`, `loadText`, `hasSave`, `deleteSave` | Saved game data, kept between runs |
 | `after(2.0f, [this] { ... })`, `every(0.5f, [this] { ... })`, `cancelTimer(id)` | Run code later or repeatedly, in game time |
 | `debugLine(a, b)`, `debugBox(center, half)`, `debugSphere(center, r)` | Debug shapes on top of the scene for this step (editor while playing; player after <kbd>F3</kbd>) |
+| `moveTo(target)`, `isMoving()`, `stopMoving()`, `findPath(from, to)` | Navigation (see Navigation) |
 | `crossfadeAnimation("Run", 0.25f)` | Blend from the current clip into another (no pop) |
 | `emitParticles(n)`, `setParticlesPlaying(on)`, `particleCount()` | The entity's Particle Emitter |
 | `setMaterial("Content/Materials/Glow.lmat")`, `setMaterialOf(e, path)`, `setColor(v)` | Change how a Mesh Renderer looks |

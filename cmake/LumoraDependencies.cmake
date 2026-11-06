@@ -89,6 +89,16 @@ set(JSON_BuildTests OFF CACHE INTERNAL "")
 set(JSON_Install OFF CACHE INTERNAL "")
 set(VMA_ENABLE_INSTALL OFF CACHE INTERNAL "")
 
+# Recast & Detour 1.6.0 (zlib): navigation meshes, path finding and crowds of agents.
+FetchContent_Declare(recastnavigation
+    URL https://github.com/recastnavigation/recastnavigation/archive/refs/tags/v1.6.0.tar.gz
+    URL_HASH SHA256=d48ca0121962fa0639502c0f56c4e3ae72f98e55d88727225444f500775c0074
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SYSTEM)
+set(RECASTNAVIGATION_DEMO OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_TESTS OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_EXAMPLES OFF CACHE BOOL "" FORCE)
+
 # NVRHI (NVIDIA Rendering Hardware Interface, MIT): the renderer's GPU layer, with automatic
 # resource state tracking. Vulkan on every platform; D3D12 on Windows. Pinned commit (2026-10-28).
 FetchContent_Declare(nvrhi
@@ -103,9 +113,9 @@ set(NVRHI_WITH_DX12 OFF CACHE BOOL "" FORCE)
 set(NVRHI_WITH_RTXMU OFF CACHE BOOL "" FORCE)
 set(NVRHI_FETCH_VULKAN_HEADERS OFF CACHE BOOL "" FORCE)  # the Vulkan SDK's headers (Vulkan::Headers)
 
-FetchContent_MakeAvailable(glm EnTT VulkanMemoryAllocator nlohmann_json cgltf stb JoltPhysics miniaudio nvrhi)
+FetchContent_MakeAvailable(glm EnTT VulkanMemoryAllocator nlohmann_json cgltf stb JoltPhysics miniaudio nvrhi recastnavigation)
 # NVRHI is static; the renderer module may be a shared library.
-set_target_properties(nvrhi nvrhi_vk PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(nvrhi nvrhi_vk Recast Detour DetourCrowd PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(stb INTERFACE)
 target_include_directories(stb SYSTEM INTERFACE ${stb_SOURCE_DIR})
 add_library(miniaudio INTERFACE)

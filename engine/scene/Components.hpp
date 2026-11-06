@@ -152,6 +152,16 @@ struct ParticleStateComponent {
     std::int32_t requested = 0;  // extra particles asked for (scripts)
 };
 
+/// An agent that walks on the scene's navigation mesh (built from the static colliders): scripts
+/// send it somewhere with moveTo() and it finds the way around obstacles and other agents. With
+/// a Character Controller it walks through the physics; without, it is moved directly.
+struct NavAgentComponent {
+    float speed = 3.5f;          // m/s
+    float acceleration = 10.0f;  // m/s^2
+    float radius = 0.4f;         // keeps this far from walls and other agents
+    float height = 1.8f;
+};
+
 /// Moves the entity back and forth: position = start + offset * sin(2 pi t / period), while the
 /// simulation runs. With a kinematic Rigid Body and a Collider it is a moving platform that
 /// carries characters standing on it.

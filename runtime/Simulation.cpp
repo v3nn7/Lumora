@@ -3,6 +3,7 @@
 #include "runtime/AnimationSystem.hpp"
 #include "runtime/AudioWorld.hpp"
 #include "runtime/PhysicsWorld.hpp"
+#include "runtime/Navigation.hpp"
 #include "runtime/SaveData.hpp"
 #include "runtime/Scripting.hpp"
 #include "core/Log.hpp"
@@ -58,7 +59,8 @@ void Simulation::runOscillators(float dt) {
 }
 
 Simulation::Simulation(Scene& scene, double fixedStep)
-    : scene_(scene), fixedStep_(fixedStep > 0.0 ? fixedStep : kDefaultFixedStep) {
+    : scene_(scene), fixedStep_(fixedStep > 0.0 ? fixedStep : kDefaultFixedStep),
+      navigation_(std::make_unique<NavigationWorld>(scene)) {
     if (PhysicsWorld::sceneHasColliders(scene_)) physics_ = std::make_unique<PhysicsWorld>(scene_);
 }
 
@@ -89,6 +91,7 @@ void Simulation::setScripts(std::shared_ptr<ScriptModule> module, const InputSta
         scripts_->setProjectRoot(projectRoot_);
         scripts_->setAnimation(animation_.get());
         scripts_->setSaveData(save_.get());
+        scripts_->setNavigation(navigation_.get());
     }
 }
 
@@ -132,6 +135,7 @@ void Simulation::step() {
         physics_ = std::make_unique<PhysicsWorld>(scene_);
         if (scripts_) scripts_->setPhysics(physics_.get());
     }
+    navigation_->update(dt, physics_.get());  // agents' steps go into this physics step
     if (physics_) {
         physics_->step(dt);
         scene_.updateWorldTransforms();
@@ -164,6 +168,7 @@ Result<> Simulation::loadScene(const std::filesystem::path& relativePath) {
     oscillatorOrigins_.clear();
     hud_.clear();
     debug_.clear();
+    navigation_ = std::make_unique<NavigationWorld>(scene_);
     if (auto replaced = SceneSerializer::loadInto(scene_, SceneSerializer::toJson(**loaded)); !replaced) {
         return makeError("loadScene {}: {}", relative.generic_string(), replaced.error().message);
     }
@@ -184,6 +189,7 @@ Result<> Simulation::loadScene(const std::filesystem::path& relativePath) {
         scripts_->setPhysics(physics_.get());
         scripts_->setAnimation(animation_.get());
         scripts_->setAudio(audio_.get());
+        scripts_->setNavigation(navigation_.get());
     }
     steps_ = 0;
     accumulator_ = 0.0;

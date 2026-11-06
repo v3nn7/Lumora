@@ -17,6 +17,9 @@ licences compatible with it. Versions are pinned (and hash-verified) in `cmake/`
 | stb_truetype | HUD font rasterisation | MIT or public domain |
 | miniaudio 0.11.25 | audio playback, decoding, 3D sound | public domain or MIT-0 |
 | Jolt Physics | rigid-body physics | MIT |
+| NVRHI (NVIDIA Rendering Hardware Interface) | GPU layer of the renderer (Vulkan backend) | MIT |
+| Vulkan-Headers 1.4.352 (incl. vulkan.hpp) | Vulkan API declarations | Apache-2.0 or MIT |
+| Recast & Detour 1.6.0 | navigation meshes, path finding, crowds | zlib |
 | miniz | ZIP extraction (editor installer) | MIT |
 | Monocypher | Ed25519 signature checks (editor installer), XChaCha20-Poly1305 (session datagrams) | BSD-2-Clause or CC0 |
 | micro-ecc | ECDSA P-256 for the session host's TLS certificate | BSD-2-Clause |

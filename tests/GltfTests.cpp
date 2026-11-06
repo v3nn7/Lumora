@@ -11,6 +11,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <chrono>
+#include <functional>
 #include <clocale>
 #include <thread>
 #include <string>
@@ -371,4 +372,71 @@ TEST(GltfAnimation, CrossfadeBlendsFromTheOldClipToTheNew) {
     EXPECT_FLOAT_EQ(sim.animation()->blendWeight(root), 1.0f);
     EXPECT_NEAR(t.position.x, 0.0f, 1e-4f) << "the new clip alone";
     EXPECT_NEAR(t.position.y, 1.65f, 0.03f);
+}
+
+#include <nlohmann/json.hpp>
+
+#include <fstream>
+
+namespace {
+/// The textured test cube with its JSON edited.
+std::filesystem::path editedCube(const std::filesystem::path& dir, const std::string& name,
+                                 const std::function<void(nlohmann::json&)>& edit) {
+    const auto file = dir / name;
+    test::writeCubeGltf(file, false, true);
+    nlohmann::json doc;
+    std::ifstream(file) >> doc;
+    edit(doc);
+    std::ofstream(file) << doc.dump();
+    return file;
+}
+} // namespace
+
+TEST(GltfMaterials, CutOutTwoSidedAndTheModelsOwnUnits) {
+    test::TempDir dir;
+    const auto masked = editedCube(dir.path(), "masked.gltf", [](nlohmann::json& doc) {
+        doc["materials"][0]["alphaMode"] = "MASK";
+        doc["materials"][0]["alphaCutoff"] = 0.3;
+        doc["materials"][0]["doubleSided"] = true;
+    });
+    auto model = importGltf(masked);
+    ASSERT_TRUE(model.has_value()) << model.error().message;
+    EXPECT_EQ(model->materials[0].alphaMode, ImportedMaterial::AlphaMode::Mask);
+    EXPECT_FLOAT_EQ(model->materials[0].alphaCutoff, 0.3f);
+    EXPECT_TRUE(model->materials[0].doubleSided);
+    EXPECT_TRUE(model->materials[0].baseColorHasAlpha) << "the test image is an RGBA PNG";
+    EXPECT_FLOAT_EQ(model->unitScale, 1.0f) << "glTF is in metres";
+    EXPECT_GT(model->boundsMax.x - model->boundsMin.x, 0.5f);
+    Scene scene;
+    const entt::entity root = instantiateModel(scene, *model, "Content/Models/masked.gltf", "M");
+    const entt::entity box = scene.childrenOf(scene.childrenOf(root)[0])[0];
+    const auto& mesh = scene.registry().get<MeshRendererComponent>(box);
+    EXPECT_FLOAT_EQ(mesh.alphaCutoff, 0.3f);
+    EXPECT_TRUE(mesh.doubleSided);
+    EXPECT_EQ(scene.registry().get<TransformComponent>(root).scale, glm::vec3(1.0f));
+    // Both survive saving.
+    auto copy = SceneSerializer::clone(scene);
+    ASSERT_TRUE(copy.has_value());
+    const auto& copied = (*copy)->registry().get<MeshRendererComponent>((*copy)->findByUuid(scene.uuidOf(box)));
+    EXPECT_FLOAT_EQ(copied.alphaCutoff, 0.3f);
+    EXPECT_TRUE(copied.doubleSided);
+
+    // BLEND (leaf cards) is cut out at a half.
+    const auto blended = editedCube(dir.path(), "blend.gltf", [](nlohmann::json& doc) { doc["materials"][0]["alphaMode"] = "BLEND"; });
+    auto blend = importGltf(blended);
+    ASSERT_TRUE(blend.has_value());
+    Scene blendScene;
+    const entt::entity blendRoot = instantiateModel(blendScene, *blend, "Content/Models/blend.gltf", "B");
+    EXPECT_FLOAT_EQ(blendScene.registry().get<MeshRendererComponent>(blendScene.childrenOf(blendScene.childrenOf(blendRoot)[0])[0]).alphaCutoff,
+                    0.5f);
+
+    // A SketchUp model (inches written as metres) comes in at its real size, both sides drawn.
+    const auto sketchUp = editedCube(dir.path(), "sketchup.gltf", [](nlohmann::json& doc) { doc["nodes"][0]["name"] = "SketchUp"; });
+    auto inches = importGltf(sketchUp);
+    ASSERT_TRUE(inches.has_value());
+    EXPECT_FLOAT_EQ(inches->unitScale, 0.0254f);
+    EXPECT_TRUE(inches->materials[0].doubleSided);
+    Scene inchScene;
+    const entt::entity inchRoot = instantiateModel(inchScene, *inches, "Content/Models/sketchup.gltf", "S");
+    EXPECT_EQ(inchScene.registry().get<TransformComponent>(inchRoot).scale, glm::vec3(0.0254f));
 }

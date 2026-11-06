@@ -59,6 +59,7 @@ struct GpuObject {
     float4 emissiveRoughness;   // rgb emissive radiance, w roughness
     float4 flags;               // x selected, y surface pattern (0 none, 1 grid, 2 checker)
     uint4 textures;             // bindless: base colour, metallic-roughness, emissive, normal (NO_TEXTURE = none)
+    float4 surface;             // x alpha cutoff (0 = opaque; below it the base colour's alpha cuts a hole), y two-sided
 };
 
 static const uint NO_TEXTURE = 0xFFFFFFFFu;

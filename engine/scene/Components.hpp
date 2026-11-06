@@ -64,6 +64,11 @@ struct MeshRendererComponent {
     /// every entity using it changes when the file does.
     std::string material;
     bool visible = true;
+    /// Cut-out surfaces (leaves, fences, hair cards): where the base colour map's alpha is below
+    /// this, nothing is drawn and no shadow is cast. 0 = opaque.
+    float alphaCutoff = 0.0f;
+    /// Drawn from behind too (thin things: leaves, cloth, paper).
+    bool doubleSided = false;
 };
 
 enum class LightType : std::int32_t { Directional = 0, Point = 1, Spot = 2 };

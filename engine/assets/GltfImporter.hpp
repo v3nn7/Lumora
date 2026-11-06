@@ -25,6 +25,15 @@ struct ImportedMaterial {
     int metallicRoughnessTexture = -1;
     int emissiveTexture = -1;
     int normalTexture = -1;
+    /// glTF alphaMode: MASK cuts holes where the base colour's alpha is below alphaCutoff;
+    /// BLEND (leaf cards, decals) is drawn cut out at 0.5 too, the closest an opaque pass gets.
+    enum class AlphaMode { Opaque, Mask, Blend };
+    AlphaMode alphaMode = AlphaMode::Opaque;
+    float alphaCutoff = 0.5f;
+    bool doubleSided = false;
+    /// The base colour map is a PNG with an alpha channel (or transparency chunk): exporters
+    /// often lose alphaMode, so an "opaque" material with such a map is cut out anyway.
+    bool baseColorHasAlpha = false;
 };
 
 /// Still-encoded image (PNG/JPEG) taken from the model: embedded in a .glb buffer, a data URI,
@@ -99,6 +108,12 @@ struct ImportedModel {
     std::vector<ImportedAnimation> animations;
     std::vector<ImportedSkin> skins;
     std::vector<std::string> warnings;
+    /// Metres per model unit. glTF is in metres, but some exporters write other units as if they
+    /// were metres: SketchUp's inches come out 39 times too big. Applied to the model's root.
+    float unitScale = 1.0f;
+    /// The model's extent in its own units (all meshes under their nodes), if it has any.
+    glm::vec3 boundsMin{0.0f};
+    glm::vec3 boundsMax{0.0f};
 };
 
 [[nodiscard]] Result<ImportedModel> importGltf(const std::filesystem::path& file);

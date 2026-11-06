@@ -89,6 +89,8 @@ ComponentRegistry makeBuiltin() {
             R::field(&MeshRendererComponent::normalTexture, "normalTexture", "Normal Map", FieldKind::Asset),
             R::field(&MeshRendererComponent::emissiveTexture, "emissiveTexture", "Emissive Map", FieldKind::Asset),
             R::field(&MeshRendererComponent::visible, "visible", "Visible", FieldKind::Bool),
+            ranged(R::field(&MeshRendererComponent::alphaCutoff, "alphaCutoff", "Alpha Cutoff", FieldKind::Float), 0.0f, 1.0f, 0.01f),
+            R::field(&MeshRendererComponent::doubleSided, "doubleSided", "Two-Sided", FieldKind::Bool),
         };
         reg.add(std::move(d));
     }

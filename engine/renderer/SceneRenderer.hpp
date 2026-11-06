@@ -124,11 +124,13 @@ private:
     nvrhi::GraphicsPipelineHandle sky_;
     nvrhi::GraphicsPipelineHandle opaque_;
     nvrhi::GraphicsPipelineHandle opaqueSkinned_;
+    nvrhi::GraphicsPipelineHandle opaqueTwoSided_;
     nvrhi::GraphicsPipelineHandle grid_;
     nvrhi::GraphicsPipelineHandle particlesAlpha_;
     nvrhi::GraphicsPipelineHandle particlesAdditive_;
     nvrhi::GraphicsPipelineHandle shadow_;
     nvrhi::GraphicsPipelineHandle shadowSkinned_;
+    nvrhi::GraphicsPipelineHandle shadowMasked_;  // alpha-tested casters (no culling, like all shadows)
     nvrhi::GraphicsPipelineHandle vsmClear_;
     VirtualShadowMap vsm_;
     nvrhi::TextureHandle vsmPool_;       // physical pages (depth), kept across frames
@@ -137,6 +139,9 @@ private:
     std::uint32_t vsmPageTableIndex_ = UINT32_MAX;
     nvrhi::GraphicsPipelineHandle depthPrepass_;
     nvrhi::GraphicsPipelineHandle depthPrepassSkinned_;
+    nvrhi::GraphicsPipelineHandle depthPrepassTwoSided_;
+    nvrhi::GraphicsPipelineHandle depthPrepassMasked_;
+    nvrhi::GraphicsPipelineHandle depthPrepassMaskedTwoSided_;
     nvrhi::GraphicsPipelineHandle ssao_;
     nvrhi::GraphicsPipelineHandle ssaoBlur_;
     nvrhi::GraphicsPipelineHandle bloomDown_;

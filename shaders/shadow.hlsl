@@ -1,6 +1,7 @@
 // Depth-only pass rendering shadow casters from the sun's point of view into one cascade tile
 // of the shadow atlas (gPush.index1 = cascade), or from a spot/point light into a tile of the local
 // shadow atlas (flags bit0, index1 = tile), or into a page of the virtual shadow map (flags bit1).
+// With LUMORA_MASKED the base colour's alpha cuts holes below the object's cutoff.
 #include "common.hlsli"
 
 struct VSInput {
@@ -13,8 +14,7 @@ struct VSInput {
 #endif
 };
 
-float4 VSMain(VSInput input, uint instance : SV_InstanceID) : SV_Position {
-    GpuObject object = gObjects[gPush.index0 + instance];
+float4 lightClip(GpuObject object, VSInput input) {
     float3 position = input.position;
 #if defined(LUMORA_SKINNED)
     position = mul(skinMatrix(input.joints, input.weights, (uint)object.flags.z), float4(position, 1.0)).xyz;
@@ -30,3 +30,33 @@ float4 VSMain(VSInput input, uint instance : SV_InstanceID) : SV_Position {
                                                            : gFrame.cascadeViewProjection[gPush.index1];
     return toTarget(mul(lightViewProjection, mul(object.world, float4(position, 1.0))));
 }
+
+#if defined(LUMORA_MASKED)
+struct VSOutput {
+    float4 position : SV_Position;
+    float2 uv : TEXCOORD0;
+    nointerpolation uint objectIndex : TEXCOORD1;
+};
+
+VSOutput VSMain(VSInput input, uint instance : SV_InstanceID) {
+    VSOutput o;
+    o.objectIndex = gPush.index0 + instance;
+    o.position = lightClip(gObjects[o.objectIndex], input);
+    o.uv = input.uv;
+    return o;
+}
+
+#if defined(LUMORA_STAGE_FRAG)
+void PSMain(VSOutput input) {
+    GpuObject object = gObjects[input.objectIndex];
+    if (object.textures.x != NO_TEXTURE &&
+        gTextures[object.textures.x].Sample(gSamplers[gFrame.counts.z], input.uv).a < object.surface.x) {
+        discard;
+    }
+}
+#endif
+#else
+float4 VSMain(VSInput input, uint instance : SV_InstanceID) : SV_Position {
+    return lightClip(gObjects[gPush.index0 + instance], input);
+}
+#endif

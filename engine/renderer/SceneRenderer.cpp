@@ -197,6 +197,10 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     opaque.colorFormats = {hdr};
     opaque.depthFormat = depth;
     opaque_ = make(opaque);
+    opaque.name = "OpaquePBRTwoSided";
+    opaque.cull = nvrhi::RasterCullMode::None;
+    opaqueTwoSided_ = make(opaque);
+    opaque.cull = nvrhi::RasterCullMode::Back;
     opaque.name = "OpaquePBRSkinned";
     opaque.vertexShader = "mesh.skinned.vert";
     opaque.input = VertexInput::MeshSkinned;
@@ -244,6 +248,11 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     shadow.vertexShader = "shadow.skinned.vert";
     shadow.input = VertexInput::MeshSkinnedPosition;
     shadowSkinned_ = make(shadow);
+    shadow.name = "SunShadowMasked";
+    shadow.vertexShader = "shadow.masked.vert";
+    shadow.pixelShader = "shadow.masked.frag";
+    shadow.input = VertexInput::Mesh;
+    shadowMasked_ = make(shadow);
     PipelineDesc clear;
     clear.name = "VirtualShadowClear";
     clear.vertexShader = "vsm.clear.vert";
@@ -267,6 +276,19 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     prepass.vertexShader = "depth.skinned.vert";
     prepass.input = VertexInput::MeshSkinnedPosition;
     depthPrepassSkinned_ = make(prepass);
+    prepass.name = "DepthPrepassTwoSided";
+    prepass.vertexShader = "depth.vert";
+    prepass.input = VertexInput::MeshPosition;
+    prepass.cull = nvrhi::RasterCullMode::None;
+    depthPrepassTwoSided_ = make(prepass);
+    prepass.name = "DepthPrepassMaskedTwoSided";
+    prepass.vertexShader = "depth.masked.vert";
+    prepass.pixelShader = "depth.masked.frag";
+    prepass.input = VertexInput::Mesh;
+    depthPrepassMaskedTwoSided_ = make(prepass);
+    prepass.name = "DepthPrepassMasked";
+    prepass.cull = nvrhi::RasterCullMode::Back;
+    depthPrepassMasked_ = make(prepass);
 
     for (int blur = 0; blur < 2; ++blur) {
         PipelineDesc ao;
@@ -530,13 +552,35 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         std::uint32_t count = 1;  // instances: objects object .. object + count - 1
         std::uint64_t key = 0;    // the entity (virtual shadow map caster tracking)
         std::uint64_t state = 0;  // changes when its shadow can change
+        std::uint8_t variant = 0; // kMasked | kTwoSided (unskinned meshes)
+    };
+    constexpr std::uint8_t kMasked = 1;
+    constexpr std::uint8_t kTwoSided = 2;
+    // Pipelines per pass for a draw.
+    auto prepassPipeline = [this](const Draw& d) -> nvrhi::IGraphicsPipeline* {
+        if (d.mesh->skinned()) return depthPrepassSkinned_;
+        switch (d.variant) {
+            case kMasked: return depthPrepassMasked_;
+            case kTwoSided: return depthPrepassTwoSided_;
+            case kMasked | kTwoSided: return depthPrepassMaskedTwoSided_;
+            default: return depthPrepass_;
+        }
+    };
+    auto opaquePipeline = [this](const Draw& d) -> nvrhi::IGraphicsPipeline* {
+        if (d.mesh->skinned()) return opaqueSkinned_;
+        return (d.variant & kTwoSided) != 0 ? opaqueTwoSided_ : opaque_;
+    };
+    auto shadowPipeline = [this](const Draw& d) -> nvrhi::IGraphicsPipeline* {
+        if (d.mesh->skinned()) return shadowSkinned_;
+        return (d.variant & kMasked) != 0 ? shadowMasked_ : shadow_;
     };
     // Copies of one mesh in consecutive objects become one instanced draw.
     auto instanced = [](const std::vector<Draw>& list) {
         std::vector<Draw> out;
         out.reserve(list.size());
         for (const Draw& d : list) {
-            if (!out.empty() && out.back().mesh == d.mesh && out.back().object + out.back().count == d.object) {
+            if (!out.empty() && out.back().mesh == d.mesh && out.back().variant == d.variant &&
+                out.back().object + out.back().count == d.object) {
                 ++out.back().count;
             } else {
                 out.push_back(d);
@@ -703,14 +747,24 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 state = state * 1099511628211ull ^ std::bit_cast<std::uint32_t>(obj.world[col][row]);
             }
         }
-        const Draw draw{drawn, static_cast<std::uint32_t>(objects.size()), p.center, p.extent, 1,
-                        static_cast<std::uint64_t>(entt::to_integral(candidates[i].entity)), state};
+        const MeshRendererComponent& look = *candidates[i].mesh;
+        const bool masked = look.alphaCutoff > 0.0f && obj.textures.x != kNoTexture;
+        obj.surface = glm::vec4(masked ? look.alphaCutoff : 0.0f, look.doubleSided ? 1.0f : 0.0f, 0.0f, 0.0f);
+        const auto variant = static_cast<std::uint8_t>((masked ? kMasked : 0) | (look.doubleSided ? kTwoSided : 0));
+        const Draw draw{drawn,
+                        static_cast<std::uint32_t>(objects.size()),
+                        p.center,
+                        p.extent,
+                        1,
+                        static_cast<std::uint64_t>(entt::to_integral(candidates[i].entity)),
+                        state,
+                        candidates[i].gpuMesh->skinned() ? std::uint8_t{0} : variant};
         if (p.visible) draws.push_back(draw);
         if (anyShadows) casters.push_back(draw);
         objects.push_back(obj);
     }
     // Unskinned first, then skinned (one pipeline switch); within each, grouped by mesh.
-    auto byPipelineAndMesh = [](const Draw& d) { return std::pair(d.mesh->skinned(), d.mesh); };
+    auto byPipelineAndMesh = [](const Draw& d) { return std::tuple(d.mesh->skinned(), d.variant, d.mesh); };
     std::ranges::stable_sort(draws, std::less<>{}, byPipelineAndMesh);
     std::ranges::stable_sort(casters, std::less<>{}, byPipelineAndMesh);
     // Decals are objects too: world, inverse world (in normalMatrix), colour + opacity, texture.
@@ -823,7 +877,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.writeDepth(shadowMap, LoadOp::Clear, 1.0f);
                 b.recordInParallel(parallelShadow);
             },
-            [this, stateFor, tile, cascadeCasters = std::move(cascadeCasters)](PassContext& ctx) {
+            [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, tile, cascadeCasters = std::move(cascadeCasters)](PassContext& ctx) {
                 // One cascade per command list when recorded in parallel.
                 ctx.recordParallel(kShadowCascades, 1, [&](nvrhi::ICommandList* cmd, std::size_t begin, std::size_t end) {
                     for (std::size_t c = begin; c < end; ++c) {
@@ -833,10 +887,12 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                         state.viewport = nvrhi::ViewportState().addViewportAndScissorRect(
                             nvrhi::Viewport(x, x + static_cast<float>(tile), y, y + static_cast<float>(tile), 0.0f, 1.0f));
                         const GpuMesh* mesh = nullptr;
+                        std::uint8_t variant = 0xff;
                         for (const Draw& d : cascadeCasters[c]) {
-                            if (d.mesh != mesh) {
+                            if (d.mesh != mesh || d.variant != variant) {
+                                variant = d.variant;
                                 mesh = d.mesh;
-                                state.pipeline = mesh->skinned() ? shadowSkinned_ : shadow_;
+                                state.pipeline = shadowPipeline(d);
                                 bindMesh(state, *mesh);
                                 cmd->setGraphicsState(state);
                             }
@@ -926,7 +982,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     b.writeDepth(vsmPool, LoadOp::Load);  // cached pages stay
                     b.recordInParallel(parallelPages);
                 },
-                [this, stateFor, pages = vsmFrame.render, pageCasters = std::move(pageCasters)](PassContext& ctx) {
+                [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, pages = vsmFrame.render, pageCasters = std::move(pageCasters)](PassContext& ctx) {
                     ctx.recordParallel(pages.size(), 8, [&](nvrhi::ICommandList* cmd, std::size_t begin, std::size_t end) {
                         constexpr float texels = static_cast<float>(VirtualShadowMap::kPageTexels);
                         for (std::size_t p = begin; p < end; ++p) {
@@ -940,10 +996,12 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                             push(cmd, PushConstants{});
                             cmd->draw(nvrhi::DrawArguments().setVertexCount(3));
                             const GpuMesh* mesh = nullptr;
+                            std::uint8_t variant = 0xff;
                             for (const Draw& d : pageCasters[p]) {
-                                if (d.mesh != mesh) {
+                                if (d.mesh != mesh || d.variant != variant) {
+                                    variant = d.variant;
                                     mesh = d.mesh;
-                                    state.pipeline = mesh->skinned() ? shadowSkinned_ : shadow_;
+                                    state.pipeline = shadowPipeline(d);
                                     bindMesh(state, *mesh);
                                     cmd->setGraphicsState(state);
                                 }
@@ -982,7 +1040,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         const std::uint32_t tileSize = localAtlasSize / 4;
         graph.addRasterPass(
             "LocalShadows", [&](PassBuilder& b) { b.writeDepth(localAtlas, LoadOp::Clear, 1.0f); },
-            [this, stateFor, tileSize, tileCasters = std::move(tileCasters)](PassContext& ctx) {
+            [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, tileSize, tileCasters = std::move(tileCasters)](PassContext& ctx) {
                 for (std::size_t t = 0; t < tileCasters.size(); ++t) {
                     const float x = static_cast<float>((t % 4) * tileSize);
                     const float y = static_cast<float>((t / 4) * tileSize);
@@ -990,10 +1048,12 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     state.viewport = nvrhi::ViewportState().addViewportAndScissorRect(
                         nvrhi::Viewport(x, x + static_cast<float>(tileSize), y, y + static_cast<float>(tileSize), 0.0f, 1.0f));
                     const GpuMesh* mesh = nullptr;
+                    std::uint8_t variant = 0xff;
                     for (const Draw& d : tileCasters[t]) {
-                        if (d.mesh != mesh) {
+                        if (d.mesh != mesh || d.variant != variant) {
+                            variant = d.variant;
                             mesh = d.mesh;
-                            state.pipeline = mesh->skinned() ? shadowSkinned_ : shadow_;
+                            state.pipeline = shadowPipeline(d);
                             bindMesh(state, *mesh);
                             ctx.cmd->setGraphicsState(state);
                         }
@@ -1016,16 +1076,18 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             b.writeDepth(depth, LoadOp::Clear, 0.0f);  // reversed-Z: 0 is the far plane
             b.recordInParallel(parallelPrepass);
         },
-        [this, stateFor, draws](PassContext& ctx) {  // a copy: runs after build() returns
+        [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, draws](PassContext& ctx) {  // a copy: runs after build() returns
             if (draws.empty()) return;
             ctx.recordParallel(draws.size(), 64, [&](nvrhi::ICommandList* cmd, std::size_t begin, std::size_t end) {
                 nvrhi::GraphicsState state = stateFor(depthPrepass_, ctx);
                 const GpuMesh* mesh = nullptr;
+                std::uint8_t variant = 0xff;
                 for (std::size_t i = begin; i < end; ++i) {
                     const Draw& d = draws[i];
-                    if (d.mesh != mesh) {
+                    if (d.mesh != mesh || d.variant != variant) {
+                        variant = d.variant;
                         mesh = d.mesh;
-                        state.pipeline = mesh->skinned() ? depthPrepassSkinned_ : depthPrepass_;
+                        state.pipeline = prepassPipeline(d);
                         bindMesh(state, *mesh);
                         cmd->setGraphicsState(state);
                     }
@@ -1050,7 +1112,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.writeColor(aoRaw, LoadOp::DontCare);
                 b.sample(depth);
             },
-            [this, stateFor, depth, radius = settings.aoRadius, intensity = settings.aoIntensity](PassContext& ctx) {
+            [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, depth, radius = settings.aoRadius, intensity = settings.aoIntensity](PassContext& ctx) {
                 PushConstants pc;
                 pc.index0 = ctx.bindlessIndex(depth);
                 pc.param0 = radius;
@@ -1065,7 +1127,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.sample(aoRaw);
                 b.sample(depth);
             },
-            [this, stateFor, depth, aoRaw, linear](PassContext& ctx) {
+            [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, depth, aoRaw, linear](PassContext& ctx) {
                 PushConstants pc;
                 pc.index0 = ctx.bindlessIndex(depth);
                 pc.index1 = ctx.bindlessIndex(aoRaw);
@@ -1077,7 +1139,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
 
     graph.addRasterPass(
         "Sky", [&](PassBuilder& b) { b.writeColor(hdr, LoadOp::DontCare); },
-        [this, stateFor](PassContext& ctx) { fullscreen(ctx.cmd, stateFor(sky_, ctx), PushConstants{}); });
+        [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline](PassContext& ctx) { fullscreen(ctx.cmd, stateFor(sky_, ctx), PushConstants{}); });
 
     const bool parallelOpaque = draws.size() >= settings.parallelRecordingMinDraws;
     stats.parallelRecording = stats.parallelRecording || parallelOpaque;
@@ -1095,7 +1157,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             if (ambientOcclusion) b.sample(ao);
             b.recordInParallel(parallelOpaque);
         },
-        [this, stateFor, shadows, shadowMap, virtualShadows, vsmPool, vsmPageTable, localShadows, localAtlas, ambientOcclusion, ao,
+        [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, shadows, shadowMap, virtualShadows, vsmPool, vsmPageTable, localShadows, localAtlas, ambientOcclusion, ao,
          debugCascades = settings.debugCascades,
          draws = std::move(draws)](PassContext& ctx) {
             if (draws.empty()) return;
@@ -1109,11 +1171,13 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             ctx.recordParallel(draws.size(), 64, [&](nvrhi::ICommandList* cmd, std::size_t begin, std::size_t end) {
                 nvrhi::GraphicsState state = stateFor(opaque_, ctx);
                 const GpuMesh* mesh = nullptr;
+                std::uint8_t variant = 0xff;
                 for (std::size_t i = begin; i < end; ++i) {
                     const Draw& d = draws[i];
-                    if (d.mesh != mesh) {
+                    if (d.mesh != mesh || d.variant != variant) {
+                        variant = d.variant;
                         mesh = d.mesh;
-                        state.pipeline = mesh->skinned() ? opaqueSkinned_ : opaque_;
+                        state.pipeline = opaquePipeline(d);
                         bindMesh(state, *mesh);
                         cmd->setGraphicsState(state);
                     }
@@ -1139,7 +1203,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.writeColor(hdr, LoadOp::Load);
                 b.sample(depth);
             },
-            [this, stateFor, box, depth, sampler, decals](PassContext& ctx) {
+            [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, box, depth, sampler, decals](PassContext& ctx) {
                 nvrhi::GraphicsState state = stateFor(decal_, ctx);
                 bindMesh(state, *box);
                 ctx.cmd->setGraphicsState(state);
@@ -1163,7 +1227,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.writeColor(hdr, LoadOp::Load);
                 b.sample(depth);
             },
-            [this, stateFor, waterGrid, depth, sampler, waters](PassContext& ctx) {
+            [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, waterGrid, depth, sampler, waters](PassContext& ctx) {
                 nvrhi::GraphicsState state = stateFor(water_, ctx);
                 bindMesh(state, *waterGrid);
                 ctx.cmd->setGraphicsState(state);
@@ -1186,7 +1250,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.writeColor(hdr, LoadOp::Load);
                 b.readDepth(depth);
             },
-            [this, stateFor](PassContext& ctx) { fullscreen(ctx.cmd, stateFor(grid_, ctx), PushConstants{}); });
+            [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline](PassContext& ctx) { fullscreen(ctx.cmd, stateFor(grid_, ctx), PushConstants{}); });
     }
 
     // ---- Particles: camera-facing quads, alpha-blended ones far to near, then additive ones.
@@ -1248,7 +1312,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     b.writeColor(hdr, LoadOp::Load);
                     b.readDepth(depth);
                 },
-                [this, stateFor, vb, alphaVertices, additiveVertices](PassContext& ctx) {
+                [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, vb, alphaVertices, additiveVertices](PassContext& ctx) {
                     nvrhi::GraphicsState state = stateFor(particlesAlpha_, ctx);
                     state.vertexBuffers = {nvrhi::VertexBufferBinding().setBuffer(vb).setSlot(0)};
                     PushConstants pc;
@@ -1281,7 +1345,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.sample(hdr);
                 b.sample(depth);
             },
-            [this, stateFor, hdr, depth, linearSampler](PassContext& ctx) {
+            [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, hdr, depth, linearSampler](PassContext& ctx) {
                 PushConstants pc;
                 pc.index0 = ctx.bindlessIndex(hdr);
                 pc.index1 = ctx.bindlessIndex(depth);
@@ -1294,7 +1358,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.writeColor(hdr, LoadOp::Load);
                 b.sample(shaftsImage);
             },
-            [this, stateFor, shaftsImage, linearSampler](PassContext& ctx) {
+            [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, shaftsImage, linearSampler](PassContext& ctx) {
                 PushConstants pc;
                 pc.index0 = ctx.bindlessIndex(shaftsImage);
                 pc.index2 = linearSampler;
@@ -1311,7 +1375,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.sample(hdr);
                 b.sample(depth);
             },
-            [this, stateFor, hdr, depth, linearSampler](PassContext& ctx) {
+            [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, hdr, depth, linearSampler](PassContext& ctx) {
                 PushConstants pc;
                 pc.index0 = ctx.bindlessIndex(hdr);
                 pc.index1 = ctx.bindlessIndex(depth);

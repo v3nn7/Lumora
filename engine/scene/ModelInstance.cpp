@@ -5,6 +5,7 @@
 
 #include <glm/gtx/euler_angles.hpp>
 
+#include <algorithm>
 #include <vector>
 
 namespace lumora {
@@ -29,6 +30,10 @@ void addMeshRenderer(Scene& scene, entt::entity e, const ImportedModel& model, s
     renderer.metallicRoughnessTexture = texture(m.metallicRoughnessTexture);
     renderer.normalTexture = texture(m.normalTexture);
     renderer.emissiveTexture = texture(m.emissiveTexture);
+    if (m.baseColorTexture >= 0 && (m.alphaMode != ImportedMaterial::AlphaMode::Opaque || m.baseColorHasAlpha)) {
+        renderer.alphaCutoff = m.alphaMode == ImportedMaterial::AlphaMode::Mask ? std::clamp(m.alphaCutoff, 0.01f, 1.0f) : 0.5f;
+    }
+    renderer.doubleSided = m.doubleSided;
     // Emissive maps multiply the factor; make sure a map alone still shows up.
     if (m.emissiveTexture >= 0 && renderer.emissiveStrength == 0.0f) renderer.emissiveStrength = 1.0f;
 }
@@ -38,6 +43,8 @@ void addMeshRenderer(Scene& scene, entt::entity e, const ImportedModel& model, s
 entt::entity instantiateModel(Scene& scene, const ImportedModel& model, std::string_view relativeFile,
                               std::string_view rootName, entt::entity parent) {
     const entt::entity root = scene.createEntity(rootName, Uuid::generate(), parent);
+    // The model's own units (metres, unless its exporter says otherwise).
+    scene.registry().get<TransformComponent>(root).scale = glm::vec3(model.unitScale);
     std::vector<entt::entity> created(model.nodes.size(), entt::entity{entt::null});
     for (std::size_t i = 0; i < model.nodes.size(); ++i) {
         const ImportedNode& node = model.nodes[i];

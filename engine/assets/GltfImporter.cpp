@@ -6,6 +6,9 @@
 #include <cgltf.h>
 #include <glm/geometric.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
+#include <algorithm>
+#include <limits>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <cstdlib>
 #include <cstring>
@@ -247,6 +250,11 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
         if (src.has_emissive_strength) mat.emissive *= src.emissive_strength.emissive_strength;
         mat.emissiveTexture = imageIndexOf(data, src.emissive_texture, model.warnings, mat.name);
         mat.normalTexture = imageIndexOf(data, src.normal_texture, model.warnings, mat.name);
+        mat.alphaMode = src.alpha_mode == cgltf_alpha_mode_mask    ? ImportedMaterial::AlphaMode::Mask
+                        : src.alpha_mode == cgltf_alpha_mode_blend ? ImportedMaterial::AlphaMode::Blend
+                                                                   : ImportedMaterial::AlphaMode::Opaque;
+        mat.alphaCutoff = src.alpha_cutoff;
+        mat.doubleSided = src.double_sided != 0;
         model.materials.push_back(std::move(mat));
     }
 
@@ -343,6 +351,69 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
         for (cgltf_size c = 0; c < node->children_count; ++c) self(self, node->children[c], index);
     };
     for (const cgltf_node* root : roots) visit(visit, root, -1);
+
+    // Base colour maps with transparency (PNG colour type 4/6, or a tRNS chunk), without decoding.
+    auto pngHasAlpha = [](const std::vector<std::byte>& png) {
+        static constexpr unsigned char kSignature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+        if (png.size() < 33 || std::memcmp(png.data(), kSignature, 8) != 0) return false;
+        const auto byte = [&](std::size_t i) { return static_cast<unsigned char>(png[i]); };
+        const unsigned colorType = byte(25);
+        if (colorType == 4 || colorType == 6) return true;
+        for (std::size_t at = 8; at + 8 <= png.size();) {  // chunks up to the image data
+            const std::size_t length = (std::size_t{byte(at)} << 24) | (std::size_t{byte(at + 1)} << 16) |
+                                       (std::size_t{byte(at + 2)} << 8) | byte(at + 3);
+            const std::string type(reinterpret_cast<const char*>(png.data()) + at + 4, 4);
+            if (type == "tRNS") return true;
+            if (type == "IDAT" || type == "IEND") return false;
+            at += 12 + length;
+        }
+        return false;
+    };
+    for (ImportedMaterial& mat : model.materials) {
+        if (mat.baseColorTexture >= 0 && static_cast<std::size_t>(mat.baseColorTexture) < model.images.size()) {
+            mat.baseColorHasAlpha = pngHasAlpha(model.images[static_cast<std::size_t>(mat.baseColorTexture)].encoded);
+        }
+    }
+
+    // Extent of the whole model, and the units it really uses.
+    {
+        std::vector<glm::mat4> world(model.nodes.size());
+        bool any = false;
+        glm::vec3 lo(std::numeric_limits<float>::max()), hi(std::numeric_limits<float>::lowest());
+        for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+            const ImportedNode& n = model.nodes[i];
+            const glm::mat4 local = glm::translate(glm::mat4(1.0f), n.translation) * glm::mat4_cast(n.rotation) *
+                                    glm::scale(glm::mat4(1.0f), n.scale);
+            world[i] = n.parent >= 0 ? world[static_cast<std::size_t>(n.parent)] * local : local;
+            if (n.mesh < 0 || static_cast<std::size_t>(n.mesh) >= model.meshParts.size()) continue;
+            for (int part : model.meshParts[static_cast<std::size_t>(n.mesh)]) {
+                if (part < 0 || static_cast<std::size_t>(part) >= model.meshes.size()) continue;
+                const Aabb& b = model.meshes[static_cast<std::size_t>(part)].data.bounds;
+                for (int c = 0; c < 8; ++c) {
+                    const glm::vec3 corner((c & 1) ? b.max.x : b.min.x, (c & 2) ? b.max.y : b.min.y, (c & 4) ? b.max.z : b.min.z);
+                    const glm::vec3 p(world[i] * glm::vec4(corner, 1.0f));
+                    lo = glm::min(lo, p);
+                    hi = glm::max(hi, p);
+                    any = true;
+                }
+            }
+        }
+        if (any) {
+            model.boundsMin = lo;
+            model.boundsMax = hi;
+        }
+        // SketchUp works in inches; its Collada (and models converted from it, e.g. on Sketchfab)
+        // keep those numbers as metres.
+        const std::string generator = data.asset.generator != nullptr ? data.asset.generator : "";
+        const bool sketchUp = generator.find("SketchUp") != std::string::npos ||
+                              std::ranges::any_of(model.nodes, [](const ImportedNode& n) { return n.name == "SketchUp"; });
+        if (sketchUp) {
+            model.unitScale = 0.0254f;
+            model.warnings.push_back("made with SketchUp: inches, scaled to metres (x 0.0254)");
+            // SketchUp shows both sides of every face; its models rely on that.
+            for (ImportedMaterial& mat : model.materials) mat.doubleSided = true;
+        }
+    }
 
     // Skins: joints as indices of the imported nodes.
     for (cgltf_size k = 0; k < data.skins_count; ++k) {

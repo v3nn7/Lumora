@@ -77,6 +77,7 @@ struct GpuObject {
     glm::vec4 emissiveRoughness{0.0f};
     glm::vec4 flags{0.0f};
     glm::uvec4 textures{kNoTexture};  // bindless: base colour, metallic-roughness, emissive, normal
+    glm::vec4 surface{0.0f};          // x alpha cutoff (0 = opaque), y two-sided
 };
 
 struct PushConstants {
@@ -103,7 +104,8 @@ static_assert(offsetof(FrameConstants, localShadowMatrices) == 912);
 static_assert(offsetof(FrameConstants, vsmLightView) == 912 + 64 * kLocalShadowTiles + 64);
 static_assert(offsetof(FrameConstants, lights) == 912 + 64 * kLocalShadowTiles + 64 + 96);
 static_assert(sizeof(FrameConstants) == 912 + 64 * kLocalShadowTiles + 64 + 96 + 64 * kMaxLights);
-static_assert(sizeof(GpuObject) == 192);
+static_assert(sizeof(GpuObject) == 208);
+static_assert(offsetof(GpuObject, surface) == 192);
 static_assert(offsetof(GpuObject, textures) == 176);
 static_assert(offsetof(GpuObject, flags) == 160);
 static_assert(sizeof(PushConstants) == 32);

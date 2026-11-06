@@ -1013,7 +1013,22 @@ entt::entity EditorWindow::addModelToScene(const QString& absolutePath, std::opt
     });
     if (root != entt::null) {
         ctx_.select(editScene_->uuidOf(root));
-        statusBar()->showMessage(tr("Added %1 (%2 meshes)").arg(QString::fromStdString(name)).arg((*model)->meshes.size()), 4000);
+        const glm::vec3 size = ((*model)->boundsMax - (*model)->boundsMin) * (*model)->unitScale;
+        const float largest = std::max({size.x, size.y, size.z});
+        if (largest > 300.0f) {
+            // Probably centimetres or inches written as metres: say so instead of guessing.
+            statusBar()->showMessage(tr("%1 is %2 m across - its file may use centimetres (Scale 0.01) or inches "
+                                        "(0.0254). Set the Scale of its root in the Inspector.")
+                                         .arg(QString::fromStdString(name))
+                                         .arg(static_cast<double>(largest), 0, 'f', 0),
+                                     12000);
+        } else {
+            statusBar()->showMessage(tr("Added %1 (%2 meshes, %3 m tall)")
+                                         .arg(QString::fromStdString(name))
+                                         .arg((*model)->meshes.size())
+                                         .arg(static_cast<double>(size.y), 0, 'f', 1),
+                                     4000);
+        }
     }
     return root;
 }

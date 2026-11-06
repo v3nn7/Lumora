@@ -336,7 +336,11 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
         albedo = terrainAlbedo(albedo, object.flags.z, input.worldPosition, geometricNormal);
     }
     if (object.textures.x != NO_TEXTURE) {
-        albedo *= sampleMaterial(object.textures.x, input.uv).rgb;  // sRGB view: sampled in linear
+        float4 base = sampleMaterial(object.textures.x, input.uv);  // sRGB view: sampled in linear
+        albedo *= base.rgb;
+        if (base.a < object.surface.x) {
+            discard;  // cut out (leaves, fences): the depth prepass cut the same hole
+        }
     }
     s.albedo = albedo * surfacePattern(input.worldPosition, geometricNormal, (uint)object.flags.y);
     s.metallic = saturate(object.baseColorMetallic.w);

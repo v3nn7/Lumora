@@ -34,6 +34,7 @@
 #include "scene/ScenePatch.hpp"
 #include "scene/ModelInstance.hpp"
 #include "scene/PhysicsHelpers.hpp"
+#include "scene/Prefab.hpp"
 #include "scene/SceneSerializer.hpp"
 
 #include <QActionGroup>
@@ -221,6 +222,8 @@ void EditorWindow::buildActions() {
     duplicate_ = make(tr("Duplicate"), QString(), QKeySequence(Qt::CTRL | Qt::Key_D));
     delete_ = make(tr("Delete"), QStringLiteral("trash"), QKeySequence::Delete);
     frame_ = make(tr("Frame Selection"), QString(), QKeySequence(Qt::Key_F));
+    savePrefab_ = make(tr("Save Selection as Prefab…"), QStringLiteral("save"));
+    connect(savePrefab_, &QAction::triggered, this, &EditorWindow::saveSelectionAsPrefab);
     play_ = make(tr("Play"), QStringLiteral("play"), QKeySequence(Qt::Key_F5));
     pause_ = make(tr("Pause"), QStringLiteral("pause"), QKeySequence(Qt::Key_F6));
     stop_ = make(tr("Stop"), QStringLiteral("stop"), QKeySequence(Qt::SHIFT | Qt::Key_F5));
@@ -401,6 +404,8 @@ void EditorWindow::buildMenus() {
     edit->addActions({duplicate_, delete_});
     edit->addSeparator();
     edit->addAction(frame_);
+    edit->addSeparator();
+    edit->addAction(savePrefab_);
 
     QMenu* create = menuBar()->addMenu(tr("&Create"));
     populateCreateMenu(*create, ctx_, false);
@@ -611,6 +616,15 @@ void EditorWindow::importModelDialog() {
 
 void EditorWindow::importModels(const QStringList& files, const QString& targetDir) {
     for (const QString& file : files) {
+        if (isPrefabFile(app::toPath(file))) {
+            auto copied = importFile(app::toPath(file), project_.contentDir() / "Prefabs");
+            if (!copied) {
+                QMessageBox::critical(this, tr("Import failed"), QString::fromStdString(copied.error().message));
+                continue;
+            }
+            addPrefabToScene(*copied);
+            continue;
+        }
         if (isHdrFile(app::toPath(file))) {
             // An HDR environment becomes the scene's sky (undoable like any environment edit).
             auto copied = importFile(app::toPath(file), project_.contentDir() / "Textures");
@@ -635,6 +649,7 @@ void EditorWindow::importModels(const QStringList& files, const QString& targetD
 
 entt::entity EditorWindow::addModelToScene(const QString& absolutePath) {
     const std::filesystem::path path = app::toPath(absolutePath);
+    if (isPrefabFile(path)) return addPrefabToScene(path);
     const std::string relative = project_.relativePath(path);
     if (relative.empty() || relative.starts_with("..")) {
         QMessageBox::warning(this, tr("Add model"), tr("Only models inside the project can be placed. Use Import Model."));
@@ -867,6 +882,7 @@ void EditorWindow::play() {
     }
     playScene_ = std::move(*copy);
     simulation_ = std::make_unique<Simulation>(*playScene_);
+    simulation_->setProjectRoot(project_.rootDir());
     if (AudioWorld::sceneHasAudio(*playScene_)) {
         auto audio = AudioWorld::create(*playScene_, {project_.rootDir(), true});
         if (audio) {
@@ -1235,6 +1251,56 @@ void EditorWindow::exportGameDialog() {
     }
     QMessageBox::information(this, tr("Export Game"),
                              tr("Exported. Start the game with %1.").arg(app::toQString(*launcher)));
+}
+
+// ---- Prefabs ---------------------------------------------------------------------------------
+
+void EditorWindow::saveSelectionAsPrefab() {
+    const entt::entity selected = ctx_.selectedEntity();
+    if (ctx_.scene() == nullptr || selected == entt::null) {
+        QMessageBox::information(this, tr("Save as Prefab"), tr("Select the entity to save (its children come along)."));
+        return;
+    }
+    const QString name = QString::fromStdString(ctx_.scene()->nameOf(selected));
+    const QString suggested = app::toQString(project_.contentDir() / "Prefabs" / (name.toStdString() + ".lprefab"));
+    QDir().mkpath(app::toQString(project_.contentDir() / "Prefabs"));
+    const QString file = QFileDialog::getSaveFileName(this, tr("Save as Prefab"), suggested, tr("Lumora prefabs (*.lprefab)"));
+    if (file.isEmpty()) return;
+    std::filesystem::path path = app::toPath(file);
+    if (path.extension() != ".lprefab") path += ".lprefab";
+    if (auto saved = savePrefab(*ctx_.scene(), selected, path); !saved) {
+        QMessageBox::critical(this, tr("Save as Prefab"), QString::fromStdString(saved.error().message));
+        return;
+    }
+    statusBar()->showMessage(tr("Saved prefab %1").arg(app::toQString(path.filename())), 4000);
+}
+
+entt::entity EditorWindow::addPrefabToScene(const std::filesystem::path& path) {
+    auto prefab = loadPrefab(path);
+    if (!prefab) {
+        QMessageBox::critical(this, tr("Cannot load prefab"), QString::fromStdString(prefab.error().message));
+        return entt::null;
+    }
+    const FlyCameraController& cam = client_->camera();
+    glm::vec3 spot = cam.position() + cam.forward() * 5.0f;
+    if (cam.forward().y < -0.05f) {
+        const float t = -cam.position().y / cam.forward().y;
+        if (t > 0.0f && t < 60.0f) spot = cam.position() + cam.forward() * t;
+    }
+    entt::entity root = entt::null;
+    QString error;
+    ctx_.edit(tr("Add %1").arg(app::toQString(path.stem())), [&](Scene& scene) {
+        auto created = instantiatePrefab(scene, *prefab);
+        if (!created) {
+            error = QString::fromStdString(created.error().message);
+            return;
+        }
+        root = *created;
+        scene.registry().get<TransformComponent>(root).position = spot;
+    });
+    if (!error.isEmpty()) QMessageBox::critical(this, tr("Cannot place prefab"), error);
+    if (root != entt::null) ctx_.select(editScene_->uuidOf(root));
+    return root;
 }
 
 } // namespace lumora::editor

@@ -5,12 +5,14 @@
 #include <lumora/Script.hpp>
 
 #include <entt/entity/entity.hpp>
+#include <nlohmann/json_fwd.hpp>
 
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -79,6 +81,8 @@ public:
     void reload(std::shared_ptr<ScriptModule> module);
     void setPhysics(PhysicsWorld* physics) noexcept { context_.physics = physics; }
     void setAudio(AudioWorld* audio) noexcept { context_.audio = audio; }
+    /// Project folder that spawn("Content/Prefabs/X.lprefab") resolves against.
+    void setProjectRoot(std::filesystem::path root) { context_.projectRoot = std::move(root); }
     [[nodiscard]] std::size_t instanceCount() const noexcept { return instances_.size(); }
 
     // EngineApi::context: what the C callbacks reach (public for the callback functions).
@@ -87,6 +91,8 @@ public:
         const InputState* input = nullptr;
         PhysicsWorld* physics = nullptr;
         AudioWorld* audio = nullptr;
+        std::filesystem::path projectRoot;
+        std::unordered_map<std::string, std::shared_ptr<const nlohmann::json>> prefabs;  // loaded once
         std::vector<entt::entity> pendingDestroy;
         double time = 0.0;
         std::string nameScratch;

@@ -6,6 +6,7 @@
 #include "common/ScriptBuilder.hpp"
 #include "project/Project.hpp"
 #include "runtime/PhysicsWorld.hpp"
+#include "scene/Prefab.hpp"
 #include "runtime/Scripting.hpp"
 #include "runtime/Simulation.hpp"
 #include "scene/Scene.hpp"
@@ -258,4 +259,61 @@ TEST(GameExport, WritesARunnableStandaloneGame) {
     ASSERT_TRUE(run.waitForFinished(60000));
     EXPECT_EQ(run.exitCode(), 0) << run.readAllStandardError().toStdString();
     EXPECT_TRUE(run.readAllStandardOutput().contains("Project 'Demo' OK"));
+}
+
+TEST_F(ScriptTest, SpawnsPrefabsWithTheirOwnBehaviours) {
+    const std::filesystem::path project = dir.path();
+    writeScript(project, "Spawn.cpp", R"cpp(#include <lumora/Script.hpp>
+using namespace lumora::script;
+class Launcher : public Behaviour {
+public:
+    void update(float) override {
+        if (!done_ && time() >= 0.05) {
+            done_ = true;
+            spawned_ = spawn("Content/Prefabs/Rocket.lprefab", Vec3{2.0f, 1.0f, 0.0f});
+            if (spawned_ == kNoEntity) warn("spawn failed");
+        }
+    }
+private:
+    bool done_ = false;
+    Entity spawned_ = kNoEntity;
+};
+LUMORA_BEHAVIOUR(Launcher);
+
+class Rise : public Behaviour {
+public:
+    void update(float dt) override { setPosition(position() + Vec3{0.0f, dt, 0.0f}); }
+};
+LUMORA_BEHAVIOUR(Rise);
+)cpp");
+    {
+        Scene source("Prefab source");
+        const entt::entity rocket = source.createEntity("Rocket");
+        source.registry().emplace<ScriptComponent>(rocket).behaviour = "Rise";
+        source.createEntity("Flame", Uuid::generate(), rocket);
+        ASSERT_TRUE(savePrefab(source, rocket, project / "Content" / "Prefabs" / "Rocket.lprefab").has_value());
+    }
+    app::ScriptBuilder builder(QString::fromStdString(project.string()));
+    QString log;
+    ASSERT_TRUE(builder.buildBlocking(&log)) << log.toStdString();
+    auto module = ScriptModule::load(builder.libraryPath().toStdString(), builder.loadDir().toStdString());
+    ASSERT_TRUE(module.has_value()) << module.error().message;
+
+    Scene scene("Level");
+    scene.registry().emplace<ScriptComponent>(scene.createEntity("Pad")).behaviour = "Launcher";
+    Simulation sim(scene);
+    sim.setProjectRoot(project);
+    sim.setScripts(*module, nullptr);
+    for (int i = 0; i < 4; ++i) sim.step();  // t = 0.067 s: spawned at the end of step 4
+    ASSERT_EQ(scene.entityCount(), 3u) << "rocket and its flame";
+    entt::entity rocket = entt::null;
+    for (auto [e, name] : scene.registry().view<NameComponent>().each()) {
+        if (name.name == "Rocket") rocket = e;
+    }
+    ASSERT_TRUE(rocket != entt::null);
+    EXPECT_EQ(sim.scriptInstances(), 2u) << "the spawned rocket runs its own Rise behaviour";
+    for (int i = 0; i < 60; ++i) sim.step();
+    const glm::vec3 p = scene.registry().get<TransformComponent>(rocket).position;
+    EXPECT_NEAR(p.x, 2.0f, 1e-5f);
+    EXPECT_NEAR(p.y, 2.0f, 0.05f) << "spawned at y = 1, rose 1 m in a second";
 }

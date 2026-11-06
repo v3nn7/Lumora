@@ -97,6 +97,7 @@ struct EngineApi {
     void (*mouseDelta)(void* context, float* xy);  // pixels moved this frame
     double (*parameter)(void* context, Entity entity, const char* name, double fallback);
     int (*sound)(void* context, Entity entity, int command);  // 0 stop, 1 play, 2 is playing
+    Entity (*spawn)(void* context, const char* prefab, const float* position);  // kNoEntity on failure
 };
 
 class Behaviour;
@@ -168,6 +169,12 @@ protected:
     // Entities
     /// Copies an entity (with its children and components, including scripts) into the scene.
     [[nodiscard]] Entity clone(Entity source) const { return api_->clone(api_->context, source); }
+    /// Adds a copy of a prefab (project-relative .lprefab) at a position; its scripts start at
+    /// the end of this step. kNoEntity if the prefab cannot be loaded.
+    Entity spawn(std::string_view prefab, Vec3 position) const {
+        const float xyz[3] = {position.x, position.y, position.z};
+        return api_->spawn(api_->context, std::string(prefab).c_str(), xyz);
+    }
     /// Removes an entity (and its children) at the end of this step.
     void destroy(Entity e) const { api_->destroy(api_->context, e); }
 

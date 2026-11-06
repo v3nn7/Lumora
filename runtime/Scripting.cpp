@@ -4,7 +4,10 @@
 #include "input/InputState.hpp"
 #include "runtime/AudioWorld.hpp"
 #include "runtime/PhysicsWorld.hpp"
+#include "scene/Prefab.hpp"
 #include "scene/Scene.hpp"
+
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -217,6 +220,35 @@ void apiMouseDelta(void* c, float* xy) {
     xy[1] = d.y;
 }
 
+script::Entity apiSpawn(void* c, const char* prefab, const float* xyz) {
+    Context& ctx = context(c);
+    if (prefab == nullptr || ctx.projectRoot.empty()) return script::kNoEntity;
+    auto& cached = ctx.prefabs[prefab];
+    if (!cached) {
+        const std::filesystem::path relative = std::filesystem::path(prefab).lexically_normal();
+        if (relative.is_absolute() || relative.empty() || *relative.begin() == "..") {
+            log::warn("Script", "spawn: '{}' must be a prefab inside the project", prefab);
+            return script::kNoEntity;
+        }
+        auto loaded = loadPrefab(ctx.projectRoot / relative);
+        if (!loaded) {
+            log::warn("Script", "spawn: {}", loaded.error().message);
+            return script::kNoEntity;
+        }
+        cached = std::make_shared<const nlohmann::json>(std::move(*loaded));
+    }
+    auto root = instantiatePrefab(*ctx.scene, *cached);
+    if (!root) {
+        log::warn("Script", "spawn {}: {}", prefab, root.error().message);
+        return script::kNoEntity;
+    }
+    if (xyz != nullptr) {
+        ctx.scene->registry().get<TransformComponent>(*root).position = glm::vec3(xyz[0], xyz[1], xyz[2]);
+        ctx.scene->updateWorldTransforms();
+    }
+    return static_cast<script::Entity>(entt::to_integral(*root));
+}
+
 int apiSound(void* c, script::Entity entity, int command) {
     AudioWorld* audio = context(c).audio;
     const entt::entity e = liveEntity(c, entity);
@@ -346,6 +378,7 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.mouseDelta = apiMouseDelta;
     api_.parameter = apiParameter;
     api_.sound = apiSound;
+    api_.spawn = apiSpawn;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }

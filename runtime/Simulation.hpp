@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <filesystem>
 #include <cstdint>
 #include <memory>
 
@@ -42,6 +43,8 @@ public:
     /// keyDown() and may be null. Called again with a new library (hot reload), the running
     /// behaviours are destroyed and recreated from it.
     void setScripts(std::shared_ptr<ScriptModule> module, const InputState* input);
+    /// Project folder for assets scripts load at run time (prefabs).
+    void setProjectRoot(std::filesystem::path root);
     /// Plays the scene's Audio Sources (positions follow the entities every step).
     void setAudio(std::unique_ptr<AudioWorld> audio);
     [[nodiscard]] AudioWorld* audio() noexcept { return audio_.get(); }
@@ -55,6 +58,7 @@ private:
     std::uint64_t steps_ = 0;
     std::unique_ptr<PhysicsWorld> physics_;
     std::unique_ptr<AudioWorld> audio_;
+    std::filesystem::path projectRoot_;
     std::unique_ptr<ScriptRunner> scripts_;  // last: behaviours may still reference physics and audio
 };
 

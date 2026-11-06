@@ -61,7 +61,13 @@ void Simulation::setScripts(std::shared_ptr<ScriptModule> module, const InputSta
         scripts_ = std::make_unique<ScriptRunner>(scene_, std::move(module), input);
         scripts_->setPhysics(physics_.get());
         scripts_->setAudio(audio_.get());
+        scripts_->setProjectRoot(projectRoot_);
     }
+}
+
+void Simulation::setProjectRoot(std::filesystem::path root) {
+    projectRoot_ = std::move(root);
+    if (scripts_) scripts_->setProjectRoot(projectRoot_);
 }
 
 void Simulation::setAudio(std::unique_ptr<AudioWorld> audio) {

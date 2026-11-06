@@ -163,6 +163,7 @@ int runHeadless(const AppOptions& o) {
     }
     if (o.simulateSeconds > 0.0) {
         Simulation sim(**scene);
+        sim.setProjectRoot(project->rootDir());
         if (std::filesystem::exists(app::toPath(scripts.libraryPath()))) {
             auto module = ScriptModule::load(app::toPath(scripts.libraryPath()), app::toPath(scripts.loadDir()));
             if (!module) {

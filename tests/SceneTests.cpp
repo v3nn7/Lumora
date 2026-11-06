@@ -3,6 +3,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <gtest/gtest.h>
 
+#include <fstream>
+
 using namespace lumora;
 
 TEST(Scene, CreateAndFindByUuid) {
@@ -99,4 +101,50 @@ TEST(Scene, PrimaryCameraPrefersPrimaryFlag) {
     const auto b = scene.createEntity("B");
     scene.registry().emplace<CameraComponent>(b).primary = true;
     EXPECT_EQ(scene.primaryCamera(), b);
+}
+
+#include "scene/Prefab.hpp"
+#include "TestUtils.hpp"
+
+TEST(Prefab, SavesAndInstantiatesASubtree) {
+    Scene scene("Prefabs");
+    const entt::entity car = scene.createEntity("Car");
+    scene.registry().get<TransformComponent>(car).position = glm::vec3(1.0f, 2.0f, 3.0f);
+    scene.registry().emplace<MeshRendererComponent>(car).baseColor = glm::vec3(1.0f, 0.0f, 0.0f);
+    const entt::entity wheel = scene.createEntity("Wheel", Uuid::generate(), car);
+    scene.registry().emplace<RotatorComponent>(wheel).speedDeg = 90.0f;
+    scene.createEntity("Hubcap", Uuid::generate(), wheel);
+    scene.updateWorldTransforms();
+
+    test::TempDir dir;
+    const auto file = dir.path() / "Prefabs" / "Car.lprefab";
+    ASSERT_TRUE(savePrefab(scene, car, file).has_value());
+    EXPECT_TRUE(isPrefabFile(file));
+    auto prefab = loadPrefab(file);
+    ASSERT_TRUE(prefab.has_value()) << prefab.error().message;
+
+    Scene target("Level");
+    const entt::entity parking = target.createEntity("Parking");
+    auto first = instantiatePrefab(target, *prefab, parking);
+    auto second = instantiatePrefab(target, *prefab);
+    ASSERT_TRUE(first.has_value() && second.has_value());
+    EXPECT_EQ(target.entityCount(), 1u + 2u * 3u);
+    EXPECT_NE(target.uuidOf(*first), target.uuidOf(*second)) << "every instance has its own identity";
+    EXPECT_NE(target.uuidOf(*first), scene.uuidOf(car));
+    EXPECT_EQ(target.parentOf(*first), parking);
+    EXPECT_TRUE(target.parentOf(*second) == entt::null);
+    EXPECT_EQ(target.nameOf(*first), "Car");
+    EXPECT_EQ(target.registry().get<TransformComponent>(*first).position, glm::vec3(1.0f, 2.0f, 3.0f));
+    EXPECT_EQ(target.registry().get<MeshRendererComponent>(*first).baseColor, glm::vec3(1.0f, 0.0f, 0.0f));
+    ASSERT_EQ(target.childrenOf(*first).size(), 1u);
+    const entt::entity copiedWheel = target.childrenOf(*first)[0];
+    EXPECT_EQ(target.nameOf(copiedWheel), "Wheel");
+    EXPECT_FLOAT_EQ(target.registry().get<RotatorComponent>(copiedWheel).speedDeg, 90.0f);
+    ASSERT_EQ(target.childrenOf(copiedWheel).size(), 1u);
+    EXPECT_EQ(target.nameOf(target.childrenOf(copiedWheel)[0]), "Hubcap");
+
+    EXPECT_FALSE(loadPrefab(dir.path() / "missing.lprefab").has_value());
+    const auto bogus = dir.path() / "bogus.lprefab";
+    std::ofstream(bogus) << "{\"format\": \"something else\"}";
+    EXPECT_FALSE(loadPrefab(bogus).has_value());
 }

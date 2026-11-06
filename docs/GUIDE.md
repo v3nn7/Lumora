@@ -150,6 +150,18 @@ Hover over the viewport or click it, then:
 - **Save** with *File → Save Scene* (<kbd>Ctrl</kbd>+<kbd>S</kbd>). Saving also updates the
   project thumbnail in the Hub.
 
+### Prefabs
+
+A prefab is an entity with its children saved as a reusable file (`.lprefab`).
+
+- Select the entity, then *Edit → Save Selection as Prefab…* (saved in `Content/Prefabs`).
+- Double-click a prefab in the Content Browser (or right-click → *Add to Scene*, or drop one
+  from outside) to place a copy where the camera looks. Undo removes it again.
+- Scripts spawn them while the game runs: `spawn("Content/Prefabs/Rocket.lprefab", position)`
+  returns the new entity, whose own scripts start at the end of that step.
+
+Copies are independent: changing the prefab file later does not change copies already placed.
+
 ### Models and textures
 
 *File → Import Model* (<kbd>Ctrl</kbd>+<kbd>I</kbd>), or drop files on the Content Browser.
@@ -255,6 +267,7 @@ What a behaviour can do:
 | `addForce(v)`, `addImpulse(v)`, `velocity()`, `setVelocity(v)` | Physics of a dynamic Rigid Body (newtons, newton-seconds, m/s) |
 | `raycast(origin, direction, maxDistance, hit)` | Closest collider along a ray: `hit.entity`, `hit.point`, `hit.normal`, `hit.distance` |
 | `onCollision(Entity other)` | Override: this entity's collider started touching another |
+| `spawn("Content/Prefabs/X.lprefab", position)` | Add a copy of a prefab |
 | `clone(e)`, `destroy(e)` | Copy an entity with its children, components and scripts; remove one at the end of the step |
 | `param("speed", 4.0f)` | A number from the Script component's **Parameters** field, e.g. `speed=6, jump=4` |
 | `playSound()`, `stopSound()`, `soundPlaying()`, `playSoundOn(e)` | The Audio Source of this (or another) entity |

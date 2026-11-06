@@ -24,7 +24,8 @@ namespace lumora::editor {
 namespace {
 bool isModel(const QFileInfo& info) {
     return info.suffix().compare(QLatin1String("glb"), Qt::CaseInsensitive) == 0 ||
-           info.suffix().compare(QLatin1String("gltf"), Qt::CaseInsensitive) == 0;
+           info.suffix().compare(QLatin1String("gltf"), Qt::CaseInsensitive) == 0 ||
+           info.suffix().compare(QLatin1String("lprefab"), Qt::CaseInsensitive) == 0;  // placed the same way
 }
 /// Equirectangular HDR environment: dropping or opening one makes it the scene's sky.
 bool isHdr(const QFileInfo& info) { return info.suffix().compare(QLatin1String("hdr"), Qt::CaseInsensitive) == 0; }
@@ -38,6 +39,7 @@ public:
             info.suffix().compare(QLatin1String("gltf"), Qt::CaseInsensitive) == 0) {
             return app::theme::icon(QStringLiteral("cube"));
         }
+        if (info.suffix() == QLatin1String("lprefab")) return app::theme::icon(QStringLiteral("entity"));
         return app::theme::icon(QStringLiteral("file"));
     }
     using QFileIconProvider::icon;

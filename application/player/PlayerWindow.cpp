@@ -20,6 +20,7 @@ PlayerWindow::PlayerWindow(AppContext& app, Project project, std::unique_ptr<Sce
     : app_(app), project_(std::move(project)), assets_(project_.rootDir()), scene_(std::move(scene)) {
     scene_->updateWorldTransforms();
     simulation_ = std::make_unique<Simulation>(*scene_);
+    simulation_->setProjectRoot(project_.rootDir());
     const CameraView initial = sceneCameraView(*scene_, 16.0f / 9.0f);
     freeCamera_.setPosition(initial.position);
     freeCam_ = scene_->primaryCamera() == entt::null;

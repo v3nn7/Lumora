@@ -18,12 +18,13 @@ works today from what is planned, and nothing listed as planned exists yet.
 | Distribution | Packages per platform (editor and Hub ZIPs with the shared library, Qt libraries and plugins; system libraries never bundled), Ed25519-signed release feed, GitHub Actions workflow publishing to Cloudflare R2, installer that verifies size, SHA-256 and signature and refuses hostile archives; **delta updates** that download only the files (modules) that changed |
 | Editor | Embedded Vulkan viewport, fly camera, click picking with selection highlight, move/rotate/scale gizmos (snapping, parent-space aware), undo/redo for every edit, hierarchy (drag & drop re-parenting, rename, duplicate, delete, filter), reflection-driven inspector with asset pickers, content browser (open scenes, add/drop-import models), console, GPU profiler, play/pause/stop, scene save/load, dockable and persisted layout |
 | Collaboration | Live multi-user editing of one scene: host on a port (TCP + UDP), others join by LAN address or a playit.gg tunnel address; edits merge per field, collaborators' cameras and selections are drawn in their colour, chat, missing models/textures are transferred automatically, optional password |
-| Renderer | Vulkan 1.4 instance/device with capability detection, VMA, dynamic rendering, synchronization2, render graph with automatic barriers, bindless descriptors (update-after-bind), timeline-semaphore uploads, persistent pipeline cache, GPU timestamp profiling, frames in flight, swapchain recreation, device-loss reporting |
+| Renderer | Vulkan 1.4 instance/device with capability detection, VMA, dynamic rendering, synchronization2, render graph with automatic barriers and multithreaded recording of large passes (secondary command buffers), bindless descriptors (update-after-bind), timeline-semaphore uploads, persistent pipeline cache, GPU timestamp profiling, frames in flight, swapchain recreation, device-loss reporting |
 | Rendering | HDR forward PBR (GGX / Smith / Schlick) with base colour, metallic-roughness, normal and emissive maps (mipmapped, anisotropic), directional + point lights, cascaded sun shadows (4 texel-snapped cascades in one atlas, blended borders, smooth 7x7 PCF with receiver-plane bias; off-screen casters included), procedural sky with horizon haze and sun glow, exponential height fog (aerial perspective), physically based bloom, vignette, ACES tonemapping, procedural grid/checker surface patterns, hemispherical ambient, editor grid and gizmo overlay pass, CPU frustum culling |
 | Scene | EnTT ECS, UUID identity, hierarchy, component reflection → JSON serialization + inspector |
 | Assets | glTF 2.0 import (.gltf/.glb: meshes, node hierarchy, PBR materials and textures), PNG/JPEG/TGA/BMP textures, portable project-relative asset references, import copies files into the project without overwriting |
 | Physics | Jolt Physics rigid bodies (static, kinematic, dynamic) with box, sphere and capsule colliders, stepped on Jolt's thread pool during play |
 | Runtime | Fixed-timestep simulation (deterministic), built-in `Rotator` behaviour, a job system for background asset loading and parallel loops |
+| Scripting | C++ behaviours in the project's `Scripts/` folder, compiled by the editor with CMake into a game library behind a C ABI and **hot-reloaded on save, also during play**; exceptions are caught per behaviour |
 | Tests | 173 test cases (GoogleTest + CTest): core, scene, serialization, scene patches, projects, CLI, editor installer (feeds, signatures, hostile archives, installs from file feeds), glTF/texture import (incl. a locale regression), render-graph barrier planning, gizmo math, undo/redo, **GPU tests that render real frames and check pixels**, Hub/Editor UI integration tests, collaboration over real loopback sockets (convergence, assets, presence, hostile input) |
 
 Verified on Parrot OS 7.4 (KDE Plasma, Wayland) with an NVIDIA GTX 1650 (Mesa NVK, Vulkan
@@ -288,7 +289,8 @@ Recent projects are stored in `~/.config/Lumora/recent_projects.json`. The Hub's
 cmake/         build modules (compiler options, dependencies, shader compilation)
 engine/        engine modules, no Qt: core, platform, input, assets, scene (ECS),
                project, renderer (Vulkan RHI + render graph + scene renderer)
-runtime/       fixed-step simulation and gameplay systems
+runtime/       fixed-step simulation, physics, gameplay scripting (game library loading)
+sdk/           scripting SDK headers game libraries compile against (shipped in include/)
 shaders/       HLSL sources compiled to SPIR-V at build time
 application/   Qt layer: common (app context, Vulkan viewport, theme), hub, editor,
                player, collab (live sessions), launcher (editor installer),
@@ -322,10 +324,10 @@ A step-by-step user guide is in [docs/GUIDE.md](docs/GUIDE.md) and on the
 
 Planned, in rough order: KTX2/Basis and HDR/EXR textures with an asset database and
 background loading; skinned meshes and multiple materials per mesh; image-based lighting and virtual shadow maps; a render
-thread with multithreaded command recording; clustered lighting; TAA and
+thread; clustered lighting; TAA and
 temporal upscaling; GPU-driven culling, meshlets and mesh shaders (the capabilities are already
 detected); hardware ray tracing (RT GI and reflections); miniaudio; skeletal
-animation; C++ gameplay modules with hot reload; Tracy integration; world streaming.
+animation; Tracy integration; world streaming.
 
 Only items in "What works today" are implemented.
 

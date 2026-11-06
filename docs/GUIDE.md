@@ -142,7 +142,7 @@ Hover over the viewport or click it, then:
   Hold <kbd>Ctrl</kbd> while dragging to snap (0.25 m, 15°, 0.1×). Gizmos work in the parent's
   space, so child entities move as expected.
 - **Edit** values in the Inspector. **Add Component** adds any of: Transform, Mesh Renderer,
-  Light, Camera, Rigid Body, Collider, Rotator. A new Collider starts out fitted to the entity's
+  Light, Camera, Rigid Body, Collider, Script, Rotator. A new Collider starts out fitted to the entity's
   mesh.
 - **Undo** everything with <kbd>Ctrl</kbd>+<kbd>Z</kbd> and redo with
   <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>. <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicates,
@@ -189,6 +189,59 @@ make it move:
 | Dynamic | Simulated: gravity, collisions, mass, friction, restitution, damping |
 
 Physics runs only in play mode. *Create → Physics* has ready-made objects to start from.
+
+### Gameplay scripts (C++)
+
+Behaviours are C++ classes in your project's `Scripts/` folder. The editor compiles them into a
+game library and reloads it whenever you save a script, also while the game is playing.
+
+**You need** CMake 3.20+ and a C++20 compiler: GCC or Clang on Linux
+(`sudo apt install cmake g++`), Visual Studio 2022 with "Desktop development with C++" on Windows.
+
+1. *Scripts → New Behaviour…*, enter a class name such as `Bobber`. The editor writes
+   `Scripts/Bobber.cpp` from a template and opens it in your code editor.
+2. Edit and save. The editor rebuilds in the background; the status bar and the Console show the
+   result and any compiler errors.
+3. Select an entity, *Add Component → Script*, and set **Behaviour** to `Bobber`.
+4. Press <kbd>F5</kbd>. Change the code and save while playing: the behaviours are recreated from
+   the new code and `start()` runs again, while the scene keeps its current state.
+
+```cpp
+#include <lumora/Script.hpp>
+using namespace lumora::script;
+
+class Bobber : public Behaviour {
+public:
+    void start() override { origin_ = position(); }
+    void update(float dt) override {
+        elapsed_ += dt;
+        setPosition(origin_ + Vec3{0.0f, std::sin(elapsed_ * 2.0f) * 0.5f, 0.0f});
+        if (keyDown(Key::Space)) setScale(Vec3{1.5f, 1.5f, 1.5f});
+    }
+private:
+    Vec3 origin_;
+    float elapsed_ = 0.0f;
+};
+LUMORA_BEHAVIOUR(Bobber);
+```
+
+What a behaviour can do:
+
+| Call | Does |
+|---|---|
+| `start()`, `update(dt)` | Override: once when play begins (or after a reload), every fixed step (1/60 s) |
+| `position()`, `rotation()`, `scale()` and `set…` | Read and change the entity's transform (metres, Euler degrees) |
+| `find("Name")`, `positionOf(e)`, `setPositionOf(e, v)`, `name(e)` | Other entities, by name |
+| `keyDown(Key::W)` | Keyboard state: WASD, QE, F, arrows, Space, Shift, Ctrl, Alt, Esc |
+| `time()` | Simulated seconds since play started |
+| `log("…")`, `warn("…")` | Messages in the Console |
+
+An exception thrown by a behaviour is reported in the Console and disables that behaviour; the
+game keeps running. A crash in script code (for example a null pointer) takes the editor down
+with it, so save your scene before experimenting. Other ways to build: *Scripts → Build Scripts*
+(<kbd>Ctrl</kbd>+<kbd>B</kbd>), or `lumora-editor --headless --project <p> --build-scripts`.
+The standalone player and `--simulate` use the library the editor built last
+(`Saved/ScriptBuild/bin/`).
 
 ### Play mode
 
@@ -280,6 +333,7 @@ development build.
 | `lumora-editor --headless --info` | Print GPUs, Vulkan support and why a GPU was rejected |
 | `lumora-editor --headless --create <dir> --template <name>` | Create a project (`empty`, `basic`, `showcase`, `physics`) |
 | `lumora-editor --headless --project <p> --import <file>` | Import a model or texture |
+| `lumora-editor --headless --project <p> --build-scripts` | Compile the project's `Scripts/` |
 | `lumora-editor --headless --project <p> --validate --simulate <s> --render <out.png> --width <w> --height <h>` | Check a project, simulate it, render an image |
 
 Global options: `--gpu <index>`, `--validation` / `--no-validation`, `--no-vsync`,

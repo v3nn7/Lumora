@@ -85,6 +85,19 @@ struct ScriptComponent {
     std::string parameters;  // "speed=4, jump=6": numbers the behaviour reads with param()
 };
 
+/// Plays a sound file (project-relative WAV, FLAC or MP3) while the simulation runs, in 3D at the
+/// entity (spatial) or flat. Scripts start and stop it with playSound() / stopSound().
+struct AudioSourceComponent {
+    std::string clip;
+    float volume = 1.0f;
+    float pitch = 1.0f;
+    bool loop = false;
+    bool playOnStart = true;
+    bool spatial = true;
+    float minDistance = 1.0f;   // full volume up to here (metres)
+    float maxDistance = 50.0f;  // no further attenuation beyond
+};
+
 /// Built-in gameplay behaviour: spins the entity while the simulation runs.
 struct RotatorComponent {
     glm::vec3 axis{0.0f, 1.0f, 0.0f};

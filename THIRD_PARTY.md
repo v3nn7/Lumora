@@ -13,6 +13,7 @@ licences compatible with it. Versions are pinned (and hash-verified) in `cmake/`
 | nlohmann/json | JSON | MIT |
 | cgltf | glTF import | MIT |
 | stb_image / stb_image_write | image decoding | MIT or public domain |
+| miniaudio 0.11.25 | audio playback, decoding, 3D sound | public domain or MIT-0 |
 | Jolt Physics | rigid-body physics | MIT |
 | miniz | ZIP extraction (editor installer) | MIT |
 | Monocypher | Ed25519 signature checks (editor installer), XChaCha20-Poly1305 (session datagrams) | BSD-2-Clause or CC0 |

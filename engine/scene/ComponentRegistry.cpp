@@ -113,6 +113,20 @@ ComponentRegistry makeBuiltin() {
         reg.add(std::move(d));
     }
     {
+        auto d = R::describe<AudioSourceComponent>("AudioSource", "Audio Source");
+        d.fields = {
+            R::field(&AudioSourceComponent::clip, "audioClip", "Clip", FieldKind::Asset),
+            ranged(R::field(&AudioSourceComponent::volume, "volume", "Volume", FieldKind::Float), 0.0f, 4.0f, 0.01f),
+            ranged(R::field(&AudioSourceComponent::pitch, "pitch", "Pitch", FieldKind::Float), 0.05f, 4.0f, 0.01f),
+            R::field(&AudioSourceComponent::loop, "loop", "Loop", FieldKind::Bool),
+            R::field(&AudioSourceComponent::playOnStart, "playOnStart", "Play on Start", FieldKind::Bool),
+            R::field(&AudioSourceComponent::spatial, "spatial", "3D", FieldKind::Bool),
+            ranged(R::field(&AudioSourceComponent::minDistance, "minDistance", "Min Distance", FieldKind::Float), 0.01f, 1000.0f, 0.1f),
+            ranged(R::field(&AudioSourceComponent::maxDistance, "maxDistance", "Max Distance", FieldKind::Float), 0.1f, 10000.0f, 0.5f),
+        };
+        reg.add(std::move(d));
+    }
+    {
         auto d = R::describe<ScriptComponent>("Script", "Script");
         d.fields = {
             R::field(&ScriptComponent::behaviour, "behaviour", "Behaviour", FieldKind::String),

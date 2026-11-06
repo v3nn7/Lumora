@@ -142,7 +142,7 @@ Hover over the viewport or click it, then:
   Hold <kbd>Ctrl</kbd> while dragging to snap (0.25 m, 15°, 0.1×). Gizmos work in the parent's
   space, so child entities move as expected.
 - **Edit** values in the Inspector. **Add Component** adds any of: Transform, Mesh Renderer,
-  Light, Camera, Rigid Body, Collider, Script, Rotator. A new Collider starts out fitted to the entity's
+  Light, Camera, Rigid Body, Collider, Script, Audio Source, Rotator. A new Collider starts out fitted to the entity's
   mesh.
 - **Undo** everything with <kbd>Ctrl</kbd>+<kbd>Z</kbd> and redo with
   <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>. <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicates,
@@ -257,6 +257,7 @@ What a behaviour can do:
 | `onCollision(Entity other)` | Override: this entity's collider started touching another |
 | `clone(e)`, `destroy(e)` | Copy an entity with its children, components and scripts; remove one at the end of the step |
 | `param("speed", 4.0f)` | A number from the Script component's **Parameters** field, e.g. `speed=6, jump=4` |
+| `playSound()`, `stopSound()`, `soundPlaying()`, `playSoundOn(e)` | The Audio Source of this (or another) entity |
 | `log("…")`, `warn("…")` | Messages in the Console |
 
 An exception thrown by a behaviour is reported in the Console and disables that behaviour; the
@@ -265,6 +266,23 @@ with it, so save your scene before experimenting. Other ways to build: *Scripts 
 (<kbd>Ctrl</kbd>+<kbd>B</kbd>), or `lumora-editor --headless --project <p> --build-scripts`.
 The standalone player and `--simulate` use the library the editor built last
 (`Saved/ScriptBuild/bin/`).
+
+### Sound
+
+*Add Component → Audio Source* plays a sound file (WAV, FLAC or MP3; choosing one outside the
+project copies it into `Content/Audio`) while the game runs:
+
+| Setting | Does |
+|---|---|
+| Clip | The sound file |
+| Volume, Pitch | Loudness (1 = as recorded) and speed/pitch (1 = original) |
+| Loop | Repeat until stopped |
+| Play on Start | Start when play begins; otherwise a script starts it with `playSound()` |
+| 3D | Heard from the entity's position, quieter with distance, panned left/right |
+| Min / Max Distance | Full volume up to Min; it stops getting quieter beyond Max |
+
+You hear the game from the camera. Pausing play mode pauses sound. Scripts control an entity's
+source with `playSound()`, `stopSound()`, `soundPlaying()` and `playSoundOn(entity)`.
 
 ### Play mode
 

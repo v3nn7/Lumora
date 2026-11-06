@@ -17,6 +17,7 @@
 
 namespace lumora {
 
+class AudioWorld;
 class InputState;
 class PhysicsWorld;
 class Scene;
@@ -77,6 +78,7 @@ public:
     void dispatchCollisions(const std::vector<std::pair<entt::entity, entt::entity>>& pairs);
     void reload(std::shared_ptr<ScriptModule> module);
     void setPhysics(PhysicsWorld* physics) noexcept { context_.physics = physics; }
+    void setAudio(AudioWorld* audio) noexcept { context_.audio = audio; }
     [[nodiscard]] std::size_t instanceCount() const noexcept { return instances_.size(); }
 
     // EngineApi::context: what the C callbacks reach (public for the callback functions).
@@ -84,6 +86,7 @@ public:
         Scene* scene = nullptr;
         const InputState* input = nullptr;
         PhysicsWorld* physics = nullptr;
+        AudioWorld* audio = nullptr;
         std::vector<entt::entity> pendingDestroy;
         double time = 0.0;
         std::string nameScratch;

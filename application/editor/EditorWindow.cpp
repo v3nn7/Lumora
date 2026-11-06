@@ -18,6 +18,7 @@
 #include "project/ProjectTemplates.hpp"
 #include "renderer/RenderContext.hpp"
 #include "renderer/Renderer.hpp"
+#include "runtime/AudioWorld.hpp"
 #include "runtime/Scripting.hpp"
 #include "runtime/Simulation.hpp"
 #include "assets/AssetImport.hpp"
@@ -121,6 +122,9 @@ EditorWindow::EditorWindow(app::AppContext& app, Project project, QWidget* paren
 
     client_->onSimulate = [this](float dt) {
         if (simulation_ && !paused_) simulation_->advance(dt);
+        if (simulation_ && simulation_->audio() != nullptr) {
+            simulation_->audio()->setListenerFromView(client_->viewportCamera(1.0f).view);  // hear from the camera
+        }
     };
     client_->onShortcut = [this](int key, Qt::KeyboardModifiers mods) { return handleShortcut(key, mods); };
     ctx_.onComponentAdded = [this](Scene& scene, entt::entity e, const ComponentDesc& component) {
@@ -332,6 +336,7 @@ void EditorWindow::buildDocks() {
     auto* hierarchy = makeDock(this, tr("Hierarchy"), QStringLiteral("dock.hierarchy"), QStringLiteral("hierarchy"), new SceneHierarchyPanel(ctx_));
     auto* inspector = makeDock(this, tr("Inspector"), QStringLiteral("dock.inspector"), QStringLiteral("settings"), new InspectorPanel(ctx_, [this](QWidget* parent, const FieldDesc& field) {
                      if (field.id == "skyHdr") return pickHdrAsset(parent);
+                     if (field.id == "audioClip") return pickAudioAsset(parent);
                      return field.id.ends_with("Texture") ? pickTextureAsset(parent) : pickMeshAsset(parent);
                  }));
     auto* content = new ContentBrowserPanel(app::toQString(project_.contentDir()));
@@ -690,6 +695,22 @@ std::optional<std::string> EditorWindow::pickMeshAsset(QWidget* parent) {
     return AssetLibrary::meshKey(relative, index);
 }
 
+std::optional<std::string> EditorWindow::pickAudioAsset(QWidget* parent) {
+    const QString file = QFileDialog::getOpenFileName(parent, tr("Choose Sound"), app::toQString(project_.contentDir()),
+                                                      tr("Sounds (*.wav *.flac *.mp3)"));
+    if (file.isEmpty()) return std::nullopt;
+    std::filesystem::path path = std::filesystem::absolute(app::toPath(file));
+    if (project_.relativePath(path).starts_with("..")) {
+        auto imported = importFile(path, project_.contentDir() / "Audio");
+        if (!imported) {
+            QMessageBox::critical(parent, tr("Import failed"), QString::fromStdString(imported.error().message));
+            return std::nullopt;
+        }
+        path = *imported;
+    }
+    return project_.relativePath(path);
+}
+
 std::optional<std::string> EditorWindow::pickHdrAsset(QWidget* parent) {
     const QString file = QFileDialog::getOpenFileName(parent, tr("Choose HDR Environment"),
                                                       app::toQString(project_.contentDir()),
@@ -842,6 +863,14 @@ void EditorWindow::play() {
     }
     playScene_ = std::move(*copy);
     simulation_ = std::make_unique<Simulation>(*playScene_);
+    if (AudioWorld::sceneHasAudio(*playScene_)) {
+        auto audio = AudioWorld::create(*playScene_, {project_.rootDir(), true});
+        if (audio) {
+            simulation_->setAudio(std::move(*audio));
+        } else {
+            log::warn("Editor", "{} - playing without sound", audio.error().message);
+        }
+    }
     if (gameModule_) simulation_->setScripts(gameModule_, &viewport_->input());
     paused_ = false;
     ctx_.setScene(playScene_.get(), true);
@@ -852,6 +881,7 @@ void EditorWindow::play() {
 void EditorWindow::togglePause() {
     if (!simulation_) return;
     paused_ = !paused_;
+    if (simulation_->audio() != nullptr) simulation_->audio()->setPaused(paused_);
     updatePlayState();
 }
 

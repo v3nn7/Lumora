@@ -96,6 +96,7 @@ struct EngineApi {
     int (*mouseDown)(void* context, int button);
     void (*mouseDelta)(void* context, float* xy);  // pixels moved this frame
     double (*parameter)(void* context, Entity entity, const char* name, double fallback);
+    int (*sound)(void* context, Entity entity, int command);  // 0 stop, 1 play, 2 is playing
 };
 
 class Behaviour;
@@ -169,6 +170,12 @@ protected:
     [[nodiscard]] Entity clone(Entity source) const { return api_->clone(api_->context, source); }
     /// Removes an entity (and its children) at the end of this step.
     void destroy(Entity e) const { api_->destroy(api_->context, e); }
+
+    // Sound (the entity's Audio Source component).
+    void playSound() const { api_->sound(api_->context, entity_, 1); }
+    void stopSound() const { api_->sound(api_->context, entity_, 0); }
+    [[nodiscard]] bool soundPlaying() const { return api_->sound(api_->context, entity_, 2) != 0; }
+    void playSoundOn(Entity e) const { api_->sound(api_->context, e, 1); }
 
     /// A number from the Script component's Parameters field ("speed=4, jump=6").
     [[nodiscard]] float param(std::string_view key, float fallback) const {

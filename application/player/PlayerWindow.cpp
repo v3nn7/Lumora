@@ -5,6 +5,7 @@
 #include "common/ScriptBuilder.hpp"
 #include "common/Theme.hpp"
 #include "core/Log.hpp"
+#include "runtime/AudioWorld.hpp"
 #include "runtime/Scripting.hpp"
 #include "runtime/Simulation.hpp"
 #include "scene/Scene.hpp"
@@ -28,6 +29,14 @@ PlayerWindow::PlayerWindow(AppContext& app, Project project, std::unique_ptr<Sce
     window_->setIcon(theme::icon(QStringLiteral("logo")));
     window_->resize(1280, 720);
     window_->installEventFilter(this);
+    if (AudioWorld::sceneHasAudio(*scene_)) {
+        auto audio = AudioWorld::create(*scene_, {project_.rootDir(), true});
+        if (audio) {
+            simulation_->setAudio(std::move(*audio));
+        } else {
+            log::warn("Player", "{} - playing without sound", audio.error().message);
+        }
+    }
     // The game's behaviours, as last built by the editor (the player does not compile).
     const ScriptBuilder scripts(toQString(project_.rootDir()));
     if (QFileInfo::exists(scripts.libraryPath())) {
@@ -61,6 +70,7 @@ bool PlayerWindow::eventFilter(QObject* watched, QEvent* event) {
 void PlayerWindow::viewportTick(float dt, const InputState& input, bool) {
     simulation_->advance(dt);
     if (freeCam_) freeCamera_.update(input, dt);
+    if (simulation_->audio() != nullptr) simulation_->audio()->setListenerFromView(viewportCamera(1.0f).view);
 }
 
 const Scene* PlayerWindow::viewportScene() const { return scene_.get(); }

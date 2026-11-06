@@ -24,6 +24,7 @@ works today from what is planned, and nothing listed as planned exists yet.
 | Assets | glTF 2.0 import (.gltf/.glb: meshes, node hierarchy, PBR materials and textures), PNG/JPEG/TGA/BMP textures, portable project-relative asset references, import copies files into the project without overwriting |
 | Physics | Jolt Physics rigid bodies (static, kinematic, dynamic) with box, sphere and capsule colliders, stepped on Jolt's thread pool during play |
 | Runtime | Fixed-timestep simulation (deterministic), built-in `Rotator` behaviour, a job system for background asset loading and parallel loops |
+| Audio | miniaudio: Audio Source component (WAV/FLAC/MP3, looping, volume, pitch, 3D attenuation and panning), listener at the camera, pause with play mode, scriptable |
 | Scripting | C++ behaviours in the project's `Scripts/` folder, compiled by the editor with CMake into a game library behind a C ABI and **hot-reloaded on save, also during play**; exceptions are caught per behaviour |
 | Tests | 173 test cases (GoogleTest + CTest): core, scene, serialization, scene patches, projects, CLI, editor installer (feeds, signatures, hostile archives, installs from file feeds), glTF/texture import (incl. a locale regression), render-graph barrier planning, gizmo math, undo/redo, **GPU tests that render real frames and check pixels**, Hub/Editor UI integration tests, collaboration over real loopback sockets (convergence, assets, presence, hostile input) |
 
@@ -326,7 +327,7 @@ Planned, in rough order: KTX2/Basis and HDR/EXR textures with an asset database 
 background loading; skinned meshes and multiple materials per mesh; virtual shadow maps; a render
 thread; clustered lighting; TAA and
 temporal upscaling; GPU-driven culling, meshlets and mesh shaders (the capabilities are already
-detected); hardware ray tracing (RT GI and reflections); miniaudio; skeletal
+detected); hardware ray tracing (RT GI and reflections); skeletal
 animation; Tracy integration; world streaming.
 
 Only items in "What works today" are implemented.

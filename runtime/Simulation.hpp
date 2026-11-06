@@ -6,6 +6,7 @@
 
 namespace lumora {
 
+class AudioWorld;
 class InputState;
 class Scene;
 class PhysicsWorld;
@@ -41,6 +42,9 @@ public:
     /// keyDown() and may be null. Called again with a new library (hot reload), the running
     /// behaviours are destroyed and recreated from it.
     void setScripts(std::shared_ptr<ScriptModule> module, const InputState* input);
+    /// Plays the scene's Audio Sources (positions follow the entities every step).
+    void setAudio(std::unique_ptr<AudioWorld> audio);
+    [[nodiscard]] AudioWorld* audio() noexcept { return audio_.get(); }
     /// Behaviour instances currently running (0 before the first step).
     [[nodiscard]] std::size_t scriptInstances() const noexcept;
 
@@ -50,7 +54,8 @@ private:
     double accumulator_ = 0.0;
     std::uint64_t steps_ = 0;
     std::unique_ptr<PhysicsWorld> physics_;
-    std::unique_ptr<ScriptRunner> scripts_;
+    std::unique_ptr<AudioWorld> audio_;
+    std::unique_ptr<ScriptRunner> scripts_;  // last: behaviours may still reference physics and audio
 };
 
 } // namespace lumora

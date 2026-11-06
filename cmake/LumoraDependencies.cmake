@@ -42,6 +42,13 @@ FetchContent_Declare(stb
     URL_HASH SHA256=9a955b1b49a4410088a2e0ee2a9c057c3c907d0c1d75454144cb980aca0ba515
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 
+# miniaudio 0.11.25: audio playback, decoding (WAV, FLAC, MP3) and 3D spatialisation. A single
+# header, fetched as the file itself (public domain or MIT-0).
+FetchContent_Declare(miniaudio
+    URL https://raw.githubusercontent.com/mackron/miniaudio/0.11.25/miniaudio.h
+    URL_HASH SHA256=ac7af4de748b7e26b777f37e01cee313a308a7296a3eb080e2906b320cc55c89
+    DOWNLOAD_NO_EXTRACT TRUE)
+
 # Jolt Physics. Portable x86-64 baseline (SSE4.2); no AVX/LZCNT/F16C/FMA assumptions about the
 # user's CPU. Samples, tests, GPU compute, debug renderer and profiler are not built.
 FetchContent_Declare(JoltPhysics
@@ -72,9 +79,11 @@ set(JSON_BuildTests OFF CACHE INTERNAL "")
 set(JSON_Install OFF CACHE INTERNAL "")
 set(VMA_ENABLE_INSTALL OFF CACHE INTERNAL "")
 
-FetchContent_MakeAvailable(glm EnTT VulkanMemoryAllocator nlohmann_json cgltf stb JoltPhysics)
+FetchContent_MakeAvailable(glm EnTT VulkanMemoryAllocator nlohmann_json cgltf stb JoltPhysics miniaudio)
 add_library(stb INTERFACE)
 target_include_directories(stb SYSTEM INTERFACE ${stb_SOURCE_DIR})
+add_library(miniaudio INTERFACE)
+target_include_directories(miniaudio SYSTEM INTERFACE ${miniaudio_SOURCE_DIR})
 add_library(cgltf INTERFACE)
 target_include_directories(cgltf SYSTEM INTERFACE ${cgltf_SOURCE_DIR})
 

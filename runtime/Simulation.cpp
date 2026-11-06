@@ -1,5 +1,6 @@
 #include "runtime/Simulation.hpp"
 
+#include "runtime/AudioWorld.hpp"
 #include "runtime/PhysicsWorld.hpp"
 #include "runtime/Scripting.hpp"
 #include "scene/Scene.hpp"
@@ -59,7 +60,13 @@ void Simulation::setScripts(std::shared_ptr<ScriptModule> module, const InputSta
     } else if (module) {
         scripts_ = std::make_unique<ScriptRunner>(scene_, std::move(module), input);
         scripts_->setPhysics(physics_.get());
+        scripts_->setAudio(audio_.get());
     }
+}
+
+void Simulation::setAudio(std::unique_ptr<AudioWorld> audio) {
+    audio_ = std::move(audio);
+    if (scripts_) scripts_->setAudio(audio_.get());
 }
 
 std::size_t Simulation::scriptInstances() const noexcept { return scripts_ ? scripts_->instanceCount() : 0; }
@@ -80,6 +87,7 @@ void Simulation::step() {
         scene_.updateWorldTransforms();
         if (scripts_) scripts_->dispatchCollisions(physics_->takeContacts());
     }
+    if (audio_) audio_->update();
     ++steps_;
 }
 

@@ -2,6 +2,7 @@
 
 #include "core/Log.hpp"
 #include "input/InputState.hpp"
+#include "runtime/AudioWorld.hpp"
 #include "runtime/PhysicsWorld.hpp"
 #include "scene/Scene.hpp"
 
@@ -216,6 +217,17 @@ void apiMouseDelta(void* c, float* xy) {
     xy[1] = d.y;
 }
 
+int apiSound(void* c, script::Entity entity, int command) {
+    AudioWorld* audio = context(c).audio;
+    const entt::entity e = liveEntity(c, entity);
+    if (audio == nullptr || e == entt::null) return 0;
+    switch (command) {
+        case 0: return audio->stop(e) ? 1 : 0;
+        case 1: return audio->play(e) ? 1 : 0;
+        default: return audio->isPlaying(e) ? 1 : 0;
+    }
+}
+
 /// "speed=4, jump = 6.5; name=2" -> the number for `key`, or `fallback`.
 double apiParameter(void* c, script::Entity entity, const char* key, double fallback) {
     const entt::entity e = liveEntity(c, entity);
@@ -333,6 +345,7 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.mouseDown = apiMouseDown;
     api_.mouseDelta = apiMouseDelta;
     api_.parameter = apiParameter;
+    api_.sound = apiSound;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }

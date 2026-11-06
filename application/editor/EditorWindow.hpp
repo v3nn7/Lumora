@@ -112,6 +112,7 @@ private:
     [[nodiscard]] std::optional<std::string> pickMeshAsset(QWidget* parent);
     [[nodiscard]] std::optional<std::string> pickTextureAsset(QWidget* parent);
     [[nodiscard]] std::optional<std::string> pickHdrAsset(QWidget* parent);
+    [[nodiscard]] std::optional<std::string> pickAudioAsset(QWidget* parent);
     bool saveSceneAs();
     bool maybeSave();
     void saveThumbnail();

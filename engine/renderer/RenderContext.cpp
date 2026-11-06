@@ -333,8 +333,10 @@ nvrhi::TextureHandle RenderContext::createTexture(std::span<const std::span<cons
     const nvrhi::FormatInfo& info = nvrhi::getFormatInfo(format);
     upload([&](nvrhi::ICommandList* cmd) {
         for (std::uint32_t mip = 0; mip < levels.size(); ++mip) {
+            // A row of blocks: one texel for plain formats, 4 x 4 texels for BC / ASTC 4x4.
             const std::uint32_t w = std::max(width >> mip, 1u);
-            cmd->writeTexture(texture, 0, mip, levels[mip].data(), static_cast<std::size_t>(w) * info.bytesPerBlock);
+            const std::uint32_t blocksAcross = (w + info.blockSize - 1) / info.blockSize;
+            cmd->writeTexture(texture, 0, mip, levels[mip].data(), static_cast<std::size_t>(blocksAcross) * info.bytesPerBlock);
         }
     });
     return texture;

@@ -1573,3 +1573,18 @@ TEST_F(RendererTest, TemporalAntiAliasingLeavesNoTrailBehindMovingObjects) {
     const glm::ivec2 now = toPixel(view, {1.6f, 0.0f, 0.0f}, {96, 96});
     EXPECT_LT(pixel(*frame, static_cast<std::uint32_t>(std::clamp(now.x, 0, 95)), 48).g, 60);
 }
+
+TEST_F(RendererTest, BlockCompressedTexturesUploadRowsOfBlocks) {
+    // A 8 x 8 BC1 texture: 2 x 2 blocks of 8 bytes, every block solid red (colour0 = colour1 = red).
+    std::vector<std::byte> level(4 * 8);
+    for (std::size_t b = 0; b < 4; ++b) {
+        level[b * 8 + 0] = std::byte{0x00};
+        level[b * 8 + 1] = std::byte{0xF8};  // RGB565 red, little-endian 0xF800
+        level[b * 8 + 2] = std::byte{0x00};
+        level[b * 8 + 3] = std::byte{0xF8};
+    }
+    const std::span<const std::byte> levels[] = {level};
+    nvrhi::TextureHandle texture;
+    EXPECT_NO_THROW(texture = context_->createTexture(levels, 8, 8, nvrhi::Format::BC1_UNORM, "BC1Test"));
+    EXPECT_TRUE(texture);
+}

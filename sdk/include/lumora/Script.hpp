@@ -99,6 +99,7 @@ struct EngineApi {
     int (*sound)(void* context, Entity entity, int command);  // 0 stop, 1 play, 2 is playing
     Entity (*spawn)(void* context, const char* prefab, const float* position);  // kNoEntity on failure
     int (*animation)(void* context, Entity entity, const char* clip, int command);  // 0 stop, 1 play, 2 playing
+    int (*character)(void* context, Entity entity, int command, const float* xyz);  // 0 move, 1 jump, 2 grounded
 };
 
 class Behaviour;
@@ -166,6 +167,19 @@ protected:
         const float d[3] = {direction.x, direction.y, direction.z};
         return api_->raycast(api_->context, o, d, maxDistance, &hit) != 0;
     }
+
+    // Character Controller component: walking, jumping, standing on things.
+    /// Walking velocity (m/s, world space; only x and z count - gravity and jumps own y).
+    void move(Vec3 velocity) const {
+        const float xyz[3] = {velocity.x, velocity.y, velocity.z};
+        api_->character(api_->context, entity_, 0, xyz);
+    }
+    /// Jumps with this upward speed (m/s); false if not standing on the ground.
+    bool jump(float speed) const {
+        const float xyz[3] = {speed, 0.0f, 0.0f};
+        return api_->character(api_->context, entity_, 1, xyz) != 0;
+    }
+    [[nodiscard]] bool grounded() const { return api_->character(api_->context, entity_, 2, nullptr) != 0; }
 
     // Entities
     /// Copies an entity (with its children and components, including scripts) into the scene.

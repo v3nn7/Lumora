@@ -49,6 +49,14 @@ public:
     /// Closest body hit by a ray (direction need not be normalised), within maxDistance.
     [[nodiscard]] std::optional<RayHit> raycast(const glm::vec3& origin, const glm::vec3& direction,
                                                 float maxDistance) const;
+    // Characters (CharacterControllerComponent).
+    /// Desired walking velocity (m/s, world space; the vertical part is ignored: gravity and jumps own it).
+    bool moveCharacter(entt::entity entity, const glm::vec3& velocity);
+    /// Jumps with this upward speed (m/s) if the character stands on the ground.
+    bool jumpCharacter(entt::entity entity, float speed);
+    [[nodiscard]] bool characterGrounded(entt::entity entity) const;
+    [[nodiscard]] std::size_t characterCount() const;
+
     /// Pairs of entities whose bodies started touching since the last call (each pair once).
     [[nodiscard]] std::vector<std::pair<entt::entity, entt::entity>> takeContacts();
 

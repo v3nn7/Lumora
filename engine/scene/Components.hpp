@@ -79,6 +79,17 @@ struct CameraComponent {
     bool primary = true;
 };
 
+/// A walking character (Jolt CharacterVirtual): an upright capsule standing on the entity's
+/// origin that slides along walls, climbs steps and slopes, falls with gravity and pushes
+/// dynamic bodies. Scripts steer it with move() and jump(); the physics writes its position.
+struct CharacterControllerComponent {
+    float height = 1.8f;        // total height (m)
+    float radius = 0.3f;
+    float maxSlopeDeg = 50.0f;  // steeper ground is a wall
+    float stepHeight = 0.35f;   // steps up to this height are climbed
+    float gravityFactor = 1.0f;
+};
+
 /// Runs a C++ behaviour from the project's game library (Scripts/) while the simulation runs.
 struct ScriptComponent {
     std::string behaviour;   // class name registered with LUMORA_BEHAVIOUR

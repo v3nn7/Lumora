@@ -261,6 +261,17 @@ int apiAnimation(void* c, script::Entity entity, const char* clip, int command) 
     }
 }
 
+int apiCharacter(void* c, script::Entity entity, int command, const float* xyz) {
+    PhysicsWorld* physics = context(c).physics;
+    const entt::entity e = liveEntity(c, entity);
+    if (physics == nullptr || e == entt::null) return 0;
+    switch (command) {
+        case 0: return xyz != nullptr && physics->moveCharacter(e, glm::vec3(xyz[0], xyz[1], xyz[2])) ? 1 : 0;
+        case 1: return xyz != nullptr && physics->jumpCharacter(e, xyz[0]) ? 1 : 0;
+        default: return physics->characterGrounded(e) ? 1 : 0;
+    }
+}
+
 int apiSound(void* c, script::Entity entity, int command) {
     AudioWorld* audio = context(c).audio;
     const entt::entity e = liveEntity(c, entity);
@@ -392,6 +403,7 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.sound = apiSound;
     api_.spawn = apiSpawn;
     api_.animation = apiAnimation;
+    api_.character = apiCharacter;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }

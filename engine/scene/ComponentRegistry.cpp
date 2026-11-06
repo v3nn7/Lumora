@@ -152,6 +152,17 @@ ComponentRegistry makeBuiltin() {
         reg.add(std::move(d));
     }
     {
+        auto d = R::describe<CharacterControllerComponent>("CharacterController", "Character Controller");
+        d.fields = {
+            ranged(R::field(&CharacterControllerComponent::height, "height", "Height", FieldKind::Float), 0.2f, 20.0f, 0.05f),
+            ranged(R::field(&CharacterControllerComponent::radius, "radius", "Radius", FieldKind::Float), 0.05f, 5.0f, 0.01f),
+            ranged(R::field(&CharacterControllerComponent::maxSlopeDeg, "maxSlope", "Max Slope (deg)", FieldKind::Float), 0.0f, 89.0f, 1.0f),
+            ranged(R::field(&CharacterControllerComponent::stepHeight, "stepHeight", "Step Height", FieldKind::Float), 0.0f, 2.0f, 0.01f),
+            ranged(R::field(&CharacterControllerComponent::gravityFactor, "gravityFactor", "Gravity Factor", FieldKind::Float), -10.0f, 10.0f, 0.05f),
+        };
+        reg.add(std::move(d));
+    }
+    {
         auto d = R::describe<ScriptComponent>("Script", "Script");
         d.fields = {
             R::field(&ScriptComponent::behaviour, "behaviour", "Behaviour", FieldKind::String),

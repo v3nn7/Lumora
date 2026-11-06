@@ -130,3 +130,56 @@ TEST(Physics, ComponentsSerialize) {
     EXPECT_EQ((*copy)->registry().get<ColliderComponent>(e).shape, ColliderShape::Sphere);
     EXPECT_FLOAT_EQ((*copy)->registry().get<ColliderComponent>(e).radius, 0.75f);
 }
+
+TEST(Character, WalksClimbsStepsStopsAtWallsAndJumps) {
+    Scene scene("Character");
+    auto& reg = scene.registry();
+    auto box = [&](const char* name, glm::vec3 center, glm::vec3 size) {
+        const entt::entity e = scene.createEntity(name);
+        reg.get<TransformComponent>(e).position = center;
+        reg.emplace<ColliderComponent>(e).size = size;
+        return e;
+    };
+    box("Ground", {0.0f, -0.5f, 0.0f}, {40.0f, 1.0f, 40.0f});      // top at y = 0
+    box("Step", {3.0f, 0.1f, 0.0f}, {2.0f, 0.2f, 4.0f});           // 20 cm high, x 2..4
+    box("Wall", {8.0f, 2.0f, 0.0f}, {1.0f, 4.0f, 4.0f});           // x 7.5..8.5
+    const entt::entity player = scene.createEntity("Player");
+    reg.get<TransformComponent>(player).position = glm::vec3(0.0f, 1.0f, 0.0f);  // dropped from 1 m
+    reg.emplace<CharacterControllerComponent>(player);
+    scene.updateWorldTransforms();
+
+    Simulation sim(scene);
+    ASSERT_NE(sim.physics(), nullptr);
+    PhysicsWorld& physics = *sim.physics();
+    ASSERT_EQ(physics.characterCount(), 1u);
+    for (int i = 0; i < 60; ++i) sim.step();
+    EXPECT_NEAR(reg.get<TransformComponent>(player).position.y, 0.0f, 0.05f) << "fell and stands on the ground";
+    EXPECT_TRUE(physics.characterGrounded(player));
+
+    // Walk +x at 2 m/s for 2.5 s: over the step (climbed, not blocked).
+    physics.moveCharacter(player, {2.0f, 0.0f, 0.0f});
+    for (int i = 0; i < 90; ++i) sim.step();
+    const glm::vec3 onStep = reg.get<TransformComponent>(player).position;
+    EXPECT_GT(onStep.x, 2.3f);
+    EXPECT_LT(onStep.x, 4.0f);
+    EXPECT_NEAR(onStep.y, 0.2f, 0.06f) << "stands on top of the step";
+
+    // Keep walking into the wall: stops in front of it.
+    for (int i = 0; i < 240; ++i) sim.step();
+    const glm::vec3 atWall = reg.get<TransformComponent>(player).position;
+    EXPECT_LT(atWall.x, 7.5f - 0.25f) << "the capsule (radius 0.3) stays out of the wall";
+    EXPECT_GT(atWall.x, 6.5f);
+
+    // Jump: rises, lands again.
+    physics.moveCharacter(player, {0.0f, 0.0f, 0.0f});
+    EXPECT_TRUE(physics.jumpCharacter(player, 5.0f));
+    float peak = 0.0f;
+    for (int i = 0; i < 90; ++i) {
+        sim.step();
+        peak = std::max(peak, reg.get<TransformComponent>(player).position.y);
+    }
+    EXPECT_GT(peak, 1.0f) << "v^2 / 2g = 1.27 m";
+    EXPECT_LT(peak, 1.5f);
+    EXPECT_NEAR(reg.get<TransformComponent>(player).position.y, 0.0f, 0.05f) << "landed";
+    EXPECT_TRUE(physics.characterGrounded(player));
+}

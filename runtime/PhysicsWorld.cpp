@@ -14,6 +14,7 @@
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
@@ -197,8 +198,52 @@ struct PhysicsWorld::Impl {
         BodyMotion motion;
     };
     std::unordered_map<entt::entity, Body> bodies;
+    struct Character {
+        JPH::Ref<JPH::CharacterVirtual> character;
+        glm::vec3 desired{0.0f};  // horizontal walking velocity
+        float vertical = 0.0f;    // gravity and jumps
+        float pendingJump = 0.0f;
+        float gravityFactor = 1.0f;
+        float stepHeight = 0.35f;
+        glm::vec3 lastWritten{0.0f};  // world position the physics last wrote (to notice teleports)
+    };
+    std::unordered_map<entt::entity, Character> characters;
 
     explicit Impl(Scene& s) : scene(s) {}
+
+    void createCharacter(entt::entity e) {
+        const auto& cc = scene.registry().get<CharacterControllerComponent>(e);
+        const float radius = std::max(cc.radius, 0.05f);
+        const float height = std::max(cc.height, 2.0f * radius + 0.01f);
+        const float halfCylinder = 0.5f * (height - 2.0f * radius);
+        // The capsule stands on the entity's origin: its centre is half the height up.
+        JPH::RotatedTranslatedShapeSettings standing(JPH::Vec3(0.0f, 0.5f * height, 0.0f), JPH::Quat::sIdentity(),
+                                                     new JPH::CapsuleShape(halfCylinder, radius));
+        auto shape = standing.Create();
+        if (!shape.IsValid()) return;
+        JPH::CharacterVirtualSettings settings;
+        settings.mShape = shape.Get();
+        settings.mMaxSlopeAngle = JPH::DegreesToRadians(std::clamp(cc.maxSlopeDeg, 0.0f, 89.0f));
+        settings.mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(), -radius);  // only the bottom sphere stands
+        const Pose pose = decompose(scene.worldMatrix(e));
+        Character c;
+        c.character = new JPH::CharacterVirtual(&settings, JPH::RVec3(toJolt(pose.position)), JPH::Quat::sIdentity(),
+                                                static_cast<JPH::uint64>(entt::to_integral(e)), &system);
+        c.gravityFactor = cc.gravityFactor;
+        c.stepHeight = cc.stepHeight;
+        c.lastWritten = pose.position;
+        characters.emplace(e, std::move(c));
+    }
+
+    void syncCharacters() {
+        auto& reg = scene.registry();
+        std::erase_if(characters, [&](const auto& entry) {
+            return !reg.valid(entry.first) || !reg.all_of<CharacterControllerComponent>(entry.first);
+        });
+        for (auto e : reg.view<CharacterControllerComponent>()) {
+            if (!characters.contains(e)) createCharacter(e);
+        }
+    }
 
     void createBody(entt::entity e) {
         const auto& reg = scene.registry();
@@ -277,10 +322,13 @@ PhysicsWorld::PhysicsWorld(Scene& scene) : impl_(std::make_unique<Impl>(scene)) 
     impl_->system.SetContactListener(&impl_->contacts);
     scene.updateWorldTransforms();
     impl_->syncBodies();
-    log::info("Physics", "world created with {} bodies ({} worker threads)", impl_->bodies.size(), threads);
+    impl_->syncCharacters();
+    log::info("Physics", "world created with {} bodies, {} characters ({} worker threads)", impl_->bodies.size(),
+              impl_->characters.size(), threads);
 }
 
 PhysicsWorld::~PhysicsWorld() {
+    impl_->characters.clear();
     for (const auto& [entity, body] : impl_->bodies) impl_->removeBody(body);
     impl_->bodies.clear();
     impl_.reset();
@@ -288,8 +336,31 @@ PhysicsWorld::~PhysicsWorld() {
 }
 
 bool PhysicsWorld::sceneHasColliders(const Scene& scene) {
-    return !scene.registry().view<ColliderComponent>().empty();
+    return !scene.registry().view<ColliderComponent>().empty() ||
+           !scene.registry().view<CharacterControllerComponent>().empty();
 }
+
+bool PhysicsWorld::moveCharacter(entt::entity entity, const glm::vec3& velocity) {
+    const auto it = impl_->characters.find(entity);
+    if (it == impl_->characters.end()) return false;
+    it->second.desired = glm::vec3(velocity.x, 0.0f, velocity.z);
+    return true;
+}
+
+bool PhysicsWorld::jumpCharacter(entt::entity entity, float speed) {
+    const auto it = impl_->characters.find(entity);
+    if (it == impl_->characters.end() || !characterGrounded(entity)) return false;
+    it->second.pendingJump = speed;
+    return true;
+}
+
+bool PhysicsWorld::characterGrounded(entt::entity entity) const {
+    const auto it = impl_->characters.find(entity);
+    return it != impl_->characters.end() &&
+           it->second.character->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+}
+
+std::size_t PhysicsWorld::characterCount() const { return impl_->characters.size(); }
 
 std::size_t PhysicsWorld::bodyCount() const { return impl_->bodies.size(); }
 
@@ -363,8 +434,42 @@ void PhysicsWorld::step(float dt) {
         log::warn("Physics", "update reported limits being exceeded (error {})", static_cast<int>(error));
     }
 
-    // Dynamic bodies write their pose back, converted into parent space.
+    // Characters: walk at their desired velocity, fall, jump, slide along what they hit.
+    impl_->syncCharacters();
     auto& reg = scene.registry();
+    const JPH::Vec3 gravity = impl_->system.GetGravity();
+    for (auto& [entity, c] : impl_->characters) {
+        // Moved by something else (a script, the editor): teleport the character there.
+        const glm::vec3 scenePos(scene.worldMatrix(entity)[3]);
+        if (glm::length(scenePos - c.lastWritten) > 1e-4f) {
+            c.character->SetPosition(JPH::RVec3(toJolt(scenePos)));
+            c.vertical = 0.0f;
+        }
+        const bool grounded = c.character->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+        if (grounded && c.vertical <= 0.0f) c.vertical = 0.0f;
+        if (c.pendingJump > 0.0f) {
+            c.vertical = c.pendingJump;
+            c.pendingJump = 0.0f;
+        } else if (!grounded) {
+            c.vertical += gravity.GetY() * c.gravityFactor * dt;
+        }
+        c.character->SetLinearVelocity(JPH::Vec3(c.desired.x, c.vertical, c.desired.z));
+        JPH::CharacterVirtual::ExtendedUpdateSettings update;
+        update.mWalkStairsStepUp = JPH::Vec3(0.0f, c.stepHeight, 0.0f);
+        c.character->ExtendedUpdate(dt, gravity * c.gravityFactor, update,
+                                    impl_->system.GetDefaultBroadPhaseLayerFilter(Layers::kMoving),
+                                    impl_->system.GetDefaultLayerFilter(Layers::kMoving), {}, {}, *impl_->temp);
+        // Landing on something stops the fall; hitting a ceiling stops the rise.
+        const glm::vec3 moved = fromJolt(c.character->GetLinearVelocity());
+        if (c.vertical > 0.0f && moved.y < c.vertical * 0.5f) c.vertical = std::max(moved.y, 0.0f);
+        glm::vec3 worldPos = fromJolt(JPH::Vec3(c.character->GetPosition()));
+        c.lastWritten = worldPos;
+        const entt::entity parent = scene.parentOf(entity);
+        if (parent != entt::null) worldPos = glm::vec3(glm::inverse(scene.worldMatrix(parent)) * glm::vec4(worldPos, 1.0f));
+        reg.get<TransformComponent>(entity).position = worldPos;
+    }
+
+    // Dynamic bodies write their pose back, converted into parent space.
     for (const auto& [entity, body] : impl_->bodies) {
         if (body.motion != BodyMotion::Dynamic || !bi.IsActive(body.id)) continue;
         JPH::RVec3 position;

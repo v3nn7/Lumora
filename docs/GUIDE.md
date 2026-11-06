@@ -142,7 +142,7 @@ Hover over the viewport or click it, then:
   Hold <kbd>Ctrl</kbd> while dragging to snap (0.25 m, 15°, 0.1×). Gizmos work in the parent's
   space, so child entities move as expected.
 - **Edit** values in the Inspector. **Add Component** adds any of: Transform, Mesh Renderer,
-  Light, Camera, Rigid Body, Collider, Script, Audio Source, Rotator. A new Collider starts out fitted to the entity's
+  Light, Camera, Rigid Body, Collider, Character Controller, Script, Audio Source, Animator, Rotator. A new Collider starts out fitted to the entity's
   mesh.
 - **Undo** everything with <kbd>Ctrl</kbd>+<kbd>Z</kbd> and redo with
   <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>. <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicates,
@@ -238,6 +238,22 @@ make it move:
 | Kinematic | Follows its transform, for example animated by a Rotator, and pushes dynamic bodies |
 | Dynamic | Simulated: gravity, collisions, mass, friction, restitution, damping |
 
+**Characters.** *Add Component → Character Controller* turns an entity into a walking capsule
+(height, radius, steepest walkable slope, step height): it stands on its origin, slides along
+walls, climbs steps, falls and pushes dynamic bodies. Scripts steer it:
+
+```cpp
+void update(float dt) override {
+    Vec3 walk{0, 0, 0};
+    if (keyDown(Key::W)) walk.z -= 4.0f;
+    if (keyDown(Key::S)) walk.z += 4.0f;
+    if (keyDown(Key::A)) walk.x -= 4.0f;
+    if (keyDown(Key::D)) walk.x += 4.0f;
+    move(walk);                                    // m/s
+    if (keyDown(Key::Space) && grounded()) jump(5.0f);
+}
+```
+
 Physics runs only in play mode. *Create → Physics* has ready-made objects to start from.
 
 ### Gameplay scripts (C++)
@@ -289,6 +305,7 @@ What a behaviour can do:
 | `raycast(origin, direction, maxDistance, hit)` | Closest collider along a ray: `hit.entity`, `hit.point`, `hit.normal`, `hit.distance` |
 | `onCollision(Entity other)` | Override: this entity's collider started touching another |
 | `spawn("Content/Prefabs/X.lprefab", position)` | Add a copy of a prefab |
+| `move(velocity)`, `jump(speed)`, `grounded()` | Character Controller: walk, jump, stand |
 | `clone(e)`, `destroy(e)` | Copy an entity with its children, components and scripts; remove one at the end of the step |
 | `param("speed", 4.0f)` | A number from the Script component's **Parameters** field, e.g. `speed=6, jump=4` |
 | `playSound()`, `stopSound()`, `soundPlaying()`, `playSoundOn(e)` | The Audio Source of this (or another) entity |

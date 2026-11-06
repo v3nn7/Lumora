@@ -21,7 +21,7 @@ works today from what is planned, and nothing listed as planned exists yet.
 | Renderer | Vulkan 1.4 instance/device with capability detection, VMA, dynamic rendering, synchronization2, render graph with automatic barriers and multithreaded recording of large passes (secondary command buffers), bindless descriptors (update-after-bind), timeline-semaphore uploads, persistent pipeline cache, GPU timestamp profiling, frames in flight, swapchain recreation, device-loss reporting |
 | Rendering | HDR forward PBR (GGX / Smith / Schlick) with base colour, metallic-roughness, normal and emissive maps (mipmapped, anisotropic), directional + point lights, cascaded sun shadows (4 texel-snapped cascades in one atlas, blended borders, smooth 7x7 PCF with receiver-plane bias; off-screen casters included), procedural sky with horizon haze and sun glow or **image-based lighting from an HDR environment** (equirectangular .hdr: GGX-prefiltered specular mips and SH9 irradiance computed on the job system), exponential height fog (aerial perspective), physically based bloom, vignette, ACES tonemapping, FXAA, procedural grid/checker surface patterns, hemispherical ambient, depth prepass and screen-space ambient occlusion (half resolution, depth-aware blur), editor grid and gizmo overlay pass, CPU frustum culling |
 | Scene | EnTT ECS, UUID identity, hierarchy, component reflection → JSON serialization + inspector |
-| Assets | glTF 2.0 import (.gltf/.glb: meshes, node hierarchy, PBR materials and textures), PNG/JPEG/TGA/BMP textures, portable project-relative asset references, import copies files into the project without overwriting |
+| Assets | glTF 2.0 import (.gltf/.glb: meshes with any number of materials, node hierarchy, PBR materials and textures, skins, animations), PNG/JPEG/TGA/BMP textures, portable project-relative asset references, import copies files into the project without overwriting |
 | Physics | Jolt Physics rigid bodies (static, kinematic, dynamic) with box, sphere and capsule colliders, stepped on Jolt's thread pool during play |
 | Runtime | Fixed-timestep simulation (deterministic), built-in `Rotator` behaviour, a job system for background asset loading and parallel loops |
 | Audio | miniaudio: Audio Source component (WAV/FLAC/MP3, looping, volume, pitch, 3D attenuation and panning), listener at the camera, pause with play mode, scriptable |
@@ -327,7 +327,7 @@ A step-by-step user guide is in [docs/GUIDE.md](docs/GUIDE.md) and on the
 ## Roadmap
 
 Planned, in rough order: KTX2/Basis and HDR/EXR textures with an asset database and
-background loading; multiple materials per mesh; virtual shadow maps; a render
+background loading; virtual shadow maps; a render
 thread; clustered lighting; TAA and
 temporal upscaling; GPU-driven culling, meshlets and mesh shaders (the capabilities are already
 detected); hardware ray tracing (RT GI and reflections); Tracy integration; world streaming.

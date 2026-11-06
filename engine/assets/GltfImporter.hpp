@@ -37,8 +37,8 @@ struct ImportedImage {
 
 struct ImportedMesh {
     std::string name;
-    MeshData data;           // all triangle primitives merged
-    int material = -1;       // material of the first primitive (single material per mesh for now)
+    MeshData data;           // the triangle primitives that use `material`, merged
+    int material = -1;
 };
 
 /// Joints (node indices) deforming skinned meshes, with their inverse bind matrices.
@@ -90,7 +90,9 @@ void sampleAnimation(const ImportedAnimation& animation, float time, std::vector
 /// A loaded glTF 2.0 asset (.gltf with external or embedded buffers, or .glb).
 /// Coordinate conventions match Lumora (right-handed, +Y up, metres, CCW front faces).
 struct ImportedModel {
-    std::vector<ImportedMesh> meshes;
+    std::vector<ImportedMesh> meshes;  // [0, glTF mesh count): first material of each glTF mesh
+    /// Per glTF mesh, the ImportedMesh indices of its parts (one per material, first = itself).
+    std::vector<std::vector<int>> meshParts;
     std::vector<ImportedMaterial> materials;
     std::vector<ImportedNode> nodes;  // parents precede children
     std::vector<ImportedImage> images;

@@ -263,26 +263,50 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
         model.images.push_back(std::move(image));
     }
 
+    // One ImportedMesh per material: glTF mesh m keeps index m for its first material's
+    // primitives (so "file#m" keys stay valid); further materials become extra meshes appended
+    // after all glTF meshes and listed in meshParts[m].
+    std::vector<ImportedMesh> extraParts;
+    model.meshParts.resize(data.meshes_count);
     for (cgltf_size m = 0; m < data.meshes_count; ++m) {
         const cgltf_mesh& src = data.meshes[m];
-        ImportedMesh mesh;
-        mesh.name = nameOr(src.name, std::format("Mesh {}", m));
-        bool hasTangents = true;
+        const std::string baseName = nameOr(src.name, std::format("Mesh {}", m));
+        std::vector<int> materials;  // in order of first appearance; -1 = no material
         for (cgltf_size p = 0; p < src.primitives_count; ++p) {
-            const cgltf_primitive& prim = src.primitives[p];
-            if (appendPrimitive(prim, mesh.data, model.warnings, mesh.name, hasTangents) && mesh.material < 0 &&
-                prim.material != nullptr) {
-                mesh.material = static_cast<int>(cgltf_material_index(&data, prim.material));
+            const int material = src.primitives[p].material != nullptr
+                                     ? static_cast<int>(cgltf_material_index(&data, src.primitives[p].material))
+                                     : -1;
+            if (std::ranges::find(materials, material) == materials.end()) materials.push_back(material);
+        }
+        if (materials.empty()) materials.push_back(-1);
+        for (std::size_t g = 0; g < materials.size(); ++g) {
+            ImportedMesh mesh;
+            mesh.name = g == 0 ? baseName : std::format("{} ({})", baseName, g);
+            mesh.material = materials[g];
+            bool hasTangents = true;
+            for (cgltf_size p = 0; p < src.primitives_count; ++p) {
+                const cgltf_primitive& prim = src.primitives[p];
+                const int material = prim.material != nullptr ? static_cast<int>(cgltf_material_index(&data, prim.material)) : -1;
+                if (material == materials[g]) appendPrimitive(prim, mesh.data, model.warnings, mesh.name, hasTangents);
+            }
+            if (!hasTangents) generateTangents(mesh.data);
+            mesh.data.bounds = computeBounds(mesh.data.vertices);
+            if (g == 0) {
+                model.meshParts[m].push_back(static_cast<int>(model.meshes.size()));
+                model.meshes.push_back(std::move(mesh));
+            } else {
+                model.meshParts[m].push_back(-1 - static_cast<int>(extraParts.size()));  // resolved below
+                extraParts.push_back(std::move(mesh));
             }
         }
-        if (src.primitives_count > 1) {
-            model.warnings.push_back(std::format("mesh '{}': {} primitives merged (first material used)", mesh.name,
-                                                 src.primitives_count));
-        }
-        if (!hasTangents) generateTangents(mesh.data);
-        mesh.data.bounds = computeBounds(mesh.data.vertices);
-        model.meshes.push_back(std::move(mesh));
     }
+    const int glTfMeshes = static_cast<int>(model.meshes.size());
+    for (auto& parts : model.meshParts) {
+        for (int& part : parts) {
+            if (part < 0) part = glTfMeshes + (-1 - part);
+        }
+    }
+    for (ImportedMesh& mesh : extraParts) model.meshes.push_back(std::move(mesh));
 
     // Nodes of the default scene (or all root nodes), depth first so parents precede children.
     std::vector<const cgltf_node*> roots;

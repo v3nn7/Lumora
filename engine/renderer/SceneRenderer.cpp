@@ -123,8 +123,9 @@ bool appendSkinPalette(const Scene& scene, entt::entity entity, const MeshRender
         return false;
     }
     const ImportedSkin& skin = model->skins[static_cast<std::size_t>(skinComponent->skin)];
-    // The model root: the first ancestor that does not mirror a model node.
-    entt::entity root = entity;
+    // The model root: the first ancestor that does not mirror a model node (the mesh entity is a
+    // node itself, or a material part under one).
+    entt::entity root = scene.parentOf(entity);
     while (root != entt::null && reg.all_of<ModelNodeComponent>(root)) root = scene.parentOf(root);
     std::vector<entt::entity> nodes(model->nodes.size(), entt::entity{entt::null});
     auto collect = [&](auto& self, entt::entity e) -> void {

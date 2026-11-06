@@ -299,3 +299,45 @@ TEST(GltfAnimation, AnimatorDrivesTheModelsEntities) {
     EXPECT_NEAR(scene.registry().get<TransformComponent>(arm).position.y, 3.0f, 1e-4f) << "stops on the last pose";
     EXPECT_FALSE(sim.animation()->isPlaying(root));
 }
+
+TEST(GltfMaterials, SplitsAMeshPerMaterial) {
+    // One glTF mesh, two primitives with different materials (a red and a blue triangle).
+    test::TempDir dir;
+    std::vector<unsigned char> bin;
+    const float positions[6][3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {2, 0, 0}, {3, 0, 0}, {2, 1, 0}};
+    const auto* p = reinterpret_cast<const unsigned char*>(positions);
+    bin.insert(bin.end(), p, p + sizeof positions);
+    const std::string json = std::format(R"({{
+  "asset": {{"version": "2.0"}}, "scene": 0, "scenes": [{{"nodes": [0]}}],
+  "nodes": [{{"name": "Sign", "mesh": 0}}],
+  "meshes": [{{"name": "Sign", "primitives": [{{"attributes": {{"POSITION": 0}}, "material": 0}},
+                                              {{"attributes": {{"POSITION": 1}}, "material": 1}}]}}],
+  "materials": [{{"name": "Red", "pbrMetallicRoughness": {{"baseColorFactor": [1, 0, 0, 1]}}}},
+                {{"name": "Blue", "pbrMetallicRoughness": {{"baseColorFactor": [0, 0, 1, 1]}}}}],
+  "buffers": [{{"byteLength": {}, "uri": "data:application/octet-stream;base64,{}"}}],
+  "bufferViews": [{{"buffer": 0, "byteOffset": 0, "byteLength": 36}}, {{"buffer": 0, "byteOffset": 36, "byteLength": 36}}],
+  "accessors": [{{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0]}},
+                {{"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3", "min": [2,0,0], "max": [3,1,0]}}]
+}})", bin.size(), test::base64(bin));
+    std::ofstream(dir.path() / "sign.gltf") << json;
+    auto model = importGltf(dir.path() / "sign.gltf");
+    ASSERT_TRUE(model.has_value()) << model.error().message;
+    ASSERT_EQ(model->meshes.size(), 2u) << "one part per material";
+    ASSERT_EQ(model->meshParts.size(), 1u);
+    EXPECT_EQ(model->meshParts[0], (std::vector<int>{0, 1}));
+    EXPECT_EQ(model->meshes[0].material, 0);
+    EXPECT_EQ(model->meshes[1].material, 1);
+    EXPECT_EQ(model->meshes[0].data.vertices.size(), 3u);
+    EXPECT_FLOAT_EQ(model->meshes[1].data.bounds.min.x, 2.0f);
+
+    Scene scene("Materials");
+    const entt::entity root = instantiateModel(scene, *model, "sign.gltf", "Sign");
+    const entt::entity node = scene.childrenOf(root).at(0);
+    const auto& first = scene.registry().get<MeshRendererComponent>(node);
+    EXPECT_EQ(first.meshAsset, "sign.gltf#0");
+    EXPECT_EQ(first.baseColor, glm::vec3(1, 0, 0));
+    ASSERT_EQ(scene.childrenOf(node).size(), 1u) << "the second material is a child part";
+    const auto& second = scene.registry().get<MeshRendererComponent>(scene.childrenOf(node)[0]);
+    EXPECT_EQ(second.meshAsset, "sign.gltf#1");
+    EXPECT_EQ(second.baseColor, glm::vec3(0, 0, 1));
+}

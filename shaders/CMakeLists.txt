@@ -8,6 +8,7 @@ lumora_add_shader(LUMORA_SHADER_FILES SOURCE grid.hlsl     STAGE vert ENTRY VSMa
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE grid.hlsl     STAGE frag ENTRY PSMain OUTPUT grid.frag.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE shadow.hlsl   STAGE vert ENTRY VSMain OUTPUT shadow.vert.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE depth.hlsl    STAGE vert ENTRY VSMain OUTPUT depth.vert.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE vsm_clear.hlsl STAGE vert ENTRY VSMain OUTPUT vsm.clear.vert.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE mesh_skinned.hlsl   STAGE vert ENTRY VSMain OUTPUT mesh.skinned.vert.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE depth_skinned.hlsl  STAGE vert ENTRY VSMain OUTPUT depth.skinned.vert.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE shadow_skinned.hlsl STAGE vert ENTRY VSMain OUTPUT shadow.skinned.vert.spv)

@@ -89,6 +89,7 @@ lumora_engine_module(renderer
         renderer/SceneRenderer.cpp
         renderer/Overlay.cpp
         renderer/Sprites.cpp
+        renderer/VirtualShadowMap.cpp
     DEPS lumora_scene Vulkan::Vulkan nvrhi_vk nvrhi)
 
 # The HUD font (DejaVu Sans, Latin subset) compiled into the renderer as a byte array.

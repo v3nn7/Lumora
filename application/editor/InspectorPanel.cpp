@@ -326,6 +326,8 @@ void InspectorPanel::buildEnvironment() {
          [](EnvironmentSettings& e, const FieldValue& v) { e.fogHeightFalloff = std::get<float>(v); }},
         {"Sun Shafts", FieldKind::Float, 0, 4, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.sunShafts); },
          [](EnvironmentSettings& e, const FieldValue& v) { e.sunShafts = std::get<float>(v); }},
+        {"Virtual Shadow Maps", FieldKind::Bool, 0, 1, 1, [](const EnvironmentSettings& e) { return FieldValue(e.virtualShadowMaps); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.virtualShadowMaps = std::get<bool>(v); }},
     };
     const EnvField post[] = {
         {"Exposure", FieldKind::Float, 0.01f, 16, 0.05f, [](const EnvironmentSettings& e) { return FieldValue(e.exposure); },

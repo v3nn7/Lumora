@@ -33,7 +33,7 @@ struct FrameData {
     float4 gridParams;          // x enabled, y cell size, z fade distance
     uint4 counts;               // x light count, y shadowed sun index (0xFFFFFFFF = none), z material sampler
     column_major float4x4 cascadeViewProjection[SHADOW_CASCADES];  // 2x2 tiles of the shadow atlas
-    float4 shadowParams;        // x enabled, y comparison sampler, z 1/atlas size, w atlas size (texels)
+    float4 shadowParams;        // x 1 cascades / 2 virtual, y comparison sampler, z 1/atlas size, w atlas size (texels)
     float4 cascadeTexelWorld;   // world size of one shadow texel per cascade (m)
     float4 shadowFade;          // x distance where shadows start fading out, y where they are gone
     float4 fogParams;           // x density, y height falloff, z max opacity
@@ -46,6 +46,9 @@ struct FrameData {
     float4 grading;             // x contrast, y saturation, z temperature, w tint
     float4 depthOfField;        // x focus distance, y focus range, z max blur (px), w near plane
     float4 sunShafts;           // xy sun on screen (uv), z intensity, w visibility
+    column_major float4x4 vsmLightView;  // virtual shadow map: world -> light space (m)
+    float4 vsmParams;           // x levels, y half size of level 0 (m), z level reach, w pages per level
+    float4 vsmDepth;            // x depth min, y depth scale, z page texels, w pool pages per side
     GpuLight lights[MAX_LIGHTS];  // directional lights
 };
 

@@ -222,6 +222,55 @@ uint selectCascade(float3 worldPosition, out float edge) {
     return SHADOW_CASCADES;
 }
 
+// ---- Sun shadows: virtual shadow map ------------------------------------------------------
+// A clipmap of levels (each twice the size of the last) split into pages; the page table holds,
+// per page slot of a level, the physical page in the pool and the absolute page it holds. A page
+// that is missing (not drawn yet) falls back to the next coarser level.
+
+/// The finest level whose reach covers a view depth.
+uint vsmFirstLevel(float3 worldPosition) {
+    float viewDepth = -mul(gFrame.view, float4(worldPosition, 1.0)).z;
+    float ratio = max(viewDepth, 1e-3) / (gFrame.vsmParams.y * gFrame.vsmParams.z);
+    return (uint)clamp(ceil(log2(max(ratio, 1.0))), 0.0, gFrame.vsmParams.x - 1.0);
+}
+
+float vsmShadow(float3 worldPosition, float3 normal, float3 toLight) {
+    uint levels = (uint)gFrame.vsmParams.x;
+    float pages = gFrame.vsmParams.w;
+    float texels = gFrame.vsmDepth.z;
+    float pool = gFrame.vsmDepth.w;
+    uint pageTable = asuint(gPush.param1);
+    uint smp = (uint)gFrame.shadowParams.y;
+    float inv = gFrame.shadowParams.z;
+    float ndotl = saturate(dot(normal, toLight));
+    [loop] for (uint l = vsmFirstLevel(worldPosition); l < levels; ++l) {
+        float pageWorld = 2.0 * gFrame.vsmParams.y * exp2((float)l) / pages;
+        float texelWorld = pageWorld / texels;
+        float3 p = worldPosition + normal * texelWorld * (1.0 + 2.0 * (1.0 - ndotl));
+        float3 ls = mul(gFrame.vsmLightView, float4(p, 1.0)).xyz;
+        float2 pageCoords = ls.xy / pageWorld;
+        float2 page = floor(pageCoords);
+        int2 slot = int2(page - floor(page / pages) * pages);  // positive modulo
+        float4 entry = gTextures[pageTable].Load(int3(slot.x, slot.y + (int)(l * (uint)pages), 0));
+        if (entry.w < 0.5 || entry.y != page.x || entry.z != page.y) {
+            continue;  // not resident (yet): a coarser level
+        }
+        // Stay inside the page: its neighbours in the pool hold other places.
+        float2 inPage = clamp(pageCoords - page, 1.5 / texels, 1.0 - 1.5 / texels);
+        float2 physical = float2(fmod(entry.x, pool), floor(entry.x / pool));
+        float2 uv = (physical + inPage) / pool;
+        float depth = (ls.z - gFrame.vsmDepth.x) * gFrame.vsmDepth.y - texelWorld * 1.5 * gFrame.vsmDepth.y;
+        float sum = 0.0;
+        [unroll] for (int j = 0; j < 2; ++j) {
+            [unroll] for (int i = 0; i < 2; ++i) {
+                sum += gTextures[gPush.index1].SampleCmpLevelZero(gShadowSamplers[smp], uv + (float2(i, j) - 0.5) * inv, depth);
+            }
+        }
+        return sum * 0.25;
+    }
+    return 1.0;
+}
+
 float sunShadow(float3 worldPosition, float3 normal, float3 toLight, float3 dpdx, float3 dpdy) {
     if ((gPush.flags & 1u) == 0u || gFrame.shadowParams.x < 0.5) {
         return 1.0;
@@ -230,6 +279,9 @@ float sunShadow(float3 worldPosition, float3 normal, float3 toLight, float3 dpdx
     float fade = saturate((distance - gFrame.shadowFade.x) / max(gFrame.shadowFade.y - gFrame.shadowFade.x, 1e-3));
     if (fade >= 1.0) {
         return 1.0;
+    }
+    if (gFrame.shadowParams.x > 1.5) {
+        return lerp(vsmShadow(worldPosition, normal, toLight), 1.0, fade);
     }
     float edge;
     uint first = selectCascade(worldPosition, edge);
@@ -344,7 +396,7 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
         static const float3 kCascadeTint[SHADOW_CASCADES] = {float3(1.0, 0.25, 0.25), float3(0.25, 1.0, 0.25),
                                                              float3(0.3, 0.45, 1.0), float3(1.0, 1.0, 0.25)};
         float edge;
-        uint cascade = selectCascade(s.position, edge);
+        uint cascade = gFrame.shadowParams.x > 1.5 ? vsmFirstLevel(s.position) % SHADOW_CASCADES : selectCascade(s.position, edge);
         if (cascade < SHADOW_CASCADES) {
             color *= kCascadeTint[cascade] * (edge > 0.8 ? 0.6 : 1.0);
         }

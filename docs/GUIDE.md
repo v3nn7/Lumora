@@ -241,7 +241,7 @@ Select nothing to edit the **scene environment** in the Inspector:
 | Group | Settings |
 |---|---|
 | Sky and Ambient | Sky zenith and horizon colours, ground colour, ambient intensity |
-| Atmosphere | Height fog density and falloff |
+| Atmosphere | Height fog density and falloff, sun shafts, and **Virtual Shadow Maps** (on by default): the sun's shadows come from a clipmap of pages kept between frames, millimetre-sharp up close; only pages under the view are stored, and only those a moving object touches are redrawn. Off uses the classic four cascades |
 | Post Processing | Exposure, bloom, vignette |
 
 ### Environment maps (HDR sky)

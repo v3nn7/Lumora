@@ -13,6 +13,7 @@
 
 #include <glm/geometric.hpp>
 #include <glm/gtc/constants.hpp>
+#include <glm/gtc/matrix_access.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/matrix.hpp>
 
@@ -243,6 +244,14 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     shadow.vertexShader = "shadow.skinned.vert";
     shadow.input = VertexInput::MeshSkinnedPosition;
     shadowSkinned_ = make(shadow);
+    PipelineDesc clear;
+    clear.name = "VirtualShadowClear";
+    clear.vertexShader = "vsm.clear.vert";
+    clear.depthTest = true;
+    clear.depthWrite = true;
+    clear.depthFunc = nvrhi::ComparisonFunc::Always;
+    clear.depthFormat = depth;
+    vsmClear_ = make(clear);
 
     PipelineDesc prepass;
     prepass.name = "DepthPrepass";
@@ -317,6 +326,8 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
 SceneRenderer::~SceneRenderer() {
     if (hudAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(hudAtlasIndex_);
     if (spriteAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(spriteAtlasIndex_);
+    if (vsmPoolIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(vsmPoolIndex_);
+    if (vsmPageTableIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(vsmPageTableIndex_);
 }
 
 nvrhi::IGraphicsPipeline* SceneRenderer::outputPipeline(std::unordered_map<int, nvrhi::GraphicsPipelineHandle>& cache,
@@ -420,6 +431,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         }
     }
     const bool shadows = settings.shadows && haveSun && settings.shadowResolution > 0 && settings.shadowDistance > 0.0f;
+    const bool virtualShadows = shadows && settings.virtualShadows && env.virtualShadowMaps;
     // Sun shafts: where the sun is on screen, fading out as it leaves the view.
     if (haveSun && env.sunShafts > 0.0f) {
         const glm::vec4 clip = fc.viewProjection * glm::vec4(camera.position - sunTravel * 1000.0f, 1.0f);
@@ -490,7 +502,13 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         std::min(settings.shadowResolution, ctx_.caps().maxImageDimension2D / 2);
     const std::uint32_t atlasSize = tile * 2;
     std::array<glm::mat4, kShadowCascades> cascadeMatrices{};
-    if (shadows) {
+    if (virtualShadows) {
+        constexpr float pool = static_cast<float>(VirtualShadowMap::poolSize());
+        fc.shadowParams = glm::vec4(2.0f, static_cast<float>(ctx_.shadowCompareSampler()), 1.0f / pool, pool);
+        fc.shadowFade = glm::vec4(settings.shadowDistance * 0.85f, settings.shadowDistance, 0.0f, 0.0f);
+        stats.shadowsRendered = true;
+        stats.virtualShadows = true;
+    } else if (shadows) {
         const auto splits = cascadeSplits(camera.nearPlane, settings.shadowDistance, settings.cascadeSplitLambda);
         for (std::uint32_t c = 0; c < kShadowCascades; ++c) {
             const ShadowFit fit = fitSunShadow(camera, sunTravel, splits[c], tile);
@@ -503,9 +521,6 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         fc.shadowFade = glm::vec4(settings.shadowDistance * 0.85f, settings.shadowDistance, 0.0f, 0.0f);
         stats.shadowsRendered = true;
     }
-    frame.constants.write(gpu, std::as_bytes(std::span(&fc, 1)), DynamicBuffer::Kind::Constant, sizeof(FrameConstants),
-                          "FrameConstants");
-
     // ---- Objects + culling -----------------------------------------------------------------
     struct Draw {
         const GpuMesh* mesh;
@@ -513,6 +528,8 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         glm::vec3 center;  // world AABB
         glm::vec3 extent;
         std::uint32_t count = 1;  // instances: objects object .. object + count - 1
+        std::uint64_t key = 0;    // the entity (virtual shadow map caster tracking)
+        std::uint64_t state = 0;  // changes when its shadow can change
     };
     // Copies of one mesh in consecutive objects become one instanced draw.
     auto instanced = [](const std::vector<Draw>& list) {
@@ -680,7 +697,14 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             drawn = &drawn->level(level);
             if (level > 0 && p.visible) ++stats.lodObjects;
         }
-        const Draw draw{drawn, static_cast<std::uint32_t>(objects.size()), p.center, p.extent};
+        std::uint64_t state = std::hash<const void*>{}(drawn);
+        for (int col = 0; col < 4; ++col) {
+            for (int row = 0; row < 4; ++row) {
+                state = state * 1099511628211ull ^ std::bit_cast<std::uint32_t>(obj.world[col][row]);
+            }
+        }
+        const Draw draw{drawn, static_cast<std::uint32_t>(objects.size()), p.center, p.extent, 1,
+                        static_cast<std::uint64_t>(entt::to_integral(candidates[i].entity)), state};
         if (p.visible) draws.push_back(draw);
         if (anyShadows) casters.push_back(draw);
         objects.push_back(obj);
@@ -737,6 +761,26 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     draws = instanced(draws);
     stats.drawCalls = static_cast<std::uint32_t>(draws.size()) * 2 + 2 + (settings.showGrid ? 1u : 0u);  // prepass + shading
 
+    // ---- Virtual shadow map: pages the view needs, what changed, the page table --------------
+    VsmFrame vsmFrame;
+    if (virtualShadows) {
+        std::vector<VsmCaster> vsmCasters;
+        vsmCasters.reserve(casters.size());
+        for (const Draw& d : casters) vsmCasters.push_back({d.key, d.center, d.extent, d.state, d.mesh->skinned()});
+        const std::uint32_t budget = settings.blockOnAssets ? 0u : settings.virtualShadowPageBudget;
+        vsmFrame = vsm_.update(camera, sunTravel, settings.shadowDistance, vsmCasters, budget);
+        fc.vsmLightView = vsmFrame.lightView;
+        fc.vsmParams = glm::vec4(static_cast<float>(vsmFrame.levels), vsmFrame.firstHalf, vsmFrame.levelReach,
+                                 static_cast<float>(VirtualShadowMap::kPagesPerLevel));
+        fc.vsmDepth = glm::vec4(vsmFrame.depthMin, vsmFrame.depthScale, static_cast<float>(VirtualShadowMap::kPageTexels),
+                                static_cast<float>(VirtualShadowMap::kPoolPages));
+        stats.virtualPagesRequested = vsmFrame.requested;
+        stats.virtualPagesCached = vsmFrame.cached;
+        stats.virtualPagesRendered = static_cast<std::uint32_t>(vsmFrame.render.size());
+    }
+    frame.constants.write(gpu, std::as_bytes(std::span(&fc, 1)), DynamicBuffer::Kind::Constant, sizeof(FrameConstants),
+                          "FrameConstants");
+
     // ---- Render graph ----------------------------------------------------------------------
     const RGImage hdr = graph.createImage("SceneColorHDR", {ctx_.hdrFormat(), extent.width, extent.height});
     const RGImage depth = graph.createImage("SceneDepth", {ctx_.depthFormat(), extent.width, extent.height});
@@ -753,7 +797,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     };
 
     RGImage shadowMap{};
-    if (shadows) {
+    if (shadows && !virtualShadows) {
         // Per-cascade caster culling against the cascade's side planes. Casters between the sun
         // and the cascade are kept: the light-facing plane never culls. One cascade per thread.
         std::array<std::vector<Draw>, kShadowCascades> cascadeCasters;
@@ -805,6 +849,117 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     }
                 });
             });
+    }
+
+    RGImage vsmPool{};
+    RGImage vsmPageTable{};
+    if (virtualShadows) {
+        if (!vsmPool_) {
+            nvrhi::TextureDesc desc;
+            desc.width = desc.height = VirtualShadowMap::poolSize();
+            desc.format = ctx_.depthFormat();
+            desc.debugName = "VirtualShadowPool";
+            desc.isRenderTarget = true;
+            desc.setClearValue(nvrhi::Color(1.0f));
+            desc.initialState = nvrhi::ResourceStates::ShaderResource;
+            desc.keepInitialState = true;
+            vsmPool_ = gpu->createTexture(desc);
+            nvrhi::TextureDesc table;
+            table.width = VirtualShadowMap::kPagesPerLevel;
+            table.height = VirtualShadowMap::kPagesPerLevel * VirtualShadowMap::kMaxLevels;
+            table.format = nvrhi::Format::RGBA32_FLOAT;
+            table.debugName = "VirtualShadowPageTable";
+            table.initialState = nvrhi::ResourceStates::ShaderResource;
+            table.keepInitialState = true;
+            vsmPageTable_ = gpu->createTexture(table);
+            if (!vsmPool_ || !vsmPageTable_) throw rhi::VulkanError("could not create the virtual shadow map", VK_ERROR_OUT_OF_DEVICE_MEMORY);
+            vsmPoolIndex_ = ctx_.bindless().registerTexture(vsmPool_);
+            vsmPageTableIndex_ = ctx_.bindless().registerTexture(vsmPageTable_);
+            // Created once, before any page was drawn: this frame's pages are the first in it.
+        }
+        vsmPool = graph.importImage("VirtualShadowPool", {vsmPool_, vsmPoolIndex_});
+        vsmPageTable = graph.importImage("VirtualShadowPageTable", {vsmPageTable_, vsmPageTableIndex_});
+        // The page table, padded to every level the texture has room for.
+        std::vector<float> table(static_cast<std::size_t>(VirtualShadowMap::kPagesPerLevel * VirtualShadowMap::kPagesPerLevel *
+                                                          VirtualShadowMap::kMaxLevels) * 4, 0.0f);
+        std::copy(vsmFrame.pageTable.begin(), vsmFrame.pageTable.end(), table.begin());
+        graph.addPass(
+            "VirtualShadowPageTable", [&](PassBuilder& b) { b.copyTo(vsmPageTable); },
+            [texture = vsmPageTable_, table = std::move(table)](PassContext& ctx) {
+                ctx.cmd->writeTexture(texture, 0, 0, table.data(), VirtualShadowMap::kPagesPerLevel * 4 * sizeof(float));
+            });
+        if (!vsmFrame.render.empty()) {
+            // Casters per page, by their light-space rectangle.
+            struct LightRect {
+                glm::vec2 min, max;
+            };
+            const glm::vec3 right(glm::row(vsmFrame.lightView, 0));
+            const glm::vec3 up(glm::row(vsmFrame.lightView, 1));
+            std::vector<LightRect> rects(casters.size());
+            for (std::size_t i = 0; i < casters.size(); ++i) {
+                const glm::vec2 c(glm::dot(right, casters[i].center), glm::dot(up, casters[i].center));
+                const glm::vec2 e(glm::dot(glm::abs(right), casters[i].extent), glm::dot(glm::abs(up), casters[i].extent));
+                rects[i] = {c - e, c + e};
+            }
+            std::vector<std::vector<Draw>> pageCasters(vsmFrame.render.size());
+            JobSystem::global().parallelFor(vsmFrame.render.size(), 16, [&](std::size_t begin, std::size_t end) {
+                for (std::size_t p = begin; p < end; ++p) {
+                    const VsmPageDraw& page = vsmFrame.render[p];
+                    for (std::size_t i = 0; i < casters.size(); ++i) {
+                        const LightRect& r = rects[i];
+                        if (r.max.x < page.rectMin.x || r.min.x > page.rectMax.x || r.max.y < page.rectMin.y || r.min.y > page.rectMax.y) {
+                            continue;
+                        }
+                        pageCasters[p].push_back(casters[i]);
+                    }
+                    pageCasters[p] = instanced(pageCasters[p]);
+                }
+            });
+            std::size_t pageDraws = 0;
+            for (const auto& list : pageCasters) pageDraws += list.size() + 1;
+            stats.drawCalls += static_cast<std::uint32_t>(pageDraws);
+            const bool parallelPages = pageDraws >= settings.parallelRecordingMinDraws;
+            stats.parallelRecording = stats.parallelRecording || parallelPages;
+            graph.addRasterPass(
+                "VirtualShadowPages",
+                [&](PassBuilder& b) {
+                    b.writeDepth(vsmPool, LoadOp::Load);  // cached pages stay
+                    b.recordInParallel(parallelPages);
+                },
+                [this, stateFor, pages = vsmFrame.render, pageCasters = std::move(pageCasters)](PassContext& ctx) {
+                    ctx.recordParallel(pages.size(), 8, [&](nvrhi::ICommandList* cmd, std::size_t begin, std::size_t end) {
+                        constexpr float texels = static_cast<float>(VirtualShadowMap::kPageTexels);
+                        for (std::size_t p = begin; p < end; ++p) {
+                            const VsmPageDraw& page = pages[p];
+                            const float x = static_cast<float>(page.physical % VirtualShadowMap::kPoolPages) * texels;
+                            const float y = static_cast<float>(page.physical / VirtualShadowMap::kPoolPages) * texels;
+                            nvrhi::GraphicsState state = stateFor(vsmClear_, ctx);
+                            state.viewport = nvrhi::ViewportState().addViewportAndScissorRect(
+                                nvrhi::Viewport(x, x + texels, y, y + texels, 0.0f, 1.0f));
+                            cmd->setGraphicsState(state);
+                            push(cmd, PushConstants{});
+                            cmd->draw(nvrhi::DrawArguments().setVertexCount(3));
+                            const GpuMesh* mesh = nullptr;
+                            for (const Draw& d : pageCasters[p]) {
+                                if (d.mesh != mesh) {
+                                    mesh = d.mesh;
+                                    state.pipeline = mesh->skinned() ? shadowSkinned_ : shadow_;
+                                    bindMesh(state, *mesh);
+                                    cmd->setGraphicsState(state);
+                                }
+                                PushConstants pc;
+                                pc.index0 = d.object;
+                                pc.flags = 2u;  // a virtual shadow map page
+                                pc.param0 = page.center.x;
+                                pc.param1 = page.center.y;
+                                pc.param2 = page.invHalf;
+                                push(cmd, pc);
+                                cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount).setInstanceCount(d.count));
+                            }
+                        }
+                    });
+                });
+        }
     }
 
     RGImage localAtlas{};
@@ -931,16 +1086,21 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         [&](PassBuilder& b) {
             b.writeColor(hdr, LoadOp::Load);
             b.readDepth(depth);  // from the prepass; the opaque pass only tests against it
-            if (shadows) b.sample(shadowMap);
+            if (shadows && !virtualShadows) b.sample(shadowMap);
+            if (virtualShadows) {
+                b.sample(vsmPool);
+                b.sample(vsmPageTable);
+            }
             if (localShadows) b.sample(localAtlas);
             if (ambientOcclusion) b.sample(ao);
             b.recordInParallel(parallelOpaque);
         },
-        [this, stateFor, shadows, shadowMap, localShadows, localAtlas, ambientOcclusion, ao,
+        [this, stateFor, shadows, shadowMap, virtualShadows, vsmPool, vsmPageTable, localShadows, localAtlas, ambientOcclusion, ao,
          debugCascades = settings.debugCascades,
          draws = std::move(draws)](PassContext& ctx) {
             if (draws.empty()) return;
-            const std::uint32_t shadowIndex = shadows ? ctx.bindlessIndex(shadowMap) : 0u;
+            const std::uint32_t shadowIndex = virtualShadows ? ctx.bindlessIndex(vsmPool) : shadows ? ctx.bindlessIndex(shadowMap) : 0u;
+            const float pageTableIndex = std::bit_cast<float>(virtualShadows ? ctx.bindlessIndex(vsmPageTable) : 0u);
             const std::uint32_t aoIndex = ambientOcclusion ? ctx.bindlessIndex(ao) : 0u;
             const float localAtlasIndex = std::bit_cast<float>(localShadows ? ctx.bindlessIndex(localAtlas) : 0u);
             const std::uint32_t flags =
@@ -963,6 +1123,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     pc.index2 = aoIndex;
                     pc.flags = flags;
                     pc.param0 = localAtlasIndex;
+                    pc.param1 = pageTableIndex;
                     push(cmd, pc);
                     cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount).setInstanceCount(d.count));
                 }

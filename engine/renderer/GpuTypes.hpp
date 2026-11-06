@@ -41,7 +41,7 @@ struct FrameConstants {
     glm::vec4 gridParams{0.0f};
     glm::uvec4 counts{0u};                  // x light count, y shadowed sun (or ~0u), z material sampler
     glm::mat4 cascadeViewProjection[kShadowCascades]{};  // world -> cascade clip (orthographic)
-    glm::vec4 shadowParams{0.0f};           // x enabled, y comparison sampler, z 1/atlas size, w atlas size (texels)
+    glm::vec4 shadowParams{0.0f};           // x 1 cascades / 2 virtual, y comparison sampler, z 1/atlas size, w atlas size (texels)
     glm::vec4 cascadeTexelWorld{0.0f};      // world size of one shadow texel in each cascade (m)
     glm::vec4 shadowFade{0.0f};             // x distance where shadows start to fade, y where they end
     glm::vec4 fogParams{0.0f};              // x density, y height falloff, z max opacity
@@ -54,6 +54,9 @@ struct FrameConstants {
     glm::vec4 grading{1.0f, 1.0f, 0.0f, 0.0f};  // x contrast, y saturation, z temperature, w tint
     glm::vec4 depthOfField{0.0f};           // x focus distance, y focus range, z max blur (px), w near plane
     glm::vec4 sunShafts{0.0f};              // xy sun on screen (uv), z intensity, w visibility
+    glm::mat4 vsmLightView{1.0f};           // virtual shadow map: world -> light space (m)
+    glm::vec4 vsmParams{0.0f};              // x levels, y half size of level 0 (m), z level reach, w pages per level
+    glm::vec4 vsmDepth{0.0f};               // x depth min, y depth scale, z page texels, w pool pages per side
     GpuLight lights[kMaxLights]{};
 };
 
@@ -97,8 +100,9 @@ static_assert(offsetof(FrameConstants, cascadeTexelWorld) == 672);
 static_assert(offsetof(FrameConstants, shadowFade) == 688);
 static_assert(offsetof(FrameConstants, fogParams) == 704);
 static_assert(offsetof(FrameConstants, localShadowMatrices) == 912);
-static_assert(offsetof(FrameConstants, lights) == 912 + 64 * kLocalShadowTiles + 64);
-static_assert(sizeof(FrameConstants) == 912 + 64 * kLocalShadowTiles + 64 + 64 * kMaxLights);
+static_assert(offsetof(FrameConstants, vsmLightView) == 912 + 64 * kLocalShadowTiles + 64);
+static_assert(offsetof(FrameConstants, lights) == 912 + 64 * kLocalShadowTiles + 64 + 96);
+static_assert(sizeof(FrameConstants) == 912 + 64 * kLocalShadowTiles + 64 + 96 + 64 * kMaxLights);
 static_assert(sizeof(GpuObject) == 192);
 static_assert(offsetof(GpuObject, textures) == 176);
 static_assert(offsetof(GpuObject, flags) == 160);

@@ -3,6 +3,7 @@
 #include "renderer/RenderContext.hpp"
 #include "renderer/Renderer.hpp"
 #include "renderer/Sprites.hpp"
+#include "renderer/VirtualShadowMap.hpp"
 #include "scene/Scene.hpp"
 
 #include <gtest/gtest.h>
@@ -339,6 +340,111 @@ TEST_F(RendererTest, OffscreenCastersStillCastShadows) {
     EXPECT_LT(luminance(pixel(*image, shadow.x, shadow.y)), luminance(pixel(*image, lit.x, lit.y)) * 0.6f);
 }
 
+TEST_F(RendererTest, VirtualShadowMapsCastLikeCascadesAndKeepTheirPages) {
+    auto scene = shadowScene();
+    const entt::entity cube = addCube(*scene, {0.0f, 2.0f, 0.0f});
+    scene->updateWorldTransforms();
+    const glm::uvec2 size(160, 120);
+    const glm::vec3 shadowOffset(0.0f, -2.0f, -2.0f / std::tan(glm::radians(60.0f)));
+    FlyCameraController cam;
+    cam.setPosition({4.0f, 3.0f, 4.0f});
+    cam.lookAt({0.0f, 0.0f, -2.0f});
+    const CameraView view = cam.view(static_cast<float>(size.x) / static_cast<float>(size.y));
+    auto darkness = [&](const CapturedImage& image, glm::vec3 caster) {
+        const glm::ivec2 shadow = toPixel(view, caster + shadowOffset, size);
+        const glm::ivec2 lit = toPixel(view, caster + glm::vec3(2.5f, -2.0f, 0.0f), size);
+        return luminance(pixel(image, shadow.x, shadow.y)) / std::max(luminance(pixel(image, lit.x, lit.y)), 1.0f);
+    };
+
+    RenderSettings cascades;
+    cascades.virtualShadows = false;
+    auto classic = renderer_->capture(*scene, view, {size.x, size.y}, cascades);
+    ASSERT_TRUE(classic.has_value());
+    EXPECT_FALSE(renderer_->stats().scene.virtualShadows);
+
+    RenderSettings all;
+    all.virtualShadowPageBudget = 0;  // every page in one frame (the default spreads them out)
+    auto first = renderer_->capture(*scene, view, {size.x, size.y}, all);
+    ASSERT_TRUE(first.has_value());
+    const SceneDrawStats firstStats = renderer_->stats().scene;
+    EXPECT_TRUE(firstStats.virtualShadows);
+    EXPECT_GT(firstStats.virtualPagesRequested, 0u);
+    EXPECT_EQ(firstStats.virtualPagesRendered, firstStats.virtualPagesRequested);
+    EXPECT_LT(darkness(*first, {0.0f, 2.0f, 0.0f}), 0.6f) << "the cube's shadow";
+    EXPECT_NEAR(darkness(*first, {0.0f, 2.0f, 0.0f}), darkness(*classic, {0.0f, 2.0f, 0.0f}), 0.15f) << "as dark as with cascades";
+
+    // Nothing changed: every page comes from the cache.
+    auto again = renderer_->capture(*scene, view, {size.x, size.y}, {});
+    ASSERT_TRUE(again.has_value());
+    EXPECT_EQ(renderer_->stats().scene.virtualPagesRendered, 0u);
+    EXPECT_EQ(renderer_->stats().scene.virtualPagesCached, renderer_->stats().scene.virtualPagesRequested);
+    EXPECT_EQ(glm::ivec3(pixel(*again, 80, 60)), glm::ivec3(pixel(*first, 80, 60)));
+
+    // The cube moves: only the pages under it are drawn again, and the shadow follows.
+    scene->registry().get<TransformComponent>(cube).position = {1.5f, 2.0f, 0.0f};
+    scene->updateWorldTransforms();
+    auto moved = renderer_->capture(*scene, view, {size.x, size.y}, {});
+    ASSERT_TRUE(moved.has_value());
+    const SceneDrawStats movedStats = renderer_->stats().scene;
+    EXPECT_GT(movedStats.virtualPagesRendered, 0u);
+    EXPECT_LT(movedStats.virtualPagesRendered, movedStats.virtualPagesRequested) << "the rest stay cached";
+    EXPECT_LT(darkness(*moved, {1.5f, 2.0f, 0.0f}), 0.6f);
+    const glm::ivec2 oldShadow = toPixel(view, glm::vec3(0.0f, 2.0f, 0.0f) + shadowOffset, size);
+    const glm::ivec2 newLit = toPixel(view, glm::vec3(0.0f, 2.0f, 0.0f) + glm::vec3(-2.5f, -2.0f, 0.0f), size);
+    EXPECT_GT(luminance(pixel(*moved, oldShadow.x, oldShadow.y)), 0.75f * luminance(pixel(*moved, newLit.x, newLit.y)))
+        << "where the shadow was is lit again";
+}
+
+TEST(VirtualShadowMap, RequestsCachesInvalidatesAndFallsBack) {
+    VirtualShadowMap vsm;
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 2.0f, 0.0f});
+    cam.setRotation(0.0f, -20.0f);
+    const CameraView view = cam.view(16.0f / 9.0f);
+    const glm::vec3 sun = glm::normalize(glm::vec3(0.3f, -1.0f, -0.4f));
+    std::vector<VsmCaster> casters{{1, {0.0f, 1.0f, -5.0f}, glm::vec3(0.5f), 7, false},
+                                   {2, {30.0f, 1.0f, -40.0f}, glm::vec3(0.5f), 9, false}};
+
+    VsmFrame f = vsm.update(view, sun, 50.0f, casters, 0);
+    EXPECT_TRUE(f.invalidatedAll);
+    EXPECT_GE(f.levels, 4);
+    EXPECT_GT(f.requested, 20u);
+    EXPECT_EQ(f.render.size(), f.requested) << "everything is drawn the first time";
+    EXPECT_LT(f.requested, static_cast<std::uint32_t>(VirtualShadowMap::kPoolPages * VirtualShadowMap::kPoolPages))
+        << "far fewer pages than the levels hold: only those under the view";
+    for (std::size_t i = 1; i < f.render.size(); ++i) EXPECT_GE(f.render[i - 1].level, f.render[i].level) << "coarse levels first";
+    int valid = 0;
+    for (std::size_t i = 3; i < f.pageTable.size(); i += 4) valid += f.pageTable[i] > 0.5f ? 1 : 0;
+    EXPECT_EQ(valid, static_cast<int>(f.requested));
+
+    f = vsm.update(view, sun, 50.0f, casters, 0);
+    EXPECT_FALSE(f.invalidatedAll);
+    EXPECT_TRUE(f.render.empty());
+    EXPECT_EQ(f.cached, f.requested);
+
+    // One caster moves: the pages under its old and new place, nothing else.
+    casters[0].center.x += 0.3f;
+    casters[0].state = 8;
+    f = vsm.update(view, sun, 50.0f, casters, 0);
+    EXPECT_FALSE(f.render.empty());
+    EXPECT_LT(f.render.size(), f.requested / 2);
+    // Animated casters redraw every frame.
+    casters[1].dynamic = true;
+    f = vsm.update(view, sun, 50.0f, casters, 0);
+    const std::size_t dynamicPages = f.render.size();
+    f = vsm.update(view, sun, 50.0f, casters, 0);
+    EXPECT_EQ(f.render.size(), dynamicPages);
+    casters[1].dynamic = false;
+
+    // The sun turns: every page is stale; a budget draws the coarse ones first.
+    f = vsm.update(view, glm::normalize(sun + glm::vec3(0.1f, 0.0f, 0.0f)), 50.0f, casters, 16);
+    EXPECT_TRUE(f.invalidatedAll);
+    ASSERT_EQ(f.render.size(), 16u);
+    EXPECT_EQ(f.render.front().level, f.levels - 1);
+    f = vsm.update(view, glm::normalize(sun + glm::vec3(0.1f, 0.0f, 0.0f)), 50.0f, casters, 0);
+    EXPECT_EQ(f.render.size() + 16u, f.requested) << "the rest follow in the next frame";
+}
+
 TEST_F(RendererTest, CascadeDebugViewShowsFinerCascadesNearTheCamera) {
     auto scene = shadowScene();
     scene->updateWorldTransforms();
@@ -349,6 +455,7 @@ TEST_F(RendererTest, CascadeDebugViewShowsFinerCascadesNearTheCamera) {
     const CameraView view = cam.view(1.0f);
     RenderSettings settings;
     settings.debugCascades = true;
+    settings.virtualShadows = false;  // the four cascades
     auto image = renderer_->capture(*scene, view, {size.x, size.y}, settings);
     ASSERT_TRUE(image.has_value());
     const glm::u8vec4 nearPixel = pixel(*image, toPixel(view, {0.0f, 0.0f, -3.0f}, size).x, toPixel(view, {0.0f, 0.0f, -3.0f}, size).y);

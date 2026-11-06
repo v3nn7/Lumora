@@ -102,6 +102,7 @@ json SceneSerializer::environmentToJson(const EnvironmentSettings& env) {
         {"focusDistance", env.focusDistance},
         {"focusRange", env.focusRange},
         {"sunShafts", env.sunShafts},
+        {"virtualShadowMaps", env.virtualShadowMaps},
         {"skyTexture", env.skyTexture},
         {"skyIntensity", env.skyIntensity},
         {"skyRotation", env.skyRotationDeg},
@@ -135,6 +136,7 @@ void SceneSerializer::applyEnvironment(EnvironmentSettings& env, const json& j) 
     number("focusDistance", env.focusDistance);
     number("focusRange", env.focusRange);
     number("sunShafts", env.sunShafts);
+    if (const auto it = j.find("virtualShadowMaps"); it != j.end() && it->is_boolean()) env.virtualShadowMaps = it->get<bool>();
     if (const auto it = j.find("skyTexture"); it != j.end() && it->is_string()) env.skyTexture = it->get<std::string>();
     number("skyIntensity", env.skyIntensity);
     number("skyRotation", env.skyRotationDeg);

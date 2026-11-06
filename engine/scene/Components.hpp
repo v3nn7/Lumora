@@ -371,6 +371,9 @@ struct EnvironmentSettings {
     float focusRange = 6.0f;        // metres around it that stay sharp
     /// Light shafts from the sun through gaps in the scene (0 = off).
     float sunShafts = 0.0f;
+    /// Sun shadows from a virtual shadow map: sharp up close, cached between frames. Off = the
+    /// classic four cascades.
+    bool virtualShadowMaps = true;
 };
 
 } // namespace lumora

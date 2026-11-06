@@ -7,6 +7,7 @@
 #include "renderer/Overlay.hpp"
 #include "renderer/RenderGraph.hpp"
 #include "renderer/Sprites.hpp"
+#include "renderer/VirtualShadowMap.hpp"
 #include "scene/Camera.hpp"
 #include "scene/Components.hpp"
 
@@ -36,6 +37,11 @@ struct RenderSettings {
     std::uint32_t shadowResolution = 2048; // per cascade; the atlas holds 2x2 cascades
     float cascadeSplitLambda = 0.8f;       // 0 = uniform cascade splits, 1 = logarithmic
     bool debugCascades = false;           // tint surfaces by the shadow cascade they sample
+    /// Sun shadows from a virtual shadow map (clipmap pages cached across frames) instead of
+    /// cascades, when the scene's environment asks for it too.
+    bool virtualShadows = true;
+    /// Virtual shadow map pages drawn per frame at most (the rest follow); 0 = all of them.
+    std::uint32_t virtualShadowPageBudget = 256;
     entt::entity selected = entt::null;
     std::vector<entt::entity> alsoSelected;  // the rest of a multi-selection (outlined too)
     const OverlayGeometry* overlay = nullptr;  // drawn on top after tone mapping (gizmos)
@@ -69,6 +75,10 @@ struct SceneDrawStats {
     std::uint32_t particles = 0;
     bool parallelRecording = false;  // a pass was set up to record on several threads
     bool shadowsRendered = false;
+    bool virtualShadows = false;              // the sun used the virtual shadow map
+    std::uint32_t virtualPagesRequested = 0;  // pages the view needed
+    std::uint32_t virtualPagesCached = 0;     // of those, kept from earlier frames
+    std::uint32_t virtualPagesRendered = 0;   // drawn this frame
     bool environmentLit = false;  // an HDR environment lit the frame
     bool ambientOcclusion = false;
 };
@@ -119,6 +129,12 @@ private:
     nvrhi::GraphicsPipelineHandle particlesAdditive_;
     nvrhi::GraphicsPipelineHandle shadow_;
     nvrhi::GraphicsPipelineHandle shadowSkinned_;
+    nvrhi::GraphicsPipelineHandle vsmClear_;
+    VirtualShadowMap vsm_;
+    nvrhi::TextureHandle vsmPool_;       // physical pages (depth), kept across frames
+    nvrhi::TextureHandle vsmPageTable_;  // RGBA32F, see VsmFrame::pageTable
+    std::uint32_t vsmPoolIndex_ = UINT32_MAX;
+    std::uint32_t vsmPageTableIndex_ = UINT32_MAX;
     nvrhi::GraphicsPipelineHandle depthPrepass_;
     nvrhi::GraphicsPipelineHandle depthPrepassSkinned_;
     nvrhi::GraphicsPipelineHandle ssao_;

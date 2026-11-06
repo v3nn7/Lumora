@@ -183,3 +183,96 @@ TEST(Character, WalksClimbsStepsStopsAtWallsAndJumps) {
     EXPECT_NEAR(reg.get<TransformComponent>(player).position.y, 0.0f, 0.05f) << "landed";
     EXPECT_TRUE(physics.characterGrounded(player));
 }
+
+namespace {
+
+bool touched(const std::vector<std::pair<entt::entity, entt::entity>>& pairs, entt::entity a, entt::entity b) {
+    for (const auto& [x, y] : pairs) {
+        if ((x == a && y == b) || (x == b && y == a)) return true;
+    }
+    return false;
+}
+
+} // namespace
+
+TEST(Physics, TriggerReportsContactsButBlocksNothing) {
+    Scene scene;
+    addGround(scene);
+    const entt::entity trigger = scene.createEntity("Trigger");
+    auto& c = scene.registry().emplace<ColliderComponent>(trigger);
+    c.size = {4.0f, 1.0f, 4.0f};
+    c.isTrigger = true;
+    scene.registry().get<TransformComponent>(trigger).position.y = 3.0f;
+    const entt::entity ball = addBall(scene, {0.0f, 6.0f, 0.0f});
+    Simulation sim(scene);
+    ASSERT_NE(sim.physics(), nullptr);
+    std::vector<std::pair<entt::entity, entt::entity>> contacts;
+    for (int i = 0; i < 240; ++i) {
+        sim.step();
+        auto step = sim.physics()->takeContacts();
+        contacts.insert(contacts.end(), step.begin(), step.end());
+    }
+    EXPECT_TRUE(touched(contacts, ball, trigger)) << "falling through the trigger is reported";
+    EXPECT_NEAR(scene.registry().get<TransformComponent>(ball).position.y, 0.5f, 0.03f)
+        << "and the ball fell through it onto the ground";
+}
+
+TEST(Character, TouchingBodiesAndTriggersIsReported) {
+    Scene scene("Character");
+    auto& reg = scene.registry();
+    const entt::entity ground = addGround(scene);
+    const entt::entity trigger = scene.createEntity("Coin");
+    auto& c = reg.emplace<ColliderComponent>(trigger);
+    c.size = {1.0f, 2.0f, 1.0f};
+    c.isTrigger = true;
+    reg.get<TransformComponent>(trigger).position = {3.0f, 1.0f, 0.0f};
+    const entt::entity player = scene.createEntity("Player");
+    reg.emplace<CharacterControllerComponent>(player);
+    scene.updateWorldTransforms();
+
+    Simulation sim(scene);
+    PhysicsWorld& physics = *sim.physics();
+    std::vector<std::pair<entt::entity, entt::entity>> contacts;
+    auto run = [&](int steps) {
+        for (int i = 0; i < steps; ++i) {
+            sim.step();
+            auto step = physics.takeContacts();
+            contacts.insert(contacts.end(), step.begin(), step.end());
+        }
+    };
+    run(30);
+    EXPECT_TRUE(touched(contacts, player, ground)) << "landing on the ground";
+    EXPECT_FALSE(touched(contacts, player, trigger));
+    physics.moveCharacter(player, {3.0f, 0.0f, 0.0f});
+    run(120);  // 2 s at 3 m/s: through the coin
+    EXPECT_TRUE(touched(contacts, player, trigger)) << "walking into the trigger";
+    EXPECT_GT(reg.get<TransformComponent>(player).position.x, 5.0f) << "it does not block the character";
+}
+
+TEST(Character, RidesAMovingPlatform) {
+    Scene scene("Platform");
+    auto& reg = scene.registry();
+    const entt::entity platform = scene.createEntity("Platform");
+    reg.emplace<ColliderComponent>(platform).size = {4.0f, 0.5f, 4.0f};
+    reg.emplace<RigidBodyComponent>(platform).motion = BodyMotion::Kinematic;
+    auto& osc = reg.emplace<OscillatorComponent>(platform);
+    osc.offset = {3.0f, 0.0f, 0.0f};
+    osc.period = 6.0f;
+    reg.get<TransformComponent>(platform).position = {0.0f, -0.25f, 0.0f};  // top at y = 0
+    const entt::entity player = scene.createEntity("Player");
+    reg.emplace<CharacterControllerComponent>(player);
+    reg.get<TransformComponent>(player).position = {0.0f, 0.05f, 0.0f};
+    scene.updateWorldTransforms();
+
+    Simulation sim(scene);
+    ASSERT_NE(sim.physics(), nullptr);
+    for (int i = 0; i < 10; ++i) sim.step();  // landed
+    ASSERT_TRUE(sim.physics()->characterGrounded(player));
+    const float startOffset = reg.get<TransformComponent>(player).position.x - reg.get<TransformComponent>(platform).position.x;
+    for (int i = 0; i < 80; ++i) sim.step();  // to a quarter period: the platform moved 3 m
+    EXPECT_NEAR(reg.get<TransformComponent>(platform).position.x, 3.0f, 0.01f);
+    const glm::vec3 p = reg.get<TransformComponent>(player).position;
+    EXPECT_NEAR(p.x - 3.0f, startOffset, 0.05f) << "carried along (it would have fallen off otherwise)";
+    EXPECT_NEAR(p.y, 0.0f, 0.1f) << "still standing on top";
+    EXPECT_TRUE(sim.physics()->characterGrounded(player));
+}

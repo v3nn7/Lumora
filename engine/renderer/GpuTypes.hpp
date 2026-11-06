@@ -21,6 +21,7 @@ struct GpuLight {
     glm::vec4 positionRange{0.0f};
     glm::vec4 colorIntensity{0.0f};
     glm::vec4 directionType{0.0f};
+    glm::vec4 spot{-1.0f, -1.0f, 0.0f, 0.0f};  // x cos(outer angle), y cos(inner angle)
 };
 
 struct FrameConstants {
@@ -72,7 +73,7 @@ struct PushConstants {
 };
 
 // Offsets verified against the SPIR-V produced from common.hlsli.
-static_assert(sizeof(GpuLight) == 48);
+static_assert(sizeof(GpuLight) == 64);
 static_assert(offsetof(FrameConstants, cameraPositionTime) == 256);
 static_assert(offsetof(FrameConstants, counts) == 384);
 static_assert(offsetof(FrameConstants, cascadeViewProjection) == 400);
@@ -81,7 +82,7 @@ static_assert(offsetof(FrameConstants, cascadeTexelWorld) == 672);
 static_assert(offsetof(FrameConstants, shadowFade) == 688);
 static_assert(offsetof(FrameConstants, fogParams) == 704);
 static_assert(offsetof(FrameConstants, lights) == 912);
-static_assert(sizeof(FrameConstants) == 912 + 48 * kMaxLights);
+static_assert(sizeof(FrameConstants) == 912 + 64 * kMaxLights);
 static_assert(sizeof(GpuObject) == 192);
 static_assert(offsetof(GpuObject, textures) == 176);
 static_assert(offsetof(GpuObject, flags) == 160);

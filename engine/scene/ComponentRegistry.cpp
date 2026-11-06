@@ -71,10 +71,12 @@ ComponentRegistry makeBuiltin() {
     {
         auto d = R::describe<LightComponent>("Light", "Light");
         d.fields = {
-            enumerated(R::field(&LightComponent::type, "type", "Type", FieldKind::Enum), {"Directional", "Point"}),
+            enumerated(R::field(&LightComponent::type, "type", "Type", FieldKind::Enum), {"Directional", "Point", "Spot"}),
             R::field(&LightComponent::color, "color", "Color", FieldKind::Color),
             ranged(R::field(&LightComponent::intensity, "intensity", "Intensity", FieldKind::Float), 0.0f, 100000.0f, 0.1f),
             ranged(R::field(&LightComponent::range, "range", "Range", FieldKind::Float), 0.01f, 10000.0f, 0.1f),
+            ranged(R::field(&LightComponent::spotAngleDeg, "spotAngle", "Spot Angle", FieldKind::Float), 1.0f, 89.0f, 0.5f),
+            ranged(R::field(&LightComponent::spotSoftness, "spotSoftness", "Spot Softness", FieldKind::Float), 0.0f, 1.0f, 0.01f),
         };
         reg.add(std::move(d));
     }
@@ -109,6 +111,7 @@ ComponentRegistry makeBuiltin() {
             ranged(R::field(&ColliderComponent::radius, "radius", "Radius", FieldKind::Float), 0.001f, 1e5f, 0.01f),
             ranged(R::field(&ColliderComponent::height, "height", "Height", FieldKind::Float), 0.0f, 1e5f, 0.05f),
             R::field(&ColliderComponent::offset, "offset", "Offset", FieldKind::Vec3),
+            R::field(&ColliderComponent::isTrigger, "isTrigger", "Is Trigger", FieldKind::Bool),
         };
         reg.add(std::move(d));
     }
@@ -167,6 +170,15 @@ ComponentRegistry makeBuiltin() {
         d.fields = {
             R::field(&ScriptComponent::behaviour, "behaviour", "Behaviour", FieldKind::String),
             R::field(&ScriptComponent::parameters, "parameters", "Parameters", FieldKind::String),
+        };
+        reg.add(std::move(d));
+    }
+    {
+        auto d = R::describe<OscillatorComponent>("Oscillator", "Oscillator");
+        d.fields = {
+            R::field(&OscillatorComponent::offset, "offset", "Offset", FieldKind::Vec3),
+            ranged(R::field(&OscillatorComponent::period, "period", "Period (s)", FieldKind::Float), 0.05f, 600.0f, 0.1f),
+            ranged(R::field(&OscillatorComponent::phase, "phase", "Phase", FieldKind::Float), 0.0f, 1.0f, 0.01f),
         };
         reg.add(std::move(d));
     }

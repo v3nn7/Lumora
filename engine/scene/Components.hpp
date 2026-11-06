@@ -63,14 +63,16 @@ struct MeshRendererComponent {
     bool visible = true;
 };
 
-enum class LightType : std::int32_t { Directional = 0, Point = 1 };
+enum class LightType : std::int32_t { Directional = 0, Point = 1, Spot = 2 };
 
-/// Directional lights shine along the entity's local -Z axis; intensity in lux-like units.
+/// Directional and spot lights shine along the entity's local -Z axis; intensity in lux-like units.
 struct LightComponent {
     LightType type = LightType::Directional;
     glm::vec3 color{1.0f};
     float intensity = 3.0f;
     float range = 10.0f;
+    float spotAngleDeg = 35.0f;  // spot: half-angle of the cone
+    float spotSoftness = 0.25f;  // spot: fraction of the cone that fades out at its edge
 };
 
 struct CameraComponent {
@@ -88,6 +90,15 @@ struct CharacterControllerComponent {
     float maxSlopeDeg = 50.0f;  // steeper ground is a wall
     float stepHeight = 0.35f;   // steps up to this height are climbed
     float gravityFactor = 1.0f;
+};
+
+/// Moves the entity back and forth: position = start + offset * sin(2 pi t / period), while the
+/// simulation runs. With a kinematic Rigid Body and a Collider it is a moving platform that
+/// carries characters standing on it.
+struct OscillatorComponent {
+    glm::vec3 offset{0.0f, 2.0f, 0.0f};  // furthest displacement from the start (m)
+    float period = 4.0f;                 // seconds per full cycle
+    float phase = 0.0f;                  // 0..1, where in the cycle it starts
 };
 
 /// Runs a C++ behaviour from the project's game library (Scripts/) while the simulation runs.
@@ -159,6 +170,8 @@ struct ColliderComponent {
     float radius = 0.5f;     // sphere / capsule
     float height = 1.0f;     // capsule cylinder part (total = height + 2 * radius)
     glm::vec3 offset{0.0f};  // local-space centre offset
+    /// A trigger does not block anything; touching it is reported to scripts (onCollision).
+    bool isTrigger = false;
 };
 
 /// Scene-wide settings stored alongside entities.

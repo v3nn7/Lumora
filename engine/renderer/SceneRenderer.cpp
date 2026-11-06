@@ -428,6 +428,11 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         gl.positionRange = glm::vec4(position, light.range);
         gl.colorIntensity = glm::vec4(light.color, light.intensity);
         gl.directionType = glm::vec4(direction, static_cast<float>(light.type));
+        if (light.type == LightType::Spot) {
+            const float outer = glm::radians(std::clamp(light.spotAngleDeg, 1.0f, 89.0f));
+            const float inner = outer * (1.0f - std::clamp(light.spotSoftness, 0.0f, 1.0f));
+            gl.spot = glm::vec4(std::cos(outer), std::cos(inner) + 1e-4f, 0.0f, 0.0f);
+        }
         if (light.type != LightType::Directional) {
             if (pointLights.size() < kMaxPointLights && light.intensity > 0.0f) pointLights.push_back(gl);
             continue;

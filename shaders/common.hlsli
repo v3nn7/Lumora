@@ -6,6 +6,7 @@
 #define SHADOW_CASCADES 4
 #define LIGHT_DIRECTIONAL 0
 #define LIGHT_POINT 1
+#define LIGHT_SPOT 2
 
 static const float PI = 3.14159265359;
 
@@ -13,6 +14,7 @@ struct GpuLight {
     float4 positionRange;   // xyz world position, w range
     float4 colorIntensity;  // rgb color, w intensity
     float4 directionType;   // xyz direction the light travels, w type
+    float4 spot;            // x cos(outer angle), y cos(inner angle) (spot lights)
 };
 
 struct FrameData {

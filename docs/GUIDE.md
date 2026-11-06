@@ -108,7 +108,8 @@ stack it; *View → Reset Layout* restores the default. The layout is remembered
 | Viewport | The scene as the engine renders it; selection, gizmos, camera |
 | Hierarchy | All entities as a tree. Drag to re-parent; right-click to create, rename, duplicate or delete; filter at the top |
 | Inspector | Components of the selected entity. With nothing selected it shows the scene environment |
-| Content Browser | Scenes, models and textures of the project. Double-click a scene to open it; drop files here to import them |
+| Content Browser | The whole project as folders. Double-click to open folders, scenes, models, prefabs and scripts; *New* creates folders, scenes, behaviours and prefabs; *Import* or drop files to bring them in; right-click to rename, duplicate or delete (to the trash) |
+| Code | Built-in C++ editor for scripts: syntax colouring, line numbers, <kbd>Ctrl</kbd>+<kbd>S</kbd> saves and rebuilds, double-click a compiler error to jump to it |
 | Console | Engine log |
 | Profiler | Frame time and GPU time per render pass |
 | Session | Live collaboration: participants, address, chat |
@@ -135,7 +136,7 @@ Hover over the viewport or click it, then:
 
 - **Create** entities from the *Create* menu, the **+** button in the Hierarchy, or a right-click
   in the Hierarchy (*Create Child* puts the new entity under the clicked one). The menu has
-  primitives (cube, sphere, cylinder, plane), lights (directional, point), a camera, an empty
+  primitives (cube, sphere, cylinder, plane), lights (directional, point, spot), a camera, an empty
   entity, and ready-made physics objects (dynamic cube and sphere, static floor).
 - **Select** with a left click in the viewport or the Hierarchy. <kbd>Esc</kbd> clears the
   selection.
@@ -143,7 +144,7 @@ Hover over the viewport or click it, then:
   Hold <kbd>Ctrl</kbd> while dragging to snap (0.25 m, 15°, 0.1×). Gizmos work in the parent's
   space, so child entities move as expected.
 - **Edit** values in the Inspector. **Add Component** adds any of: Transform, Mesh Renderer,
-  Light, Camera, Rigid Body, Collider, Character Controller, Script, Audio Source, Animator, Rotator. A new Collider starts out fitted to the entity's
+  Light, Camera, Rigid Body, Collider, Character Controller, Script, Audio Source, Animator, Rotator, Oscillator. A new Collider starts out fitted to the entity's
   mesh.
 - **Undo** everything with <kbd>Ctrl</kbd>+<kbd>Z</kbd> and redo with
   <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>. <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicates,
@@ -199,7 +200,9 @@ The Mesh Renderer component holds the material: base colour, metallic, roughness
 and strength, an optional procedural grid or checker pattern, and optional base-colour, metallic-roughness, normal and emissive textures. Shading is physically
 based (GGX), so metallic and roughness behave as in other PBR tools.
 
-Lights are directional (the sun) or point lights. A scene can have thousands of point lights:
+Lights are directional (the sun), point or spot lights. A spot light shines along the entity's
+-Z axis in a cone (**Spot Angle** is its half-angle, **Spot Softness** how much of it fades out
+at the edge). A scene can have thousands of point and spot lights:
 each part of the screen only computes the ones whose range reaches it, so keep ranges tight. The directional light casts soft cascaded
 shadows across the whole view. Screen-space ambient occlusion darkens ambient light where surfaces meet
 (corners, contacts, under objects).
@@ -255,7 +258,16 @@ void update(float dt) override {
 }
 ```
 
-Physics runs only in play mode. *Create → Physics* has ready-made objects to start from.
+**Triggers.** Tick **Is Trigger** on a Collider and it blocks nothing: bodies and characters
+pass through, and scripts on both sides get `onCollision`, for pickups, checkpoints and kill
+zones. Characters report what they touch the same way.
+
+**Moving platforms.** An **Oscillator** moves an entity back and forth around where it started
+(**Offset**, **Period**, **Phase**). Give it a Collider and a kinematic Rigid Body and it is a
+platform: dynamic bodies and characters standing on it ride along.
+
+Physics runs only in play mode. *Create → Physics* has ready-made objects to start from,
+including a moving platform and a trigger volume.
 
 ### Gameplay scripts (C++)
 
@@ -266,7 +278,8 @@ game library and reloads it whenever you save a script, also while the game is p
 (`sudo apt install cmake g++`), Visual Studio 2022 with "Desktop development with C++" on Windows.
 
 1. *Scripts → New Behaviour…*, enter a class name such as `Bobber`. The editor writes
-   `Scripts/Bobber.cpp` from a template and opens it in your code editor.
+   `Scripts/Bobber.cpp` from a template and opens it in the **Code** panel (*New → C++ Behaviour*
+   in the Content Browser does the same; *Edit in Code Editor* opens any script or text file).
 2. Edit and save. The editor rebuilds in the background; the status bar and the Console show the
    result and any compiler errors.
 3. Select an entity, *Add Component → Script*, and set **Behaviour** to `Bobber`.
@@ -304,7 +317,7 @@ What a behaviour can do:
 | `mouseDown(MouseButton::Left)`, `mouseDelta()` | Mouse buttons and movement this frame |
 | `addForce(v)`, `addImpulse(v)`, `velocity()`, `setVelocity(v)` | Physics of a dynamic Rigid Body (newtons, newton-seconds, m/s) |
 | `raycast(origin, direction, maxDistance, hit)` | Closest collider along a ray: `hit.entity`, `hit.point`, `hit.normal`, `hit.distance` |
-| `onCollision(Entity other)` | Override: this entity's collider started touching another |
+| `onCollision(Entity other)` | Override: this entity's collider (or character) started touching another, triggers included |
 | `spawn("Content/Prefabs/X.lprefab", position)` | Add a copy of a prefab |
 | `move(velocity)`, `jump(speed)`, `grounded()` | Character Controller: walk, jump, stand |
 | `clone(e)`, `destroy(e)` | Copy an entity with its children, components and scripts; remove one at the end of the step |

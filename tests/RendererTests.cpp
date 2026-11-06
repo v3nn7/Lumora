@@ -667,6 +667,47 @@ TEST_F(RendererTest, ManyPointLightsLightTheirSurroundings) {
     EXPECT_LT(b.r, 30);
 }
 
+TEST_F(RendererTest, SpotLightLightsOnlyItsCone) {
+    // A spot light 3 m above a dark floor pointing down with a 20 degree cone: the floor below it
+    // is lit, the floor 2.5 m to the side (well inside its range) stays dark.
+    auto scene = std::make_unique<Scene>("Spot");
+    scene->environment().ambientIntensity = 0.0f;
+    scene->environment().fogDensity = 0.0f;
+    const auto ground = scene->createEntity("Ground");
+    auto& mesh = scene->registry().emplace<MeshRendererComponent>(ground);
+    mesh.mesh = MeshPrimitive::Plane;
+    mesh.baseColor = glm::vec3(0.8f);
+    mesh.roughness = 1.0f;
+    scene->registry().get<TransformComponent>(ground).scale = glm::vec3(20.0f, 1.0f, 20.0f);
+    const auto spot = scene->createEntity("Spot");
+    auto& t = scene->registry().get<TransformComponent>(spot);
+    t.position = glm::vec3(0.0f, 3.0f, 0.0f);
+    t.rotationDeg = glm::vec3(-90.0f, 0.0f, 0.0f);  // -Z turned to point down
+    auto& l = scene->registry().emplace<LightComponent>(spot);
+    l.type = LightType::Spot;
+    l.intensity = 30.0f;
+    l.range = 12.0f;
+    l.spotAngleDeg = 20.0f;
+    l.spotSoftness = 0.2f;
+    scene->updateWorldTransforms();
+
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 10.0f, 0.1f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const glm::uvec2 size(128, 128);
+    const CameraView view = cam.view(1.0f);
+    RenderSettings settings;
+    settings.bloom = false;
+    auto image = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(image.has_value()) << image.error().message;
+    const glm::ivec2 centre = toPixel(view, glm::vec3(0.0f, 0.0f, 0.0f), size);
+    const glm::ivec2 side = toPixel(view, glm::vec3(2.5f, 0.0f, 0.0f), size);
+    const auto lit = pixel(*image, centre.x, centre.y);
+    const auto dark = pixel(*image, side.x, side.y);
+    EXPECT_GT(lit.r, 120) << "inside the cone";
+    EXPECT_LT(dark.r, 15) << "outside the cone (a point light this strong would light it)";
+}
+
 // ---- HUD ------------------------------------------------------------------------------------
 
 #include "renderer/HudRenderer.hpp"

@@ -35,6 +35,22 @@ void runRotatorSystem(Scene& scene, float dt) {
 
 } // namespace
 
+void Simulation::runOscillators(float dt) {
+    auto& reg = scene_.registry();
+    std::erase_if(oscillatorOrigins_, [&](const auto& entry) {
+        return !reg.valid(entry.first) || !reg.all_of<OscillatorComponent>(entry.first);
+    });
+    const double t = simulatedSeconds() + dt;  // the pose at the end of this step
+    constexpr double kTwoPi = 6.283185307179586;
+    for (auto [e, osc, transform] : reg.view<OscillatorComponent, TransformComponent>().each()) {
+        // The start position is where the entity was when the simulation first saw it.
+        const auto [it, inserted] = oscillatorOrigins_.try_emplace(e, transform.position);
+        if (osc.period <= 0.0f) continue;
+        const auto s = static_cast<float>(std::sin(kTwoPi * (t / osc.period + osc.phase)));
+        transform.position = it->second + osc.offset * s;
+    }
+}
+
 Simulation::Simulation(Scene& scene, double fixedStep)
     : scene_(scene), fixedStep_(fixedStep > 0.0 ? fixedStep : kDefaultFixedStep) {
     if (PhysicsWorld::sceneHasColliders(scene_)) physics_ = std::make_unique<PhysicsWorld>(scene_);
@@ -93,6 +109,7 @@ void Simulation::step() {
         scripts_->update(dt, simulatedSeconds());
     }
     runRotatorSystem(scene_, dt);
+    runOscillators(dt);
     if (animation_) animation_->update(dt);
     scene_.updateWorldTransforms();
     if (!physics_ && PhysicsWorld::sceneHasColliders(scene_)) {

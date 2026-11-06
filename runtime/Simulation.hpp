@@ -6,6 +6,10 @@
 #include "scene/Hud.hpp"
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
+
+#include <entt/entity/entity.hpp>
+#include <glm/vec3.hpp>
 
 namespace lumora {
 
@@ -59,6 +63,8 @@ public:
     [[nodiscard]] std::size_t scriptInstances() const noexcept;
 
 private:
+    void runOscillators(float dt);
+    std::unordered_map<entt::entity, glm::vec3> oscillatorOrigins_;
     Scene& scene_;
     double fixedStep_;
     double accumulator_ = 0.0;

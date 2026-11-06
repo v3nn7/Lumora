@@ -249,6 +249,11 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
             float3 toLight = light.positionRange.xyz - s.position;
             float distance = length(toLight);
             float attenuation = pointAttenuation(distance, light.positionRange.w);
+            if ((int)light.directionType.w == LIGHT_SPOT) {
+                // Cone: full inside the inner angle, fading to nothing at the outer one.
+                float cosAngle = dot(-toLight / max(distance, 1e-4), light.directionType.xyz);
+                attenuation *= smoothstep(light.spot.x, light.spot.y, cosAngle);
+            }
             if (attenuation > 0.0) {
                 float3 radiance = light.colorIntensity.rgb * light.colorIntensity.w * attenuation;
                 color += evaluateLight(s, toLight / max(distance, 1e-4), radiance);

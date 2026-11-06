@@ -66,6 +66,28 @@ void populateCreateMenu(QMenu& menu, EditorContext& ctx, bool asChild) {
             scene.registry().get<TransformComponent>(e).scale = {20.0f, 1.0f, 20.0f};
         }, asChild);
     });
+    physics->addAction(icon(QStringLiteral("cube")), QObject::tr("Moving Platform"), [&ctx, asChild] {
+        ctx.createEntity(QObject::tr("Moving Platform"), [](Scene& scene, entt::entity e) {
+            auto& reg = scene.registry();
+            auto& mesh = reg.emplace<MeshRendererComponent>(e);
+            mesh.baseColor = {0.55f, 0.6f, 0.65f};
+            mesh.pattern = SurfacePattern::Grid;
+            reg.emplace<ColliderComponent>(e);
+            reg.emplace<RigidBodyComponent>(e).motion = BodyMotion::Kinematic;
+            reg.emplace<OscillatorComponent>(e).offset = {3.0f, 0.0f, 0.0f};
+            auto& t = reg.get<TransformComponent>(e);
+            t.position.y = 1.0f;
+            t.scale = {3.0f, 0.3f, 3.0f};
+        }, asChild);
+    });
+    physics->addAction(icon(QStringLiteral("entity")), QObject::tr("Trigger Volume"), [&ctx, asChild] {
+        ctx.createEntity(QObject::tr("Trigger"), [](Scene& scene, entt::entity e) {
+            auto& collider = scene.registry().emplace<ColliderComponent>(e);
+            collider.size = {2.0f, 2.0f, 2.0f};
+            collider.isTrigger = true;
+            scene.registry().get<TransformComponent>(e).position.y = 1.0f;
+        }, asChild);
+    });
     menu.addSeparator();
     menu.addAction(icon(QStringLiteral("sun")), QObject::tr("Directional Light"), [&ctx, asChild] {
         ctx.createEntity(QObject::tr("Directional Light"), [](Scene& scene, entt::entity e) {
@@ -82,6 +104,17 @@ void populateCreateMenu(QMenu& menu, EditorContext& ctx, bool asChild) {
             light.intensity = 10.0f;
             light.range = 8.0f;
             scene.registry().get<TransformComponent>(e).position.y = 2.0f;
+        }, asChild);
+    });
+    menu.addAction(icon(QStringLiteral("light")), QObject::tr("Spot Light"), [&ctx, asChild] {
+        ctx.createEntity(QObject::tr("Spot Light"), [](Scene& scene, entt::entity e) {
+            auto& light = scene.registry().emplace<LightComponent>(e);
+            light.type = LightType::Spot;
+            light.intensity = 20.0f;
+            light.range = 12.0f;
+            auto& t = scene.registry().get<TransformComponent>(e);
+            t.position.y = 4.0f;
+            t.rotationDeg = {-90.0f, 0.0f, 0.0f};  // pointing down
         }, asChild);
     });
     menu.addAction(icon(QStringLiteral("camera")), QObject::tr("Camera"), [&ctx, asChild] {

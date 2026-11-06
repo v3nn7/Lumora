@@ -184,6 +184,29 @@ public:
     std::vector<std::pair<entt::entity, entt::entity>> pairs;
 };
 
+/// Reports what characters start touching (bodies, triggers and other characters) into the same
+/// list as body contacts. Characters are moved on the main thread, so no lock contention.
+class CharacterContacts final : public JPH::CharacterContactListener {
+public:
+    explicit CharacterContacts(ContactCollector& out) : out_(out) {}
+    void OnContactAdded(const JPH::CharacterVirtual* character, const JPH::CharacterContact& contact,
+                        JPH::CharacterContactSettings&) override {
+        record(character->GetUserData(), contact.mUserData);
+    }
+    void OnCharacterContactAdded(const JPH::CharacterVirtual* character, const JPH::CharacterContact& contact,
+                                 JPH::CharacterContactSettings&) override {
+        record(character->GetUserData(), contact.mUserData);
+    }
+
+private:
+    void record(JPH::uint64 a, JPH::uint64 b) {
+        std::scoped_lock lock(out_.mutex);
+        out_.pairs.emplace_back(static_cast<entt::entity>(static_cast<std::uint32_t>(a)),
+                                static_cast<entt::entity>(static_cast<std::uint32_t>(b)));
+    }
+    ContactCollector& out_;
+};
+
 struct PhysicsWorld::Impl {
     Scene& scene;
     BroadPhaseLayerMapping broadPhase;
@@ -193,6 +216,7 @@ struct PhysicsWorld::Impl {
     std::unique_ptr<JPH::JobSystemThreadPool> jobs;
     JPH::PhysicsSystem system;
     ContactCollector contacts;
+    CharacterContacts characterContacts{contacts};
     struct Body {
         JPH::BodyID id;
         BodyMotion motion;
@@ -229,6 +253,7 @@ struct PhysicsWorld::Impl {
         Character c;
         c.character = new JPH::CharacterVirtual(&settings, JPH::RVec3(toJolt(pose.position)), JPH::Quat::sIdentity(),
                                                 static_cast<JPH::uint64>(entt::to_integral(e)), &system);
+        c.character->SetListener(&characterContacts);
         c.gravityFactor = cc.gravityFactor;
         c.stepHeight = cc.stepHeight;
         c.lastWritten = pose.position;
@@ -258,6 +283,8 @@ struct PhysicsWorld::Impl {
                                            toJolt(pose.rotation), type,
                                            motion == BodyMotion::Static ? Layers::kStatic : Layers::kMoving);
         settings.mUserData = static_cast<JPH::uint64>(entt::to_integral(e));  // contacts and raycasts name the entity
+        settings.mIsSensor = collider.isTrigger;  // reports contacts, blocks nothing
+        settings.mCollideKinematicVsNonDynamic = collider.isTrigger;  // kinematic triggers see static/kinematic too
         if (rb != nullptr) {
             settings.mFriction = rb->friction;
             settings.mRestitution = rb->restitution;
@@ -453,14 +480,17 @@ void PhysicsWorld::step(float dt) {
         } else if (!grounded) {
             c.vertical += gravity.GetY() * c.gravityFactor * dt;
         }
-        c.character->SetLinearVelocity(JPH::Vec3(c.desired.x, c.vertical, c.desired.z));
+        // Standing on something that moves (a platform): move with it.
+        c.character->UpdateGroundVelocity();
+        const glm::vec3 ground = grounded ? fromJolt(c.character->GetGroundVelocity()) : glm::vec3(0.0f);
+        c.character->SetLinearVelocity(JPH::Vec3(c.desired.x + ground.x, c.vertical + ground.y, c.desired.z + ground.z));
         JPH::CharacterVirtual::ExtendedUpdateSettings update;
         update.mWalkStairsStepUp = JPH::Vec3(0.0f, c.stepHeight, 0.0f);
         c.character->ExtendedUpdate(dt, gravity * c.gravityFactor, update,
                                     impl_->system.GetDefaultBroadPhaseLayerFilter(Layers::kMoving),
                                     impl_->system.GetDefaultLayerFilter(Layers::kMoving), {}, {}, *impl_->temp);
         // Landing on something stops the fall; hitting a ceiling stops the rise.
-        const glm::vec3 moved = fromJolt(c.character->GetLinearVelocity());
+        const glm::vec3 moved = fromJolt(c.character->GetLinearVelocity()) - ground;
         if (c.vertical > 0.0f && moved.y < c.vertical * 0.5f) c.vertical = std::max(moved.y, 0.0f);
         glm::vec3 worldPos = fromJolt(JPH::Vec3(c.character->GetPosition()));
         c.lastWritten = worldPos;

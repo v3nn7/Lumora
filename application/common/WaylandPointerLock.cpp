@@ -99,7 +99,10 @@ void onRelativeMotion(void* data, zwp_relative_pointer_v1*, std::uint32_t, std::
 }
 const zwp_relative_pointer_v1_listener kRelativeListener{onRelativeMotion};
 
-void onLocked(void* data, zwp_locked_pointer_v1*) { static_cast<State*>(data)->active = true; }
+void onLocked(void* data, zwp_locked_pointer_v1*) {
+    static_cast<State*>(data)->active = true;
+    log::debug("Viewport", "pointer locked by the compositor");
+}
 void onUnlocked(void* data, zwp_locked_pointer_v1*) { static_cast<State*>(data)->active = false; }
 const zwp_locked_pointer_v1_listener kLockedListener{onLocked, onUnlocked};
 
@@ -162,13 +165,17 @@ bool WaylandPointerLock::lock() {
     State& s = *state_;
     s.dispatch();  // the enter event for the surface just clicked
     if (s.locked != nullptr) return true;
-    if (s.focus == nullptr) return false;
+    if (s.focus == nullptr) {
+        log::debug("Viewport", "pointer lock not requested: no surface has the pointer");
+        return false;
+    }
     // A surface may carry only one constraint; ours is destroyed before another is requested.
     s.locked = zwp_pointer_constraints_v1_lock_pointer(s.constraints, s.focus, s.pointer, nullptr,
                                                        ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_ONESHOT);
     zwp_locked_pointer_v1_add_listener(s.locked, &kLockedListener, &s);
     s.dx = s.dy = 0.0;
     wl_display_flush(s.display);
+    log::debug("Viewport", "pointer lock requested");
     return true;
 }
 

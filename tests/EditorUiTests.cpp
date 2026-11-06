@@ -746,3 +746,37 @@ TEST(Gamepad, DeadZoneIsRadialAndRescaled) {
     reader.poll(input);
     SUCCEED();
 }
+
+#include "editor/QuickOpen.hpp"
+
+TEST(QuickOpen, FuzzyScorePrefersWordStartsAndNames) {
+    EXPECT_LT(editor::fuzzyScore("xyz", "Content/Main.lscene"), 0);
+    EXPECT_GE(editor::fuzzyScore("", "anything"), 0);
+    EXPECT_GT(editor::fuzzyScore("main", "Content/Scenes/Main.lscene"),
+              editor::fuzzyScore("main", "Content/Domains/Other.lscene")) << "a word start beats letters spread out";
+    EXPECT_GT(editor::fuzzyScore("pc", "Scripts/PlayerController.cpp"), editor::fuzzyScore("pc", "Scripts/Epic.cpp"))
+        << "CamelCase starts count";
+    EXPECT_GT(editor::fuzzyScore("game", "Scripts/Game.cpp"), editor::fuzzyScore("game", "Game/Scripts/Other.cpp"))
+        << "matches in the file name beat folders";
+}
+
+TEST_F(EditorUiTest, QuickOpenFindsFilesAndEntities) {
+    editor::EditorWindow* editor = openEditor();
+    ASSERT_NE(editor, nullptr);
+    Scene& scene = *editor->editScene();
+    entt::entity cube = entt::null;
+    for (auto [e, rot] : scene.registry().view<RotatorComponent>().each()) cube = e;
+    ASSERT_TRUE(cube != entt::null);
+    const QString name = QString::fromStdString(scene.nameOf(cube));
+
+    editor::QuickOpenDialog* dialog = editor->showQuickOpen();
+    ASSERT_NE(dialog, nullptr);
+    dialog->setQuery(QStringLiteral("main.lsc"));
+    ASSERT_FALSE(dialog->shownLabels().isEmpty());
+    EXPECT_EQ(dialog->shownLabels().front(), QStringLiteral("Content/Scenes/Main.lscene"));
+    dialog->setQuery(name);
+    ASSERT_FALSE(dialog->shownLabels().isEmpty());
+    EXPECT_EQ(dialog->shownLabels().front(), name);
+    dialog->openCurrent();
+    EXPECT_EQ(editor->context().selectedUuid(), scene.uuidOf(cube)) << "Enter selects the entity";
+}

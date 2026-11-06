@@ -74,6 +74,8 @@ public:
     bool assignMaterial(Uuid entity, const QString& materialPath);
     /// Opens Config/Input.json in the code editor (written with the defaults first).
     void openInputSettings();
+    /// Ctrl+P: the quick-open popup over the project's files and the scene's entities.
+    class QuickOpenDialog* showQuickOpen();
     /// What dropping files at a viewport position does: materials go on the object under the
     /// cursor, models and prefabs are placed there, HDR images become the sky.
     void dropOnViewport(const QStringList& files, glm::vec2 ndc);

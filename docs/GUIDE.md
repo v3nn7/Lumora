@@ -140,6 +140,8 @@ Hover over the viewport or click it, then:
   entity, and ready-made physics objects (dynamic cube and sphere, static floor).
 - **Select** with a left click in the viewport (while playing, clicks go to the game: select in the Hierarchy) or the Hierarchy. <kbd>Esc</kbd> clears the
   selection.
+- **Go to** any file or entity with <kbd>Ctrl</kbd>+<kbd>P</kbd>: type a few letters ("plco" finds
+  `PlayerController.cpp`), Enter opens the file or selects and frames the entity.
 - **Select several** with <kbd>Ctrl</kbd>+click (viewport or Hierarchy) or <kbd>Shift</kbd>+click in the
   Hierarchy: the gizmo moves, rotates and scales them as a group around the last one, the
   Inspector changes a value on all of them, and duplicate and delete work on all.

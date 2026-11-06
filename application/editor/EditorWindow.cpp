@@ -15,6 +15,10 @@
 #include "editor/EditorViewportClient.hpp"
 #include "editor/EntityFactory.hpp"
 #include "editor/InspectorPanel.hpp"
+#include "editor/QuickOpen.hpp"
+#include "editor/EntityFactory.hpp"
+
+#include <QDirIterator>
 #include "assets/Material.hpp"
 #include "core/FileSystem.hpp"
 #include "runtime/InputActions.hpp"
@@ -480,6 +484,11 @@ void EditorWindow::buildMenus() {
     edit->addAction(frame_);
     edit->addSeparator();
     edit->addAction(savePrefab_);
+    edit->addSeparator();
+    QAction* quickOpen = edit->addAction(app::theme::icon(QStringLiteral("open")), tr("Go to File or Entity…"));
+    quickOpen->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));
+    quickOpen->setShortcutContext(Qt::ApplicationShortcut);
+    connect(quickOpen, &QAction::triggered, this, [this] { showQuickOpen(); });
 
     QMenu* create = menuBar()->addMenu(tr("&Create"));
     populateCreateMenu(*create, ctx_, false);
@@ -858,6 +867,49 @@ std::optional<std::string> EditorWindow::pickMaterialAsset(QWidget* parent) {
         return std::nullopt;
     }
     return project_.relativePath(path);
+}
+
+QuickOpenDialog* EditorWindow::showQuickOpen() {
+    std::vector<QuickOpenDialog::Item> items;
+    // Entities of the open scene first: they are what one looks for most while editing.
+    if (Scene* scene = ctx_.scene()) {
+        scene->forEachDepthFirst([&](entt::entity e, int) {
+            const Uuid id = scene->uuidOf(e);
+            items.push_back({QString::fromStdString(scene->nameOf(e)), tr("Entity"), entityIcon(*scene, e), [this, id] {
+                                 ctx_.select(id);
+                                 if (Scene* s = ctx_.scene()) client_->frameEntity(s->findByUuid(id));
+                             }});
+        });
+    }
+    const QDir root(app::toQString(project_.rootDir()));
+    QDirIterator it(root.path(), QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext() && items.size() < 20000) {
+        const QString path = it.next();
+        const QString relative = root.relativeFilePath(path);
+        if (relative.startsWith(QLatin1String("Saved/")) || relative.startsWith(QLatin1Char('.')) ||
+            relative.contains(QLatin1String("/."))) {
+            continue;
+        }
+        const QString suffix = QFileInfo(path).suffix().toLower();
+        QString kind = suffix.toUpper();
+        std::function<void()> open = [this, path] {
+            content_->navigate(QFileInfo(path).absolutePath());
+            inspector_->showAsset(path);
+        };
+        if (suffix == QLatin1String("lscene")) {
+            kind = tr("Scene");
+            open = [this, path] { openScene(path); };
+        } else if (suffix == QLatin1String("cpp") || suffix == QLatin1String("hpp") || suffix == QLatin1String("h") ||
+                   suffix == QLatin1String("json") || suffix == QLatin1String("md") || suffix == QLatin1String("txt")) {
+            open = [this, path] { openCode(path); };
+        }
+        items.push_back({relative, kind, QIcon(), std::move(open)});
+    }
+    auto* dialog = new QuickOpenDialog(std::move(items), this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->move(mapToGlobal(QPoint((width() - dialog->minimumWidth()) / 2, 80)));
+    dialog->show();
+    return dialog;
 }
 
 void EditorWindow::openInputSettings() {

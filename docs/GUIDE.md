@@ -298,6 +298,14 @@ lumora-editor --project ~/LumoraProjects/MyGame --play
 
 <kbd>Esc</kbd> quits, <kbd>F11</kbd> toggles fullscreen, <kbd>F8</kbd> toggles a free camera.
 
+### Export the game
+
+*File → Export Game…* writes a standalone copy of the game to an empty folder: the player
+runtime (the same engine and Qt libraries this editor uses), the project's content and the built
+game library, plus a launcher (`run.sh` on Linux, `<Name>.bat` on Windows). Copy the folder to
+any computer with a Vulkan 1.4 GPU and start the launcher; players do not need Lumora. Script
+sources and editor caches stay behind. Build the scripts first if the game has any.
+
 ## Working together
 
 Several people can edit one scene at the same time. One editor **hosts** the session and the others

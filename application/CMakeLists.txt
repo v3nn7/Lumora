@@ -27,6 +27,7 @@ lumora_qt_module(appcommon
         common/Preferences.cpp
         common/WaylandPointerLock.cpp
         common/ScriptBuilder.cpp
+        common/GameExporter.cpp
         common/resources.qrc
     DEPS lumora_project lumora_renderer lumora_runtime lumora_cli Qt6::Widgets Qt6::Svg)
 # Development builds find the scripting SDK headers in the source tree; packages ship them in include/.

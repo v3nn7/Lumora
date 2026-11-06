@@ -2,6 +2,7 @@
 
 #include "common/AppContext.hpp"
 #include "common/ProjectUi.hpp"
+#include "common/GameExporter.hpp"
 #include "common/ScriptBuilder.hpp"
 #include "common/Snapshot.hpp"
 #include "common/Theme.hpp"
@@ -191,6 +192,8 @@ void EditorWindow::buildActions() {
     importModel_ = make(tr("Import Model…"), QStringLiteral("cube"), QKeySequence(Qt::CTRL | Qt::Key_I));
     connect(importModel_, &QAction::triggered, this, &EditorWindow::importModelDialog);
     projectSettings_ = make(tr("Project Settings…"), QStringLiteral("settings"));
+    exportGame_ = make(tr("Export Game…"), QStringLiteral("save"));
+    connect(exportGame_, &QAction::triggered, this, &EditorWindow::exportGameDialog);
     hostSession_ = make(tr("Host Session…"), QStringLiteral("users"));
     joinSession_ = make(tr("Join Session…"), QString());
     leaveSession_ = make(tr("Leave Session"), QString());
@@ -388,6 +391,7 @@ void EditorWindow::buildMenus() {
     file->addAction(importModel_);
     file->addSeparator();
     file->addAction(projectSettings_);
+    file->addAction(exportGame_);
     file->addSeparator();
     file->addActions({closeProject_, exit_});
 
@@ -1210,6 +1214,27 @@ void EditorWindow::newBehaviour() {
     log::info("Script", "created {}", file.toStdString());
     QDesktopServices::openUrl(QUrl::fromLocalFile(file));  // the user's code editor
     scripts_->build();
+}
+
+void EditorWindow::exportGameDialog() {
+    if (ctx_.undoStack().isClean() == false || scenePath_.isEmpty()) {
+        const auto answer = QMessageBox::question(this, tr("Export Game"),
+                                                  tr("The exported game uses the saved scene. Save it now?"));
+        if (answer == QMessageBox::Yes) saveScene();
+    }
+    const QString folder = QFileDialog::getExistingDirectory(this, tr("Export Game To (an empty folder)"));
+    if (folder.isEmpty()) return;
+    if (scripts_ && scripts_->hasScripts() && !QFileInfo::exists(scripts_->libraryPath())) {
+        QMessageBox::warning(this, tr("Export Game"), tr("Build the scripts first (Scripts > Build Scripts)."));
+        return;
+    }
+    auto launcher = app::exportGame({project_.rootDir(), project_.name(), app::toPath(folder), {}});
+    if (!launcher) {
+        QMessageBox::critical(this, tr("Export failed"), QString::fromStdString(launcher.error().message));
+        return;
+    }
+    QMessageBox::information(this, tr("Export Game"),
+                             tr("Exported. Start the game with %1.").arg(app::toQString(*launcher)));
 }
 
 } // namespace lumora::editor

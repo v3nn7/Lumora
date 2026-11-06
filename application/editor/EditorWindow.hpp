@@ -130,6 +130,7 @@ private:
     void setUpScripts();
     void onScriptsBuilt(bool ok, const QString& output);
     void newBehaviour();
+    void exportGameDialog();
 
     app::AppContext& app_;
     Project project_;
@@ -184,6 +185,7 @@ private:
     QLabel* statusGpu_ = nullptr;
     QLabel* statusCollab_ = nullptr;
 
+    QAction* exportGame_ = nullptr;
     QAction* newBehaviour_ = nullptr;
     QAction* buildScripts_ = nullptr;
     QAction* openScripts_ = nullptr;

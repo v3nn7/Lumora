@@ -2,17 +2,23 @@
 // loaded into a simulation, changed, rebuilt and hot-reloaded while it runs.
 #include "TestUtils.hpp"
 
+#include "common/GameExporter.hpp"
 #include "common/ScriptBuilder.hpp"
+#include "project/Project.hpp"
 #include "runtime/PhysicsWorld.hpp"
 #include "runtime/Scripting.hpp"
 #include "runtime/Simulation.hpp"
 #include "scene/Scene.hpp"
 
+#include <QCoreApplication>
 #include <QDir>
+#include <QProcess>
 #include <QFile>
 #include <QStandardPaths>
 
 #include <gtest/gtest.h>
+
+#include <fstream>
 
 using namespace lumora;
 
@@ -219,4 +225,37 @@ LUMORA_BEHAVIOUR(Lifetime);
     EXPECT_EQ(sim.scriptInstances(), 4u);
     EXPECT_FLOAT_EQ(reg.get<TransformComponent>(flag).position.x, 1.0f) << "onCollision named the ground";
     EXPECT_GT(reg.get<TransformComponent>(ball).position.x, 1.0f);
+}
+
+TEST(GameExport, WritesARunnableStandaloneGame) {
+    test::TempDir dir;
+    auto project = Project::create(dir.path() / "Demo", "Demo", ProjectTemplate::BasicScene);
+    ASSERT_TRUE(project.has_value()) << project.error().message;
+    std::filesystem::create_directories(dir.path() / "Demo" / "Saved" / "Cache");
+    std::ofstream(dir.path() / "Demo" / "Saved" / "Cache" / "junk.bin") << "editor state";
+    std::filesystem::create_directories(dir.path() / "Demo" / "Saved" / "ScriptBuild" / "bin");
+    std::ofstream(dir.path() / "Demo" / "Saved" / "ScriptBuild" / "bin" / "game.so") << "library";
+
+    const std::filesystem::path out = dir.path() / "Export";
+    auto launcher = app::exportGame({dir.path() / "Demo", "Demo", out, {}});
+    ASSERT_TRUE(launcher.has_value()) << launcher.error().message;
+    EXPECT_TRUE(std::filesystem::exists(*launcher));
+    EXPECT_TRUE(std::filesystem::exists(out / "Game" / "Demo.lumora"));
+    EXPECT_TRUE(std::filesystem::exists(out / "Game" / "Content" / "Scenes" / "Main.lscene"));
+    EXPECT_FALSE(std::filesystem::exists(out / "Game" / "Saved" / "Cache")) << "editor state stays behind";
+    EXPECT_TRUE(std::filesystem::exists(out / "Game" / "Saved" / "ScriptBuild" / "bin" / "game.so"));
+    EXPECT_FALSE(app::exportGame({dir.path() / "Demo", "Demo", out, {}}).has_value()) << "never overwrites";
+
+    // The exported runtime opens the exported game on its own.
+#if defined(_WIN32)
+    const QString player = QString::fromStdString((out / "bin" / "lumora-editor.exe").string());
+#else
+    const QString player = QString::fromStdString((out / "bin" / "lumora-editor").string());
+#endif
+    QProcess run;
+    run.start(player, {QStringLiteral("--headless"), QStringLiteral("--project"),
+                       QString::fromStdString((out / "Game").string()), QStringLiteral("--validate")});
+    ASSERT_TRUE(run.waitForFinished(60000));
+    EXPECT_EQ(run.exitCode(), 0) << run.readAllStandardError().toStdString();
+    EXPECT_TRUE(run.readAllStandardOutput().contains("Project 'Demo' OK"));
 }

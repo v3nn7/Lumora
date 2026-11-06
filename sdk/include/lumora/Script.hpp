@@ -98,6 +98,7 @@ struct EngineApi {
     double (*parameter)(void* context, Entity entity, const char* name, double fallback);
     int (*sound)(void* context, Entity entity, int command);  // 0 stop, 1 play, 2 is playing
     Entity (*spawn)(void* context, const char* prefab, const float* position);  // kNoEntity on failure
+    int (*animation)(void* context, Entity entity, const char* clip, int command);  // 0 stop, 1 play, 2 playing
 };
 
 class Behaviour;
@@ -177,6 +178,14 @@ protected:
     }
     /// Removes an entity (and its children) at the end of this step.
     void destroy(Entity e) const { api_->destroy(api_->context, e); }
+
+    // Animation (the entity's Animator component: clips of the glTF model it was made from).
+    /// Starts a clip by name (empty = the current one) from the beginning.
+    bool playAnimation(std::string_view clip = {}) const {
+        return api_->animation(api_->context, entity_, std::string(clip).c_str(), 1) != 0;
+    }
+    void stopAnimation() const { api_->animation(api_->context, entity_, nullptr, 0); }
+    [[nodiscard]] bool animationPlaying() const { return api_->animation(api_->context, entity_, nullptr, 2) != 0; }
 
     // Sound (the entity's Audio Source component).
     void playSound() const { api_->sound(api_->context, entity_, 1); }

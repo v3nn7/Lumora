@@ -19,6 +19,7 @@ entt::entity instantiateModel(Scene& scene, const ImportedModel& model, std::str
         const entt::entity e = scene.createEntity(node.name, Uuid::generate(), nodeParent);
         created[i] = e;
 
+        scene.registry().emplace<ModelNodeComponent>(e).node = static_cast<int>(i);
         auto& t = scene.registry().get<TransformComponent>(e);
         t.position = node.translation;
         t.scale = node.scale;
@@ -48,6 +49,10 @@ entt::entity instantiateModel(Scene& scene, const ImportedModel& model, std::str
                 if (m.emissiveTexture >= 0 && renderer.emissiveStrength == 0.0f) renderer.emissiveStrength = 1.0f;
             }
         }
+    }
+    if (!model.animations.empty()) {
+        auto& animator = scene.registry().emplace<AnimatorComponent>(root);
+        animator.model = std::string(relativeFile);
     }
     scene.updateWorldTransforms();
     return root;

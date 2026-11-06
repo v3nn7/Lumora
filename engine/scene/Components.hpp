@@ -98,6 +98,21 @@ struct AudioSourceComponent {
     float maxDistance = 50.0f;  // no further attenuation beyond
 };
 
+/// Plays a glTF model's animation clip on the entities instantiated from that model (the
+/// entity carrying this is the model's root; its descendants carry ModelNodeComponent).
+struct AnimatorComponent {
+    std::string model;         // project-relative .glb/.gltf the clips come from
+    std::string clip;          // clip name; empty = the model's first clip
+    float speed = 1.0f;
+    bool loop = true;
+    bool playOnStart = true;
+};
+
+/// Which node of the source model an entity mirrors (set by instantiateModel; used by animation).
+struct ModelNodeComponent {
+    int node = -1;
+};
+
 /// Built-in gameplay behaviour: spins the entity while the simulation runs.
 struct RotatorComponent {
     glm::vec3 axis{0.0f, 1.0f, 0.0f};

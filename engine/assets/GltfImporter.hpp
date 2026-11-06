@@ -49,6 +49,35 @@ struct ImportedNode {
     glm::vec3 scale{1.0f};
 };
 
+/// One animated property of one node. Values are vec3 (translation, scale) or quaternions
+/// stored x, y, z, w (rotation); cubic-spline channels hold in-tangent, value, out-tangent per key.
+struct AnimationChannel {
+    enum class Path { Translation, Rotation, Scale };
+    enum class Interpolation { Step, Linear, CubicSpline };
+    int node = -1;  // index into ImportedModel::nodes
+    Path path = Path::Translation;
+    Interpolation interpolation = Interpolation::Linear;
+    std::vector<float> times;       // seconds, ascending
+    std::vector<glm::vec4> values;
+};
+
+struct ImportedAnimation {
+    std::string name;
+    float duration = 0.0f;  // last key time
+    std::vector<AnimationChannel> channels;
+};
+
+/// Local pose of one node, as sampled from an animation.
+struct NodePose {
+    glm::vec3 translation{0.0f};
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    glm::vec3 scale{1.0f};
+};
+
+/// Writes the animated properties at `time` (seconds, clamped to the clip) into `poses`
+/// (indexed like ImportedModel::nodes); properties no channel animates are left untouched.
+void sampleAnimation(const ImportedAnimation& animation, float time, std::vector<NodePose>& poses);
+
 /// A loaded glTF 2.0 asset (.gltf with external or embedded buffers, or .glb).
 /// Coordinate conventions match Lumora (right-handed, +Y up, metres, CCW front faces).
 struct ImportedModel {
@@ -56,6 +85,7 @@ struct ImportedModel {
     std::vector<ImportedMaterial> materials;
     std::vector<ImportedNode> nodes;  // parents precede children
     std::vector<ImportedImage> images;
+    std::vector<ImportedAnimation> animations;
     std::vector<std::string> warnings;
 };
 

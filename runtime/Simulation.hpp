@@ -7,6 +7,7 @@
 
 namespace lumora {
 
+class AnimationSystem;
 class AudioWorld;
 class InputState;
 class Scene;
@@ -48,6 +49,8 @@ public:
     /// Plays the scene's Audio Sources (positions follow the entities every step).
     void setAudio(std::unique_ptr<AudioWorld> audio);
     [[nodiscard]] AudioWorld* audio() noexcept { return audio_.get(); }
+    /// glTF animations (created when the scene has Animator components and a project root is set).
+    [[nodiscard]] AnimationSystem* animation() noexcept { return animation_.get(); }
     /// Behaviour instances currently running (0 before the first step).
     [[nodiscard]] std::size_t scriptInstances() const noexcept;
 
@@ -58,6 +61,7 @@ private:
     std::uint64_t steps_ = 0;
     std::unique_ptr<PhysicsWorld> physics_;
     std::unique_ptr<AudioWorld> audio_;
+    std::unique_ptr<AnimationSystem> animation_;
     std::filesystem::path projectRoot_;
     std::unique_ptr<ScriptRunner> scripts_;  // last: behaviours may still reference physics and audio
 };

@@ -25,6 +25,7 @@ works today from what is planned, and nothing listed as planned exists yet.
 | Physics | Jolt Physics rigid bodies (static, kinematic, dynamic) with box, sphere and capsule colliders, stepped on Jolt's thread pool during play |
 | Runtime | Fixed-timestep simulation (deterministic), built-in `Rotator` behaviour, a job system for background asset loading and parallel loops |
 | Audio | miniaudio: Audio Source component (WAV/FLAC/MP3, looping, volume, pitch, 3D attenuation and panning), listener at the camera, pause with play mode, scriptable |
+| Animation | glTF node animation clips (linear, step, cubic-spline; translation, rotation, scale) played by an Animator component, scriptable |
 | Prefabs | Entities with children saved as `.lprefab`, placed from the Content Browser (undoable) or spawned by scripts |
 | Game export | *File > Export Game*: player runtime, content, built game library and a launcher in a standalone folder |
 | Scripting | C++ behaviours in the project's `Scripts/` folder, compiled by the editor with CMake into a game library behind a C ABI and **hot-reloaded on save, also during play**; exceptions are caught per behaviour |

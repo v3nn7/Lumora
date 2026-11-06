@@ -9,6 +9,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <unordered_map>
 #include <format>
 #include <memory>
 
@@ -266,6 +267,7 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
             if (data.nodes[i].parent == nullptr) roots.push_back(&data.nodes[i]);
         }
     }
+    std::unordered_map<const cgltf_node*, int> nodeIndex;
     auto visit = [&](auto& self, const cgltf_node* node, int parent) -> void {
         ImportedNode out;
         out.name = nameOr(node->name, node->mesh != nullptr ? nameOr(node->mesh->name, "Node") : "Node");
@@ -286,11 +288,110 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
         }
         if (node->skin != nullptr) model.warnings.push_back(std::format("node '{}': skinning is ignored", out.name));
         const int index = static_cast<int>(model.nodes.size());
+        nodeIndex[node] = index;
         model.nodes.push_back(std::move(out));
         for (cgltf_size c = 0; c < node->children_count; ++c) self(self, node->children[c], index);
     };
     for (const cgltf_node* root : roots) visit(visit, root, -1);
+
+    // Animations: channels on nodes of the imported scene. Weights (morph targets) are not supported.
+    for (cgltf_size a = 0; a < data.animations_count; ++a) {
+        const cgltf_animation& source = data.animations[a];
+        ImportedAnimation animation;
+        animation.name = nameOr(source.name, std::format("Animation {}", a));
+        for (cgltf_size c = 0; c < source.channels_count; ++c) {
+            const cgltf_animation_channel& ch = source.channels[c];
+            const auto found = nodeIndex.find(ch.target_node);
+            if (found == nodeIndex.end() || ch.sampler == nullptr || ch.sampler->input == nullptr ||
+                ch.sampler->output == nullptr) {
+                continue;
+            }
+            AnimationChannel channel;
+            channel.node = found->second;
+            switch (ch.target_path) {
+                case cgltf_animation_path_type_translation: channel.path = AnimationChannel::Path::Translation; break;
+                case cgltf_animation_path_type_rotation: channel.path = AnimationChannel::Path::Rotation; break;
+                case cgltf_animation_path_type_scale: channel.path = AnimationChannel::Path::Scale; break;
+                default:
+                    model.warnings.push_back(std::format("animation '{}': morph target weights are ignored", animation.name));
+                    continue;
+            }
+            switch (ch.sampler->interpolation) {
+                case cgltf_interpolation_type_step: channel.interpolation = AnimationChannel::Interpolation::Step; break;
+                case cgltf_interpolation_type_cubic_spline:
+                    channel.interpolation = AnimationChannel::Interpolation::CubicSpline;
+                    break;
+                default: channel.interpolation = AnimationChannel::Interpolation::Linear; break;
+            }
+            const cgltf_accessor* input = ch.sampler->input;
+            const cgltf_accessor* output = ch.sampler->output;
+            channel.times.resize(input->count);
+            for (cgltf_size k = 0; k < input->count; ++k) cgltf_accessor_read_float(input, k, &channel.times[k], 1);
+            const cgltf_size components = channel.path == AnimationChannel::Path::Rotation ? 4 : 3;
+            channel.values.resize(output->count, glm::vec4(0.0f));
+            for (cgltf_size k = 0; k < output->count; ++k) {
+                cgltf_accessor_read_float(output, k, &channel.values[k].x, components);
+            }
+            const std::size_t perKey = channel.interpolation == AnimationChannel::Interpolation::CubicSpline ? 3 : 1;
+            if (channel.times.empty() || channel.values.size() != channel.times.size() * perKey) {
+                model.warnings.push_back(std::format("animation '{}': malformed channel skipped", animation.name));
+                continue;
+            }
+            animation.duration = std::max(animation.duration, channel.times.back());
+            animation.channels.push_back(std::move(channel));
+        }
+        if (!animation.channels.empty()) model.animations.push_back(std::move(animation));
+    }
     return model;
+}
+
+void sampleAnimation(const ImportedAnimation& animation, float time, std::vector<NodePose>& poses) {
+    for (const AnimationChannel& ch : animation.channels) {
+        if (ch.node < 0 || static_cast<std::size_t>(ch.node) >= poses.size()) continue;
+        const std::vector<float>& t = ch.times;
+        // Key interval containing the time (clamped to the first and last key).
+        std::size_t k1 = static_cast<std::size_t>(std::upper_bound(t.begin(), t.end(), time) - t.begin());
+        std::size_t k0 = k1 == 0 ? 0 : k1 - 1;
+        k1 = std::min(k1, t.size() - 1);
+        const float span = t[k1] - t[k0];
+        const float u = span > 0.0f ? std::clamp((time - t[k0]) / span, 0.0f, 1.0f) : 0.0f;
+        glm::vec4 value;
+        const bool rotation = ch.path == AnimationChannel::Path::Rotation;
+        switch (ch.interpolation) {
+            case AnimationChannel::Interpolation::Step:
+                value = ch.values[k0];
+                break;
+            case AnimationChannel::Interpolation::CubicSpline: {
+                // Hermite spline: values are (in-tangent, value, out-tangent) per key.
+                const glm::vec4 p0 = ch.values[k0 * 3 + 1];
+                const glm::vec4 m0 = ch.values[k0 * 3 + 2] * span;
+                const glm::vec4 p1 = ch.values[k1 * 3 + 1];
+                const glm::vec4 m1 = ch.values[k1 * 3 + 0] * span;
+                const float u2 = u * u;
+                const float u3 = u2 * u;
+                value = (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * p1 + (u3 - u2) * m1;
+                break;
+            }
+            default:
+                if (rotation) {
+                    const glm::quat a(ch.values[k0].w, ch.values[k0].x, ch.values[k0].y, ch.values[k0].z);
+                    const glm::quat b(ch.values[k1].w, ch.values[k1].x, ch.values[k1].y, ch.values[k1].z);
+                    const glm::quat q = glm::slerp(a, b, u);
+                    value = glm::vec4(q.x, q.y, q.z, q.w);
+                } else {
+                    value = glm::mix(ch.values[k0], ch.values[k1], u);
+                }
+                break;
+        }
+        NodePose& pose = poses[static_cast<std::size_t>(ch.node)];
+        switch (ch.path) {
+            case AnimationChannel::Path::Translation: pose.translation = glm::vec3(value); break;
+            case AnimationChannel::Path::Scale: pose.scale = glm::vec3(value); break;
+            case AnimationChannel::Path::Rotation:
+                pose.rotation = glm::normalize(glm::quat(value.w, value.x, value.y, value.z));
+                break;
+        }
+    }
 }
 
 Result<std::vector<std::filesystem::path>> gltfDependencies(const std::filesystem::path& file) {

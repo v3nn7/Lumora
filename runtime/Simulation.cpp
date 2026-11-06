@@ -1,5 +1,6 @@
 #include "runtime/Simulation.hpp"
 
+#include "runtime/AnimationSystem.hpp"
 #include "runtime/AudioWorld.hpp"
 #include "runtime/PhysicsWorld.hpp"
 #include "runtime/Scripting.hpp"
@@ -62,12 +63,17 @@ void Simulation::setScripts(std::shared_ptr<ScriptModule> module, const InputSta
         scripts_->setPhysics(physics_.get());
         scripts_->setAudio(audio_.get());
         scripts_->setProjectRoot(projectRoot_);
+        scripts_->setAnimation(animation_.get());
     }
 }
 
 void Simulation::setProjectRoot(std::filesystem::path root) {
     projectRoot_ = std::move(root);
     if (scripts_) scripts_->setProjectRoot(projectRoot_);
+    if (AnimationSystem::sceneHasAnimators(scene_)) {
+        animation_ = std::make_unique<AnimationSystem>(scene_, projectRoot_);
+        if (scripts_) scripts_->setAnimation(animation_.get());
+    }
 }
 
 void Simulation::setAudio(std::unique_ptr<AudioWorld> audio) {
@@ -82,6 +88,7 @@ void Simulation::step() {
     // Behaviours first, so physics and rendering see what they did this step.
     if (scripts_) scripts_->update(dt, simulatedSeconds());
     runRotatorSystem(scene_, dt);
+    if (animation_) animation_->update(dt);
     scene_.updateWorldTransforms();
     if (!physics_ && PhysicsWorld::sceneHasColliders(scene_)) {
         // Colliders appeared during play (a script cloned one): start the physics world now.

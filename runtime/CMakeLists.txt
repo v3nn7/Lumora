@@ -3,7 +3,8 @@ add_library(lumora_runtime ${LUMORA_MODULE_TYPE}
     Simulation.cpp
     PhysicsWorld.cpp
     Scripting.cpp
-    AudioWorld.cpp)
+    AudioWorld.cpp
+    AnimationSystem.cpp)
 lumora_module_setup(lumora_runtime)
 add_library(Lumora::runtime ALIAS lumora_runtime)
 # The scripting ABI lives in the SDK header that game libraries compile against.

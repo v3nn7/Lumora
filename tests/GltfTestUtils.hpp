@@ -4,6 +4,7 @@
 
 #include <stb_image_write.h>
 
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <format>
@@ -107,6 +108,64 @@ inline void writeCubeGltf(const std::filesystem::path& file, bool externalBuffer
 }})",
                                        material, total, uri, n * 12, normalOffset, n * 12, indexOffset,
                                        cube.indices.size() * 2, uvOffset, n * 8, n, n, cube.indices.size(), n);
+}
+
+} // namespace lumora::test
+
+namespace lumora::test {
+
+/// Writes a glTF with two nodes and no meshes: "Arm" (root) and its child "Hand", and two clips:
+/// "Slide" moves Arm from x = 0 to x = 2 over 1 s (linear) and turns Hand 90 degrees about +Y at
+/// 0.5 s (step); "Lift" raises Arm to y = 3 over 2 s.
+inline void writeAnimatedGltf(const std::filesystem::path& file) {
+    std::vector<unsigned char> bin;
+    auto floats = [&](std::initializer_list<float> values) {
+        const std::size_t offset = bin.size();
+        for (float f : values) {
+            const auto* b = reinterpret_cast<const unsigned char*>(&f);
+            bin.insert(bin.end(), b, b + 4);
+        }
+        return offset;
+    };
+    const float s = std::sqrt(0.5f);
+    const std::size_t times01 = floats({0.0f, 1.0f});
+    const std::size_t slide = floats({0, 0, 0, 2, 0, 0});
+    const std::size_t times0_05 = floats({0.0f, 0.5f});
+    const std::size_t turn = floats({0, 0, 0, 1, 0, s, 0, s});
+    const std::size_t times02 = floats({0.0f, 2.0f});
+    const std::size_t lift = floats({0, 0, 0, 0, 3, 0});
+    auto view = [&](std::size_t offset, std::size_t length) {
+        return std::format(R"({{"buffer":0,"byteOffset":{},"byteLength":{}}})", offset, length);
+    };
+    const std::string json = std::format(R"({{
+  "asset": {{"version": "2.0"}},
+  "scene": 0,
+  "scenes": [{{"nodes": [0]}}],
+  "nodes": [{{"name": "Arm", "children": [1]}}, {{"name": "Hand", "translation": [0, 1, 0]}}],
+  "buffers": [{{"byteLength": {}, "uri": "data:application/octet-stream;base64,{}"}}],
+  "bufferViews": [{}, {}, {}, {}, {}, {}],
+  "accessors": [
+    {{"bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1]}},
+    {{"bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC3"}},
+    {{"bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [0.5]}},
+    {{"bufferView": 3, "componentType": 5126, "count": 2, "type": "VEC4"}},
+    {{"bufferView": 4, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [2]}},
+    {{"bufferView": 5, "componentType": 5126, "count": 2, "type": "VEC3"}}
+  ],
+  "animations": [
+    {{"name": "Slide",
+      "samplers": [{{"input": 0, "output": 1, "interpolation": "LINEAR"}}, {{"input": 2, "output": 3, "interpolation": "STEP"}}],
+      "channels": [{{"sampler": 0, "target": {{"node": 0, "path": "translation"}}}},
+                   {{"sampler": 1, "target": {{"node": 1, "path": "rotation"}}}}]}},
+    {{"name": "Lift",
+      "samplers": [{{"input": 4, "output": 5}}],
+      "channels": [{{"sampler": 0, "target": {{"node": 0, "path": "translation"}}}}]}}
+  ]
+}})",
+        bin.size(), base64(bin), view(times01, 8), view(slide, 24), view(times0_05, 8), view(turn, 32), view(times02, 8),
+        view(lift, 24));
+    std::filesystem::create_directories(file.parent_path());
+    std::ofstream(file) << json;
 }
 
 } // namespace lumora::test

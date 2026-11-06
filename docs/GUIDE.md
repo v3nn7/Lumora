@@ -172,6 +172,23 @@ file already there. An imported model becomes entities that keep the model's nod
 Assets are referenced by keys such as `Content/Models/Helmet.glb#0` (the first mesh of that file)
 or `Content/Textures/Wood.png`. The Inspector's asset pickers list what the project contains.
 
+### Animation
+
+Animations in glTF models play in play mode. A model with clips gets an **Animator** on its root
+entity when it is added to the scene:
+
+| Setting | Does |
+|---|---|
+| Model | The glTF file the clips come from (filled in for you) |
+| Clip | The clip's name; empty plays the first one |
+| Speed | 1 = as authored, negative plays backwards |
+| Loop, Play on Start | Repeat the clip; start it when play begins |
+
+Clips animate the entities made from the model's nodes (they move, turn and scale); anything
+the clip does not animate keeps its value. Scripts on the root entity control it with
+`playAnimation("Walk")`, `stopAnimation()` and `animationPlaying()`. Skinned characters (bones
+deforming a mesh) are not supported yet; their node animation still plays.
+
 ### Materials and lighting
 
 The Mesh Renderer component holds the material: base colour, metallic, roughness, emissive colour
@@ -271,6 +288,7 @@ What a behaviour can do:
 | `clone(e)`, `destroy(e)` | Copy an entity with its children, components and scripts; remove one at the end of the step |
 | `param("speed", 4.0f)` | A number from the Script component's **Parameters** field, e.g. `speed=6, jump=4` |
 | `playSound()`, `stopSound()`, `soundPlaying()`, `playSoundOn(e)` | The Audio Source of this (or another) entity |
+| `playAnimation("Clip")`, `stopAnimation()`, `animationPlaying()` | The Animator of this entity |
 | `log("…")`, `warn("…")` | Messages in the Console |
 
 An exception thrown by a behaviour is reported in the Console and disables that behaviour; the

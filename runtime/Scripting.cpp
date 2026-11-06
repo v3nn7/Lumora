@@ -2,6 +2,7 @@
 
 #include "core/Log.hpp"
 #include "input/InputState.hpp"
+#include "runtime/AnimationSystem.hpp"
 #include "runtime/AudioWorld.hpp"
 #include "runtime/PhysicsWorld.hpp"
 #include "scene/Prefab.hpp"
@@ -249,6 +250,17 @@ script::Entity apiSpawn(void* c, const char* prefab, const float* xyz) {
     return static_cast<script::Entity>(entt::to_integral(*root));
 }
 
+int apiAnimation(void* c, script::Entity entity, const char* clip, int command) {
+    AnimationSystem* animation = context(c).animation;
+    const entt::entity e = liveEntity(c, entity);
+    if (animation == nullptr || e == entt::null) return 0;
+    switch (command) {
+        case 0: animation->stop(e); return 1;
+        case 1: return animation->play(e, clip != nullptr ? clip : "") ? 1 : 0;
+        default: return animation->isPlaying(e) ? 1 : 0;
+    }
+}
+
 int apiSound(void* c, script::Entity entity, int command) {
     AudioWorld* audio = context(c).audio;
     const entt::entity e = liveEntity(c, entity);
@@ -379,6 +391,7 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.parameter = apiParameter;
     api_.sound = apiSound;
     api_.spawn = apiSpawn;
+    api_.animation = apiAnimation;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }

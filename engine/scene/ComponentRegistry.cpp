@@ -113,6 +113,24 @@ ComponentRegistry makeBuiltin() {
         reg.add(std::move(d));
     }
     {
+        auto d = R::describe<AnimatorComponent>("Animator", "Animator");
+        d.fields = {
+            R::field(&AnimatorComponent::model, "model", "Model", FieldKind::String),
+            R::field(&AnimatorComponent::clip, "clip", "Clip", FieldKind::String),
+            ranged(R::field(&AnimatorComponent::speed, "speed", "Speed", FieldKind::Float), -10.0f, 10.0f, 0.05f),
+            R::field(&AnimatorComponent::loop, "loop", "Loop", FieldKind::Bool),
+            R::field(&AnimatorComponent::playOnStart, "playOnStart", "Play on Start", FieldKind::Bool),
+        };
+        reg.add(std::move(d));
+    }
+    {
+        auto d = R::describe<ModelNodeComponent>("ModelNode", "Model Node");
+        d.fields = {
+            ranged(R::field(&ModelNodeComponent::node, "node", "Node Index", FieldKind::Int), -1.0f, 1e6f, 1.0f),
+        };
+        reg.add(std::move(d));
+    }
+    {
         auto d = R::describe<AudioSourceComponent>("AudioSource", "Audio Source");
         d.fields = {
             R::field(&AudioSourceComponent::clip, "audioClip", "Clip", FieldKind::Asset),

@@ -235,3 +235,67 @@ TEST(AssetLibrary, ConcurrentRequestsFromManyThreads) {
     for (const ImageData* p : seen) EXPECT_EQ(p, seen[0]);
     EXPECT_NE(seen[0], nullptr);
 }
+
+// ---- Animations -----------------------------------------------------------------------------
+
+#include "runtime/AnimationSystem.hpp"
+#include "runtime/Simulation.hpp"
+
+TEST(GltfAnimation, ImportsAndSamplesClips) {
+    test::TempDir dir;
+    test::writeAnimatedGltf(dir.path() / "arm.gltf");
+    auto model = importGltf(dir.path() / "arm.gltf");
+    ASSERT_TRUE(model.has_value()) << model.error().message;
+    ASSERT_EQ(model->animations.size(), 2u);
+    const ImportedAnimation& slide = model->animations[0];
+    EXPECT_EQ(slide.name, "Slide");
+    EXPECT_FLOAT_EQ(slide.duration, 1.0f);
+    ASSERT_EQ(slide.channels.size(), 2u);
+    EXPECT_FLOAT_EQ(model->animations[1].duration, 2.0f);
+
+    std::vector<NodePose> poses(model->nodes.size());
+    sampleAnimation(slide, 0.25f, poses);
+    EXPECT_NEAR(poses[0].translation.x, 0.5f, 1e-5f) << "linear: a quarter of the way to x = 2";
+    EXPECT_NEAR(poses[1].rotation.w, 1.0f, 1e-5f) << "step: still the first key before 0.5 s";
+    sampleAnimation(slide, 0.75f, poses);
+    EXPECT_NEAR(poses[0].translation.x, 1.5f, 1e-5f);
+    EXPECT_NEAR(glm::degrees(glm::angle(poses[1].rotation)), 90.0f, 0.01f) << "step: jumped to the second key";
+    sampleAnimation(slide, 5.0f, poses);
+    EXPECT_NEAR(poses[0].translation.x, 2.0f, 1e-5f) << "clamped past the end";
+    EXPECT_NEAR(poses[1].translation.y, 0.0f, 1e-6f) << "untouched: no channel animates Hand's translation";
+}
+
+TEST(GltfAnimation, AnimatorDrivesTheModelsEntities) {
+    test::TempDir dir;
+    test::writeAnimatedGltf(dir.path() / "Content" / "Models" / "arm.gltf");
+    AssetLibrary assets(dir.path());
+    auto model = assets.model(dir.path() / "Content" / "Models" / "arm.gltf");
+    ASSERT_TRUE(model.has_value());
+    Scene scene("Anim");
+    const entt::entity root = instantiateModel(scene, **model, "Content/Models/arm.gltf", "Robot");
+    ASSERT_TRUE(scene.registry().all_of<AnimatorComponent>(root)) << "models with clips get an Animator";
+    entt::entity arm = entt::null, hand = entt::null;
+    for (auto [e, n] : scene.registry().view<NameComponent>().each()) {
+        if (n.name == "Arm") arm = e;
+        if (n.name == "Hand") hand = e;
+    }
+    ASSERT_TRUE(arm != entt::null && hand != entt::null);
+
+    Simulation sim(scene);
+    sim.setProjectRoot(dir.path());
+    ASSERT_NE(sim.animation(), nullptr);
+    for (int i = 0; i < 30; ++i) sim.step();  // 0.5 s into "Slide"
+    EXPECT_NEAR(scene.registry().get<TransformComponent>(arm).position.x, 1.0f, 0.02f);
+    EXPECT_NEAR(scene.registry().get<TransformComponent>(hand).position.y, 1.0f, 1e-5f) << "not animated: kept";
+    EXPECT_NEAR(std::abs(scene.registry().get<TransformComponent>(hand).rotationDeg.y), 90.0f, 0.1f);
+    for (int i = 0; i < 45; ++i) sim.step();  // 1.25 s: looped to 0.25 s
+    EXPECT_NEAR(scene.registry().get<TransformComponent>(arm).position.x, 0.5f, 0.02f) << "loops by default";
+
+    // Switch clips and play once.
+    auto& animator = scene.registry().get<AnimatorComponent>(root);
+    animator.loop = false;
+    ASSERT_TRUE(sim.animation()->play(root, "Lift"));
+    for (int i = 0; i < 180; ++i) sim.step();  // 3 s > 2 s clip
+    EXPECT_NEAR(scene.registry().get<TransformComponent>(arm).position.y, 3.0f, 1e-4f) << "stops on the last pose";
+    EXPECT_FALSE(sim.animation()->isPlaying(root));
+}

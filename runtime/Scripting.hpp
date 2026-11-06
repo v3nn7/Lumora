@@ -19,6 +19,7 @@
 
 namespace lumora {
 
+class AnimationSystem;
 class AudioWorld;
 class InputState;
 class PhysicsWorld;
@@ -81,6 +82,7 @@ public:
     void reload(std::shared_ptr<ScriptModule> module);
     void setPhysics(PhysicsWorld* physics) noexcept { context_.physics = physics; }
     void setAudio(AudioWorld* audio) noexcept { context_.audio = audio; }
+    void setAnimation(AnimationSystem* animation) noexcept { context_.animation = animation; }
     /// Project folder that spawn("Content/Prefabs/X.lprefab") resolves against.
     void setProjectRoot(std::filesystem::path root) { context_.projectRoot = std::move(root); }
     [[nodiscard]] std::size_t instanceCount() const noexcept { return instances_.size(); }
@@ -91,6 +93,7 @@ public:
         const InputState* input = nullptr;
         PhysicsWorld* physics = nullptr;
         AudioWorld* audio = nullptr;
+        AnimationSystem* animation = nullptr;
         std::filesystem::path projectRoot;
         std::unordered_map<std::string, std::shared_ptr<const nlohmann::json>> prefabs;  // loaded once
         std::vector<entt::entity> pendingDestroy;

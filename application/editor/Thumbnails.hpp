@@ -33,7 +33,7 @@ public:
     [[nodiscard]] QIcon icon(const QFileInfo& file);
     /// The file changed: make its preview again.
     void invalidate(const QString& path);
-    [[nodiscard]] bool hasPreview(const QString& path) const { return ready_.contains(path); }
+    [[nodiscard]] bool hasPreview(const QString& path) const;
     [[nodiscard]] int pending() const noexcept { return static_cast<int>(queue_.size() + decoding_.size()); }
     /// Makes every queued preview now (tests).
     void processAll();

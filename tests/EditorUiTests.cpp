@@ -487,17 +487,17 @@ TEST(ContentBrowser, ShowsTheWholeProjectAndOpensFiles) {
     std::filesystem::create_directories(root / "Scripts");
     std::filesystem::create_directories(root / "Saved" / "Cache");
     std::ofstream(root / "Scripts" / "Game.cpp") << "int x;\n";
-    editor::ContentBrowserPanel browser(QString::fromStdString(root.string()));
-    EXPECT_EQ(browser.currentFolder(), QString::fromStdString((root / "Content").string())) << "starts in Content";
-    browser.navigate(QString::fromStdString((root / "Content" / "Models").string()));
+    editor::ContentBrowserPanel browser(app::toQString(root));
+    EXPECT_EQ(browser.currentFolder(), app::toQString(root / "Content")) << "starts in Content";
+    browser.navigate(app::toQString(root / "Content" / "Models"));
     EXPECT_TRUE(browser.currentFolder().endsWith(QStringLiteral("Content/Models")));
     browser.navigate(QStringLiteral("/"));  // outside the project
-    EXPECT_EQ(browser.currentFolder(), QString::fromStdString(root.string())) << "never leaves the project";
+    EXPECT_EQ(browser.currentFolder(), app::toQString(root)) << "never leaves the project";
 
     // Double-clicking a script asks for the code editor.
     QStringList code;
     QObject::connect(&browser, &editor::ContentBrowserPanel::openCodeRequested, [&](const QString& p) { code << p; });
-    browser.navigate(QString::fromStdString((root / "Scripts").string()));
+    browser.navigate(app::toQString(root / "Scripts"));
     auto* view = browser.findChild<QListView*>();
     ASSERT_NE(view, nullptr);
     QModelIndex script;
@@ -869,7 +869,7 @@ TEST(Thumbnails, TypeIconsAndImagePreviewsCachedOnDisk) {
     EXPECT_NE(cpp, wav) << "each type has its own colour and label";
 
     test::TempDir project;
-    const QString root = QString::fromStdString(project.path().string());
+    const QString root = app::toQString(project.path());
     const QString png = root + QStringLiteral("/Content/red.png");
     QDir().mkpath(root + QStringLiteral("/Content"));
     QImage red(256, 128, QImage::Format_RGBA8888);

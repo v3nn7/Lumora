@@ -117,7 +117,13 @@ QIcon ThumbnailCache::typeIcon(const QString& suffix) {
     return icon;
 }
 
-ThumbnailCache::ThumbnailCache(QString projectRoot, QObject* parent) : QObject(parent), root_(std::move(projectRoot)) {
+namespace {
+/// The form icon() keys previews by (QFileInfo::absoluteFilePath: "/" separators).
+QString normalized(const QString& path) { return QFileInfo(path).absoluteFilePath(); }
+} // namespace
+
+ThumbnailCache::ThumbnailCache(QString projectRoot, QObject* parent)
+    : QObject(parent), root_(QDir(projectRoot).absolutePath()) {
     timer_ = new QTimer(this);
     timer_->setInterval(30);  // one preview per tick keeps the editor responsive
     connect(timer_, &QTimer::timeout, this, [this] { processOne(false); });
@@ -150,7 +156,10 @@ QIcon ThumbnailCache::icon(const QFileInfo& file) {
     return ready_.contains(path) ? ready_.value(path) : typeIcon(suffix);  // the old preview until the new one
 }
 
-void ThumbnailCache::invalidate(const QString& path) {
+bool ThumbnailCache::hasPreview(const QString& path) const { return ready_.contains(normalized(path)); }
+
+void ThumbnailCache::invalidate(const QString& file) {
+    const QString path = normalized(file);
     stamps_.remove(path);
     if (!queue_.contains(path) && ready_.contains(path)) {
         queue_.append(path);

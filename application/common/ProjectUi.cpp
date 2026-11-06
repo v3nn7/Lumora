@@ -21,7 +21,8 @@
 
 namespace lumora::app {
 
-QString toQString(const std::filesystem::path& p) { return QString::fromStdU16String(p.u16string()); }
+// "/" separators everywhere, as Qt reports paths (QFileInfo, QDir), so they compare equal on Windows.
+QString toQString(const std::filesystem::path& p) { return QString::fromStdU16String(p.generic_u16string()); }
 std::filesystem::path toPath(const QString& s) { return std::filesystem::path(s.toStdU16String()); }
 
 QPixmap placeholderThumbnail(const QString& name, const QSize& size) {

@@ -90,12 +90,10 @@ public:
 protected:
     bool filterAcceptsRow(int row, const QModelIndex& parent) const override {
         auto* fs = static_cast<QFileSystemModel*>(sourceModel());
-        const QModelIndex index = fs->index(row, 0, parent);
-        const QFileInfo info = fs->fileInfo(index);
-        if (info.absolutePath() == root_ && (info.fileName() == QLatin1String("Saved") || info.fileName().startsWith('.'))) {
-            return false;
-        }
-        return true;
+        // By model index, not path text (which Windows may spell differently: case, 8.3 names).
+        if (parent != fs->index(root_)) return true;
+        const QString name = fs->fileName(fs->index(row, 0, parent));
+        return name != QLatin1String("Saved") && !name.startsWith('.');
     }
 
 private:

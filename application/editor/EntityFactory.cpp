@@ -188,6 +188,12 @@ void populateCreateMenu(QMenu& menu, EditorContext& ctx, bool asChild) {
             scene.registry().get<TransformComponent>(e).position.y = 2.0f;
         }, asChild);
     });
+    menu.addAction(icon(QStringLiteral("light")), QObject::tr("Light Probe Volume"), [&ctx, asChild] {
+        ctx.createEntity(QObject::tr("Light Probe Volume"), [](Scene& scene, entt::entity e) {
+            scene.registry().emplace<LightProbeVolumeComponent>(e);
+            scene.registry().get<TransformComponent>(e).position.y = 4.0f;
+        }, asChild);
+    });
     menu.addAction(icon(QStringLiteral("camera")), QObject::tr("Camera"), [&ctx, asChild] {
         ctx.createEntity(QObject::tr("Camera"), [](Scene& scene, entt::entity e) {
             scene.registry().emplace<CameraComponent>(e).primary = scene.primaryCamera() == entt::null;

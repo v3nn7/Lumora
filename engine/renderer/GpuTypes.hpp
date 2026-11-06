@@ -38,6 +38,18 @@ struct GpuReflectionProbe {
     glm::uvec4 textures{0u};    // x prefiltered specular (bindless), y its highest mip
 };
 
+/// Light probe volumes a frame can use (the nearest to the camera when there are more).
+inline constexpr std::uint32_t kMaxProbeVolumes = 4;
+
+/// A baked light probe volume: its box and a 3D texture of SH9 irradiance, the 7 RGBA texels of
+/// each probe's 27 values stacked along Z (z + coefficient texel * nz).
+struct GpuProbeVolume {
+    glm::vec4 boxMin{0.0f};    // w blend distance (m)
+    glm::vec4 boxMax{0.0f};    // w intensity
+    glm::uvec4 grid{0u};       // x 3D texture (bindless), yzw probes along x, y, z
+    glm::vec4 params{0.0f};    // x normal bias (m)
+};
+
 struct FrameConstants {
     glm::mat4 view{1.0f};
     glm::mat4 projection{1.0f};
@@ -73,6 +85,8 @@ struct FrameConstants {
     glm::vec4 jitter{0.0f};                 // xy this frame's sub-pixel offset (NDC), zw last frame's
     glm::uvec4 probeCount{0u};              // x reflection probes in `probes`
     GpuReflectionProbe probes[kMaxReflectionProbes]{};
+    glm::uvec4 volumeCount{0u};             // x light probe volumes in `volumes`
+    GpuProbeVolume volumes[kMaxProbeVolumes]{};
     GpuLight lights[kMaxLights]{};
 };
 
@@ -121,8 +135,12 @@ static_assert(offsetof(FrameConstants, localShadowMatrices) == 912);
 static_assert(offsetof(FrameConstants, vsmLightView) == 912 + 64 * kLocalShadowTiles + 64);
 static_assert(offsetof(FrameConstants, previousViewProjection) == 912 + 64 * kLocalShadowTiles + 64 + 96);
 static_assert(offsetof(FrameConstants, probes) == 912 + 64 * kLocalShadowTiles + 64 + 96 + 80 + 16);
-static_assert(offsetof(FrameConstants, lights) == 912 + 64 * kLocalShadowTiles + 64 + 96 + 80 + 16 + 64 * kMaxReflectionProbes);
-static_assert(sizeof(FrameConstants) == 912 + 64 * kLocalShadowTiles + 64 + 96 + 80 + 16 + 64 * kMaxReflectionProbes + 64 * kMaxLights);
+static_assert(offsetof(FrameConstants, volumes) == 912 + 64 * kLocalShadowTiles + 64 + 96 + 80 + 16 + 64 * kMaxReflectionProbes + 16);
+static_assert(offsetof(FrameConstants, lights) ==
+              912 + 64 * kLocalShadowTiles + 64 + 96 + 80 + 16 + 64 * kMaxReflectionProbes + 16 + 64 * kMaxProbeVolumes);
+static_assert(sizeof(FrameConstants) ==
+              912 + 64 * kLocalShadowTiles + 64 + 96 + 80 + 16 + 64 * kMaxReflectionProbes + 16 + 64 * kMaxProbeVolumes + 64 * kMaxLights);
+static_assert(sizeof(GpuProbeVolume) == 64);
 static_assert(sizeof(GpuReflectionProbe) == 64);
 static_assert(sizeof(GpuObject) == 272);
 static_assert(offsetof(GpuObject, previousWorld) == 208);

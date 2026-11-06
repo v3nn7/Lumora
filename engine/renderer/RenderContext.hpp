@@ -77,6 +77,10 @@ public:
     [[nodiscard]] nvrhi::BufferHandle createBuffer(std::span<const std::byte> bytes, bool vertex, bool index,
                                                    const char* name, bool sharedHeap = true);
     /// Sampled texture from mip levels (level 0 first).
+    /// A 3D texture (one mip) with its texels, rows then slices, tightly packed.
+    [[nodiscard]] nvrhi::TextureHandle createVolumeTexture(std::span<const std::byte> texels, std::uint32_t width,
+                                                           std::uint32_t height, std::uint32_t depth, nvrhi::Format format,
+                                                           const char* name);
     [[nodiscard]] nvrhi::TextureHandle createTexture(std::span<const std::span<const std::byte>> levels,
                                                      std::uint32_t width, std::uint32_t height, nvrhi::Format format,
                                                      const char* name);

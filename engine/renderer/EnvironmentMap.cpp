@@ -154,6 +154,28 @@ glm::vec3 evaluateIrradiance(const std::array<glm::vec3, 9>& sh, const glm::vec3
     return glm::max(result, glm::vec3(0.0f));
 }
 
+std::array<glm::vec3, 9> projectIrradiance(const HdrImage& image) {
+    // Project onto SH9 (solid-angle weighted), then convolve with the clamped cosine
+    // (Ramamoorthi & Hanrahan 2001) and divide by pi.
+    std::array<glm::vec3, 9> sh{};
+    for (std::uint32_t y = 0; y < image.height; ++y) {
+        const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(image.height);
+        const float solidAngle = (2.0f * kPi / static_cast<float>(image.width)) * (kPi / static_cast<float>(image.height)) *
+                                 std::sin(v * kPi);
+        for (std::uint32_t x = 0; x < image.width; ++x) {
+            const glm::vec3 d = equirectDirection((static_cast<float>(x) + 0.5f) / static_cast<float>(image.width), v);
+            const float* p = &image.rgb[(static_cast<std::size_t>(y) * image.width + x) * 3];
+            const glm::vec3 radiance(p[0], p[1], p[2]);
+            const auto basis = shBasis(d);
+            for (std::size_t i = 0; i < 9; ++i) sh[i] += radiance * (basis[i] * solidAngle);
+        }
+    }
+    constexpr std::array<float, 9> kCosineBand{kPi, 2.0f * kPi / 3.0f, 2.0f * kPi / 3.0f, 2.0f * kPi / 3.0f,
+                                               kPi / 4.0f, kPi / 4.0f, kPi / 4.0f, kPi / 4.0f, kPi / 4.0f};
+    for (std::size_t i = 0; i < 9; ++i) sh[i] *= kCosineBand[i] / kPi;
+    return sh;
+}
+
 EnvironmentMap prefilterEnvironment(const HdrImage& image) {
     EnvironmentMap env;
     // Source pyramid: full resolution down to a few texels.
@@ -191,25 +213,9 @@ EnvironmentMap prefilterEnvironment(const HdrImage& image) {
         });
     }
 
-    // Irradiance: project a small level onto SH9 (solid-angle weighted), then convolve with the
-    // clamped cosine (Ramamoorthi & Hanrahan 2001) and divide by pi.
+    // Irradiance from a small level.
     const Level& small = pyramid[std::min<std::size_t>(pyramid.size() - 1, base + 2)];
-    std::array<glm::vec3, 9> sh{};
-    for (std::uint32_t y = 0; y < small.height; ++y) {
-        const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(small.height);
-        const float solidAngle = (2.0f * kPi / static_cast<float>(small.width)) * (kPi / static_cast<float>(small.height)) *
-                                 std::sin(v * kPi);
-        for (std::uint32_t x = 0; x < small.width; ++x) {
-            const glm::vec3 d = equirectDirection((static_cast<float>(x) + 0.5f) / static_cast<float>(small.width), v);
-            const float* p = &small.rgb[(static_cast<std::size_t>(y) * small.width + x) * 3];
-            const glm::vec3 radiance(p[0], p[1], p[2]);
-            const auto basis = shBasis(d);
-            for (std::size_t i = 0; i < 9; ++i) sh[i] += radiance * (basis[i] * solidAngle);
-        }
-    }
-    constexpr std::array<float, 9> kCosineBand{kPi, 2.0f * kPi / 3.0f, 2.0f * kPi / 3.0f, 2.0f * kPi / 3.0f,
-                                               kPi / 4.0f, kPi / 4.0f, kPi / 4.0f, kPi / 4.0f, kPi / 4.0f};
-    for (std::size_t i = 0; i < 9; ++i) env.irradiance[i] = sh[i] * (kCosineBand[i] / kPi);
+    env.irradiance = projectIrradiance(HdrImage{small.width, small.height, small.rgb});
     return env;
 }
 

@@ -36,6 +36,9 @@ inline constexpr std::uint32_t kEnvironmentSpecularLevels = 6;
 /// Prefilters an environment. The specular chain starts at min(512, image width) pixels wide.
 [[nodiscard]] EnvironmentMap prefilterEnvironment(const HdrImage& image);
 
+/// SH9 irradiance / pi (cosine-convolved) of an equirectangular radiance image.
+[[nodiscard]] std::array<glm::vec3, 9> projectIrradiance(const HdrImage& image);
+
 /// Irradiance / pi from SH9 coefficients (the same formula the shader uses).
 [[nodiscard]] glm::vec3 evaluateIrradiance(const std::array<glm::vec3, 9>& sh, const glm::vec3& normal);
 

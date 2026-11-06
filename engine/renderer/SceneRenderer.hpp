@@ -71,6 +71,8 @@ struct RenderSettings {
     float reflectionRoughness = 0.7f;  // roughness where screen-space reflections have faded out
     /// Reflection probes light glossy surfaces inside their boxes (off while baking them).
     bool reflectionProbes = true;
+    /// Baked light probe volumes replace the sky's ambient light inside their boxes.
+    bool lightProbeVolumes = true;
     /// The output gets the scene's linear HDR radiance instead of the tone-mapped image
     /// (no bloom blend, grading, vignette or dithering): probe baking reads it back.
     bool linearOutput = false;
@@ -94,6 +96,7 @@ struct SceneDrawStats {
     bool temporalAntiAliasing = false;        // TAA resolved the frame (with history when valid)
     bool screenSpaceReflections = false;
     std::uint32_t reflectionProbes = 0;       // baked probes the frame used
+    std::uint32_t lightProbeVolumes = 0;      // baked light probe volumes the frame used
     std::uint32_t virtualPagesRequested = 0;  // pages the view needed
     std::uint32_t virtualPagesCached = 0;     // of those, kept from earlier frames
     std::uint32_t virtualPagesRendered = 0;   // drawn this frame
@@ -224,6 +227,16 @@ private:
     };
     std::unordered_map<std::uint64_t, LandscapeEntry> landscape_;
     std::uint64_t frameCounter_ = 0;
+    /// Baked light probe volumes on the GPU, by absolute file path.
+    struct ProbeVolumeGpu {
+        nvrhi::TextureHandle texture;
+        std::uint32_t index = UINT32_MAX;
+        glm::uvec3 counts{0u};
+        std::uint64_t lastFrame = 0;
+        bool failed = false;
+    };
+    std::unordered_map<std::string, ProbeVolumeGpu> probeVolumes_;
+    [[nodiscard]] const ProbeVolumeGpu* probeVolume(AssetLibrary& assets, const std::string& key);
 };
 
 } // namespace lumora::render

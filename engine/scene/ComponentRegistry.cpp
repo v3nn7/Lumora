@@ -16,7 +16,7 @@ namespace {
 std::string categoryOf(std::string_view id) {
     static const std::pair<std::string_view, std::string_view> kCategories[] = {
         {"MeshRenderer", "Rendering"}, {"Light", "Rendering"},       {"Decal", "Rendering"},
-        {"ParticleEmitter", "Rendering"}, {"ReflectionProbe", "Rendering"}, {"Terrain", "Environment"},
+        {"ParticleEmitter", "Rendering"}, {"ReflectionProbe", "Rendering"}, {"LightProbeVolume", "Rendering"}, {"Terrain", "Environment"},
         {"Water", "Environment"},      {"Foliage", "Environment"},   {"RigidBody", "Physics"},
         {"Collider", "Physics"},       {"CharacterController", "Physics"}, {"Joint", "Physics"},
         {"Ragdoll", "Physics"},        {"Vehicle", "Physics"},       {"Animator", "Animation"},
@@ -306,6 +306,19 @@ ComponentRegistry makeBuiltin() {
             ranged(R::field(&P::intensity, "intensity", "Intensity", FieldKind::Float), 0.0f, 16.0f, 0.05f),
             ranged(R::field(&P::resolution, "resolution", "Resolution", FieldKind::Int), 16, 1024, 16),
             R::field(&P::baked, "baked", "Baked", FieldKind::Asset),
+        };
+        reg.add(std::move(d));
+    }
+    {
+        auto d = R::describe<LightProbeVolumeComponent>("LightProbeVolume", "Light Probe Volume");
+        using V = LightProbeVolumeComponent;
+        d.fields = {
+            ranged(R::field(&V::size, "size", "Size", FieldKind::Vec3), 0.1f, 1e5f, 0.1f),
+            ranged(R::field(&V::spacing, "spacing", "Probe Spacing", FieldKind::Float), 0.25f, 100.0f, 0.05f),
+            ranged(R::field(&V::blendDistance, "blendDistance", "Blend Distance", FieldKind::Float), 0.0f, 100.0f, 0.05f),
+            ranged(R::field(&V::intensity, "intensity", "Intensity", FieldKind::Float), 0.0f, 16.0f, 0.05f),
+            ranged(R::field(&V::bounces, "bounces", "Bounces", FieldKind::Int), 1, 8, 1),
+            R::field(&V::baked, "baked", "Baked", FieldKind::Asset),
         };
         reg.add(std::move(d));
     }

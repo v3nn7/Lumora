@@ -1767,3 +1767,75 @@ TEST_F(RendererTest, BakedReflectionProbesReflectTheirSurroundings) {
     EXPECT_TRUE(std::filesystem::exists(project.path() / second));
     EXPECT_FALSE(std::filesystem::exists(project.path() / first));
 }
+
+#include "renderer/LightProbes.hpp"
+
+TEST_F(RendererTest, LightProbeVolumesBleedColourOntoNearbySurfaces) {
+    test::TempDir project;
+    AssetLibrary assets(project.path());
+    auto scene = sceneWithSun();
+    scene->environment().fogDensity = 0.0f;
+    const auto floor = scene->createEntity("Floor");
+    auto& fm = scene->registry().emplace<MeshRendererComponent>(floor);
+    fm.mesh = MeshPrimitive::Plane;
+    fm.baseColor = glm::vec3(0.9f);
+    fm.roughness = 1.0f;
+    scene->registry().get<TransformComponent>(floor).scale = {12.0f, 1.0f, 12.0f};
+    // A glowing red wall standing on the floor.
+    const auto wall = scene->createEntity("Wall");
+    auto& wm = scene->registry().emplace<MeshRendererComponent>(wall);
+    wm.baseColor = glm::vec3(0.0f);
+    wm.emissive = {1.0f, 0.0f, 0.0f};
+    wm.emissiveStrength = 4.0f;
+    auto& wt = scene->registry().get<TransformComponent>(wall);
+    wt.position = {0.0f, 1.5f, -1.5f};
+    wt.scale = {6.0f, 3.0f, 0.2f};
+    const auto volumeEntity = scene->createEntity("Volume");
+    auto& volume = scene->registry().emplace<LightProbeVolumeComponent>(volumeEntity);
+    volume.size = {8.0f, 3.0f, 8.0f};
+    volume.spacing = 1.5f;
+    volume.bounces = 2;
+    scene->registry().get<TransformComponent>(volumeEntity).position = {0.0f, 1.5f, 0.0f};
+    scene->updateWorldTransforms();
+
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 6.0f, 6.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const glm::uvec2 size(96, 96);
+    const CameraView view = cam.view(1.0f);
+    RenderSettings settings;
+    settings.bloom = false;
+    settings.ambientOcclusion = false;
+    settings.assets = &assets;
+    settings.blockOnAssets = true;
+    auto before = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(before.has_value());
+    EXPECT_EQ(renderer_->stats().scene.lightProbeVolumes, 0u);
+
+    int reported = 0;
+    auto baked = bakeLightProbeVolumes(*renderer_, *scene, assets, settings, false, [&](float) { return ++reported > 0; });
+    ASSERT_TRUE(baked.has_value()) << baked.error().message;
+    EXPECT_EQ(*baked, 1);
+    const glm::uvec3 counts = probeVolumeCounts(volume.size, volume.spacing);
+    EXPECT_EQ(reported, static_cast<int>(counts.x * counts.y * counts.z * 2)) << "progress per probe and bounce";
+    ASSERT_TRUE(volume.baked.starts_with("Saved/Probes/"));
+    EXPECT_TRUE(std::filesystem::exists(project.path() / volume.baked));
+    std::size_t files = 0;
+    for ([[maybe_unused]] const auto& f : std::filesystem::directory_iterator(project.path() / "Saved" / "Probes")) ++files;
+    EXPECT_EQ(files, 1u) << "the first bounce's file is gone";
+
+    auto after = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(after.has_value());
+    EXPECT_EQ(renderer_->stats().scene.lightProbeVolumes, 1u);
+    const glm::ivec2 near = toPixel(view, {0.0f, 0.0f, -0.8f}, size);  // floor just in front of the wall
+    const auto a = pixel(*before, near.x, near.y);
+    const auto b = pixel(*after, near.x, near.y);
+    EXPECT_GT(int(b.r) - int(b.b), int(a.r) - int(a.b) + 15) << "the red wall tints the floor next to it";
+
+    // Cancelling keeps the volume as it was.
+    const std::string kept = volume.baked;
+    auto cancelled = bakeLightProbeVolumes(*renderer_, *scene, assets, settings, false, [](float) { return false; });
+    EXPECT_FALSE(cancelled.has_value());
+    EXPECT_EQ(volume.baked, kept);
+    EXPECT_TRUE(std::filesystem::exists(project.path() / kept));
+}

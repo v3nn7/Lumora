@@ -208,6 +208,11 @@ float3 evaluateAmbient(Surface s, out float3 specularWeight) {
         // light yet, and full sky light would flatten every shadow.
         diffuseLight = skyAverage(s.normal, 0.8) * 0.5;
     }
+#if defined(LUMORA_STAGE_FRAG)
+    // Baked indirect light inside light probe volumes (final radiance: undo the ambient intensity).
+    float4 baked = probeVolumeIrradiance(s.position, s.normal);
+    diffuseLight = lerp(diffuseLight, baked.rgb / max(gFrame.skyZenith.w, 1e-3), baked.a);
+#endif
     float3 envSpecular = environmentSpecular(s.position, s.normal, s.view, s.roughness);
     float3 diffuse = (1.0 - F) * (1.0 - s.metallic) * s.albedo * diffuseLight;
     specularWeight = (F0 * envBrdf.x + envBrdf.y) * energyCompensation(envBrdf, F0) * horizonOcclusion(R, s.geometricNormal);

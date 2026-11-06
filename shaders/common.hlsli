@@ -6,6 +6,7 @@
 #define SHADOW_CASCADES 4
 #define LOCAL_SHADOW_TILES 16
 #define MAX_REFLECTION_PROBES 8
+#define MAX_PROBE_VOLUMES 4
 #define LIGHT_DIRECTIONAL 0
 #define LIGHT_POINT 1
 #define LIGHT_SPOT 2
@@ -24,6 +25,13 @@ struct GpuReflectionProbe {
     float4 boxMax;    // w intensity
     float4 position;  // where it was captured; w 1 = box projection
     uint4 textures;   // x prefiltered specular (bindless), y its highest mip
+};
+
+struct GpuProbeVolume {
+    float4 boxMin;  // w blend distance (m)
+    float4 boxMax;  // w intensity
+    uint4 grid;     // x 3D texture (bindless: 7 texels of SH9 per probe, stacked along z), yzw probes along x, y, z
+    float4 params;  // x normal bias (m)
 };
 
 struct FrameData {
@@ -61,6 +69,8 @@ struct FrameData {
     float4 jitter;              // xy this frame's sub-pixel offset (NDC), zw last frame's
     uint4 probeCount;           // x reflection probes
     GpuReflectionProbe probes[MAX_REFLECTION_PROBES];
+    uint4 volumeCount;          // x light probe volumes
+    GpuProbeVolume volumes[MAX_PROBE_VOLUMES];
     GpuLight lights[MAX_LIGHTS];  // directional lights
 };
 
@@ -99,10 +109,13 @@ float4x4 skinMatrix(uint4 joints, float4 weights, uint first) {
 
 // Set 1 in graphics pipelines; compute shaders define LUMORA_COMPUTE first, which moves it to set
 // 2 (NVRHI puts bindless layouts after the regular sets, and compute has its storage images in 1).
+// The bindless table also holds 3D textures (light probe volumes), read through gVolumes.
 #if defined(LUMORA_COMPUTE)
 [[vk::binding(0, 2)]] Texture2D gTextures[];
+[[vk::binding(0, 2)]] Texture3D gVolumes[];
 #else
 [[vk::binding(0, 1)]] Texture2D gTextures[];
+[[vk::binding(0, 1)]] Texture3D gVolumes[];
 #endif
 [[vk::binding(5, 0)]] SamplerState gSamplers[4];
 // Same descriptors viewed as comparison samplers (descriptor aliasing of VK_DESCRIPTOR_TYPE_SAMPLER).
@@ -202,6 +215,49 @@ float3 environmentIrradiance(float3 n) {
         e += gFrame.irradianceSh[i].rgb * basis[i];
     }
     return max(e, 0.0.xxx) * gFrame.environmentParams.y;
+}
+
+/// Light probe volumes: irradiance / pi around the normal (rgb, final radiance units) from the
+/// volumes holding the point, and how much of it they cover (a; the sky's ambient for the rest).
+/// Each volume fades out over its blend distance beyond its box; earlier volumes (smaller) win.
+float4 probeVolumeIrradiance(float3 position, float3 n) {
+    float3 sum = 0.0;
+    float covered = 0.0;
+    uint count = min(gFrame.volumeCount.x, (uint)MAX_PROBE_VOLUMES);
+    for (uint i = 0; i < count && covered < 0.999; ++i) {
+        GpuProbeVolume volume = gFrame.volumes[i];
+        float blend = volume.boxMin.w;
+        float3 inside = min(position - volume.boxMin.xyz, volume.boxMax.xyz - position) + blend;
+        float edge = min(inside.x, min(inside.y, inside.z));
+        if (edge <= 0.0) {
+            continue;
+        }
+        float weight = blend > 0.0 ? saturate(edge / blend) : 1.0;
+        // Off the surface along the normal, so a wall does not read the probes behind it.
+        float3 uvw = saturate((position + n * volume.params.x - volume.boxMin.xyz) / (volume.boxMax.xyz - volume.boxMin.xyz));
+        float3 counts = float3(volume.grid.yzw);
+        float2 xy = clamp(uvw.xy, 0.5 / counts.xy, 1.0 - 0.5 / counts.xy);
+        float z = clamp(uvw.z * counts.z, 0.5, counts.z - 0.5);  // stays inside one coefficient's block
+        float values[28];
+        [unroll] for (uint t = 0; t < 7; ++t) {
+            float4 texel = gVolumes[volume.grid.x].SampleLevel(gSamplers[0], float3(xy, (float(t) * counts.z + z) / (7.0 * counts.z)), 0.0);
+            values[t * 4] = texel.x;
+            values[t * 4 + 1] = texel.y;
+            values[t * 4 + 2] = texel.z;
+            values[t * 4 + 3] = texel.w;
+        }
+        float basis[9] = {0.282095, 0.488603 * n.y, 0.488603 * n.z, 0.488603 * n.x, 1.092548 * n.x * n.y,
+                          1.092548 * n.y * n.z, 0.315392 * (3.0 * n.z * n.z - 1.0), 1.092548 * n.x * n.z,
+                          0.546274 * (n.x * n.x - n.y * n.y)};
+        float3 irradiance = 0.0;
+        [unroll] for (uint k = 0; k < 9; ++k) {
+            irradiance += float3(values[k * 3], values[k * 3 + 1], values[k * 3 + 2]) * basis[k];
+        }
+        float take = weight * (1.0 - covered);
+        sum += max(irradiance, 0.0) * volume.boxMax.w * take;
+        covered += take;
+    }
+    return float4(sum, covered);
 }
 
 #endif  // LUMORA_STAGE_FRAG || LUMORA_STAGE_COMP

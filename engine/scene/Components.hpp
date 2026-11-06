@@ -194,6 +194,18 @@ struct ReflectionProbeComponent {
     std::string baked;                   // the baked environment (.hdr, project-relative); set by baking
 };
 
+/// Indirect light for everything inside its box: light bounced off walls and floors and the sky
+/// seen through openings, from a grid of probes baked in the editor (Lighting > Bake Light
+/// Probes). Replaces the sky's ambient light there; objects moving through it are lit by it too.
+struct LightProbeVolumeComponent {
+    glm::vec3 size{20.0f, 8.0f, 20.0f};  // box, metres, centred on the entity (not rotated)
+    float spacing = 2.0f;                // metres between probes (fewer when there would be too many)
+    float blendDistance = 1.0f;          // fades out over this distance beyond the box
+    float intensity = 1.0f;
+    int bounces = 2;                     // 1 = light bounced once; each more bakes the volume again
+    std::string baked;                   // the baked probes (.lpv, project-relative); set by baking
+};
+
 /// Scatters copies of a mesh around the entity (grass, bushes, rocks, trees), on the terrain
 /// below when there is one. Drawn with GPU instancing: thousands of copies stay cheap.
 struct FoliageComponent {

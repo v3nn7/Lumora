@@ -158,3 +158,31 @@ TEST(ReflectionProbes, HdrFilesRoundTrip) {
         EXPECT_NEAR(loaded->rgb[i], image.rgb[i], brightest / 100.0f + 1e-6f) << i;
     }
 }
+
+#include "renderer/LightProbes.hpp"
+
+TEST(LightProbes, GridCountsFollowTheSpacingWithinLimits) {
+    EXPECT_EQ(probeVolumeCounts({20.0f, 8.0f, 20.0f}, 2.0f), glm::uvec3(10, 4, 10));
+    EXPECT_EQ(probeVolumeCounts({0.5f, 0.5f, 0.5f}, 2.0f), glm::uvec3(1, 1, 1));
+    const glm::uvec3 many = probeVolumeCounts({1000.0f, 1000.0f, 1000.0f}, 0.5f);
+    EXPECT_LE(many.x * many.y * many.z, 8192u);
+    EXPECT_LE(many.x, 64u);
+}
+
+TEST(LightProbes, VolumesRoundTripThroughTheirFiles) {
+    test::TempDir dir;
+    ProbeVolumeData data;
+    data.counts = {2, 1, 3};
+    for (int i = 0; i < 2 * 1 * 3 * 9; ++i) data.sh.emplace_back(static_cast<float>(i), -0.5f * static_cast<float>(i), 0.25f);
+    const auto file = dir.path() / "Saved" / "Probes" / "v.lpv";
+    ASSERT_TRUE(saveProbeVolume(file, data).has_value());
+    auto loaded = loadProbeVolume(file);
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().message;
+    EXPECT_EQ(loaded->counts, data.counts);
+    EXPECT_EQ(loaded->sh, data.sh);
+    std::filesystem::resize_file(file, 40);
+    EXPECT_FALSE(loadProbeVolume(file).has_value()) << "a truncated file is rejected";
+    ProbeVolumeData wrong;
+    wrong.counts = {2, 2, 2};
+    EXPECT_FALSE(saveProbeVolume(file, wrong).has_value());
+}

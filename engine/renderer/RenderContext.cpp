@@ -342,6 +342,25 @@ nvrhi::TextureHandle RenderContext::createTexture(std::span<const std::span<cons
     return texture;
 }
 
+nvrhi::TextureHandle RenderContext::createVolumeTexture(std::span<const std::byte> texels, std::uint32_t width,
+                                                        std::uint32_t height, std::uint32_t depth, nvrhi::Format format,
+                                                        const char* name) {
+    nvrhi::TextureDesc desc;
+    desc.dimension = nvrhi::TextureDimension::Texture3D;
+    desc.width = width;
+    desc.height = height;
+    desc.depth = depth;
+    desc.format = format;
+    desc.debugName = name;
+    desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    desc.keepInitialState = true;
+    nvrhi::TextureHandle texture = gpu_->createTexture(desc);
+    if (!texture) throw rhi::VulkanError(std::string("could not create texture ") + name, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+    const std::size_t row = static_cast<std::size_t>(width) * nvrhi::getFormatInfo(format).bytesPerBlock;
+    upload([&](nvrhi::ICommandList* cmd) { cmd->writeTexture(texture, 0, 0, texels.data(), row, row * height); });
+    return texture;
+}
+
 std::string RenderContext::describeDevices(bool requirePresentation) {
     rhi::InstanceConfig ic;
     ic.applicationName = "Lumora (device query)";

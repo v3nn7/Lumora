@@ -37,6 +37,7 @@
 #include "editor/SceneHierarchyPanel.hpp"
 #include "project/ProjectTemplates.hpp"
 #include "renderer/RenderContext.hpp"
+#include "renderer/LightProbes.hpp"
 #include "renderer/ReflectionProbes.hpp"
 #include "renderer/Renderer.hpp"
 #include "runtime/AudioWorld.hpp"
@@ -59,6 +60,7 @@
 
 #include <QActionGroup>
 #include <QApplication>
+#include <QProgressDialog>
 #include <QDesktopServices>
 #include <QCloseEvent>
 #include <QDockWidget>
@@ -652,6 +654,8 @@ void EditorWindow::buildMenus() {
     });
 
     QMenu* lighting = menuBar()->addMenu(tr("&Lighting"));
+    lighting->addAction(app::theme::icon(QStringLiteral("light")), tr("Bake Light Probes"), this,
+                        &EditorWindow::bakeLightProbes);
     lighting->addAction(app::theme::icon(QStringLiteral("sun")), tr("Bake Reflection Probes"), this,
                         &EditorWindow::bakeReflectionProbes);
 
@@ -2101,6 +2105,38 @@ void EditorWindow::bakeReflectionProbes() {
         statusBar()->showMessage(tr("The scene has no Reflection Probe (Create > Reflection Probe)"), 6000);
     } else {
         statusBar()->showMessage(tr("Baked %n reflection probe(s)", nullptr, *baked), 4000);
+    }
+}
+
+void EditorWindow::bakeLightProbes() {
+    if (ctx_.scene() == nullptr || ctx_.isPlaying()) {
+        statusBar()->showMessage(tr("Stop playing to bake light probes"), 4000);
+        return;
+    }
+    render::Renderer* renderer = app_.renderer();
+    if (renderer == nullptr) {
+        statusBar()->showMessage(tr("No renderer: %1").arg(app_.rendererError()), 6000);
+        return;
+    }
+    QProgressDialog dialog(tr("Baking light probes…"), tr("Cancel"), 0, 1000, this);
+    dialog.setWindowModality(Qt::WindowModal);
+    dialog.setMinimumDuration(300);
+    Result<int> baked = 0;
+    ctx_.edit(tr("Bake Light Probes"), [&](Scene& scene) {
+        baked = render::bakeLightProbeVolumes(*renderer, scene, assets_, {}, true, [&](float done) {
+            dialog.setValue(static_cast<int>(done * 1000.0f));
+            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+            return !dialog.wasCanceled();
+        });
+    });
+    dialog.reset();
+    if (!baked) {
+        log::warn("Editor", "light probes: {}", baked.error().message);
+        statusBar()->showMessage(QString::fromStdString(baked.error().message), 8000);
+    } else if (*baked == 0) {
+        statusBar()->showMessage(tr("The scene has no Light Probe Volume (Create > Light Probe Volume)"), 6000);
+    } else {
+        statusBar()->showMessage(tr("Baked %n light probe volume(s)", nullptr, *baked), 4000);
     }
 }
 

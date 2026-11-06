@@ -6,9 +6,11 @@
 #include "assets/MeshLod.hpp"
 
 #include "core/JobSystem.hpp"
+#include "core/Log.hpp"
 #include "renderer/FrameResources.hpp"
 #include "renderer/GpuTypes.hpp"
 #include "renderer/LightGrid.hpp"
+#include "renderer/LightProbes.hpp"
 #include "renderer/RenderContext.hpp"
 #include "scene/Landscape.hpp"
 #include "scene/Scene.hpp"
@@ -17,6 +19,7 @@
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_access.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/packing.hpp>
 #include <glm/matrix.hpp>
 
 #include <algorithm>
@@ -404,6 +407,43 @@ SceneRenderer::~SceneRenderer() {
     for (const std::uint32_t index : taaHistoryIndex_) {
         if (index != UINT32_MAX) ctx_.bindless().releaseTexture(index);
     }
+    for (auto& [file, volume] : probeVolumes_) ctx_.bindless().releaseTexture(volume.index);
+}
+
+const SceneRenderer::ProbeVolumeGpu* SceneRenderer::probeVolume(AssetLibrary& assets, const std::string& key) {
+    auto file = assets.filePath(key);
+    if (!file) return nullptr;
+    ProbeVolumeGpu& entry = probeVolumes_[file->string()];
+    entry.lastFrame = frameCounter_;
+    if (entry.failed) return nullptr;
+    if (!entry.texture) {
+        auto data = loadProbeVolume(*file);
+        if (!data) {
+            log::warn("Renderer", "light probe volume '{}': {}", key, data.error().message);
+            entry.failed = true;
+            return nullptr;
+        }
+        // 7 RGBA texels hold a probe's 27 values; coefficient texel t of every probe is block t along Z.
+        const glm::uvec3 n = data->counts;
+        std::vector<std::uint16_t> texels(static_cast<std::size_t>(n.x) * n.y * n.z * 7 * 4, 0);
+        for (std::uint32_t z = 0; z < n.z; ++z) {
+            for (std::uint32_t y = 0; y < n.y; ++y) {
+                for (std::uint32_t x = 0; x < n.x; ++x) {
+                    const glm::vec3* sh = &data->sh[((static_cast<std::size_t>(z) * n.y + y) * n.x + x) * 9];
+                    for (std::uint32_t v = 0; v < 27; ++v) {
+                        const std::uint32_t t = v / 4;
+                        const std::size_t texel = ((static_cast<std::size_t>(t) * n.z + z) * n.y + y) * n.x + x;
+                        texels[texel * 4 + v % 4] = glm::packHalf1x16(std::clamp(sh[v / 3][static_cast<int>(v % 3)], -60000.0f, 60000.0f));
+                    }
+                }
+            }
+        }
+        entry.counts = n;
+        entry.texture = ctx_.createVolumeTexture(std::as_bytes(std::span(texels)), n.x, n.y, n.z * 7,
+                                                 nvrhi::Format::RGBA16_FLOAT, "LightProbeVolume");
+        entry.index = ctx_.bindless().registerTexture(entry.texture);
+    }
+    return &entry;
 }
 
 SceneRenderer::ModelSurface SceneRenderer::modelSurface(AssetLibrary& assets, const std::string& meshAsset) {
@@ -537,6 +577,44 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         fc.probeCount.x = static_cast<std::uint32_t>(probes.size());
         stats.reflectionProbes = fc.probeCount.x;
     }
+
+    // Baked light probe volumes, like the reflection probes: nearest first, then smallest first.
+    if (settings.lightProbeVolumes && settings.assets != nullptr) {
+        struct Volume {
+            GpuProbeVolume gpu;
+            float distance;
+            float volume;
+        };
+        std::vector<Volume> volumes;
+        for (auto [e, volume, world] : reg.view<LightProbeVolumeComponent, WorldTransformComponent>().each()) {
+            if (volume.baked.empty()) continue;
+            const ProbeVolumeGpu* baked = probeVolume(*settings.assets, volume.baked);
+            if (baked == nullptr) continue;
+            const glm::vec3 center(world.matrix[3]);
+            const glm::vec3 half = glm::max(volume.size, glm::vec3(0.01f)) * 0.5f;
+            const glm::vec3 cell = half * 2.0f / glm::vec3(baked->counts);
+            Volume v;
+            v.gpu.boxMin = glm::vec4(center - half, std::max(volume.blendDistance, 0.0f));
+            v.gpu.boxMax = glm::vec4(center + half, std::max(volume.intensity, 0.0f));
+            v.gpu.grid = glm::uvec4(baked->index, baked->counts);
+            v.gpu.params = glm::vec4(0.3f * std::min({cell.x, cell.y, cell.z}), 0.0f, 0.0f, 0.0f);
+            v.distance = glm::length(glm::max(glm::abs(camera.position - center) - half, glm::vec3(0.0f)));
+            v.volume = half.x * half.y * half.z;
+            volumes.push_back(v);
+        }
+        std::ranges::sort(volumes, std::less<>{}, &Volume::distance);
+        if (volumes.size() > kMaxProbeVolumes) volumes.resize(kMaxProbeVolumes);
+        std::ranges::sort(volumes, std::less<>{}, &Volume::volume);
+        for (std::size_t i = 0; i < volumes.size(); ++i) fc.volumes[i] = volumes[i].gpu;
+        fc.volumeCount.x = static_cast<std::uint32_t>(volumes.size());
+        stats.lightProbeVolumes = fc.volumeCount.x;
+    }
+    // Volumes not drawn for a while (re-baked: a new file each time) are dropped.
+    std::erase_if(probeVolumes_, [&](auto& item) {
+        if (item.second.lastFrame + 600 >= frameCounter_) return false;
+        ctx_.bindless().releaseTexture(item.second.index);
+        return true;
+    });
 
     // Directional lights go into the constants (few, they light everything); point lights into
     // a storage buffer, binned into screen tiles so each pixel only visits the ones near it.

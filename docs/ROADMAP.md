@@ -75,6 +75,9 @@ Warunek dla kompresji tekstur (1.7).
 - **Woda:** dziś odbija tylko gradient nieba, dostanie SSR i sondy.
 
 ### 1.4 Globalne oświetlenie: wolumen sond (L), zależy od 1.3
+- **Stan: zrobione.** `LightProbeVolume`, Lighting > Bake Light Probes (postęp, anulowanie, cofanie),
+  `Saved/Probes/*.lpv`, tekstura 3D przez bindless (`gVolumes`), do 4 wolumenów na klatkę.
+  Brakuje: wykrywania sond w ścianach (przecieki ciemności) i szybszego wypalania (6 renderów na sondę).
 - **Jak:** komponent `LightProbeVolume` (siatka), wypalanie w edytorze: dla każdej sondy render
   sześcianu niskiej rozdzielczości i rzut na SH9 (kod SH już jest w `EnvironmentMap.cpp`),
   zapis do tekstury 3D; shader interpoluje trójliniowo. Wypalanie wielokrotne daje odbicia światła.

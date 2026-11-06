@@ -601,10 +601,10 @@ TEST(LightGrid, BinsLightsByTheTilesTheyCover) {
     const LightGrid grid = buildLightGrid(lights, view.view, view.projection, 256, 256, 32);
     ASSERT_EQ(grid.tilesX, 8u);
     ASSERT_EQ(grid.tilesY, 8u);
-    auto has = [&](std::uint32_t x, std::uint32_t y, std::uint32_t light) {
+    auto has = [&](std::uint32_t x, std::uint32_t y, std::uint32_t lightIndex) {
         const std::uint32_t t = y * grid.tilesX + x;
         for (std::uint32_t k = 0; k < grid.data[t * 2 + 1]; ++k) {
-            if (grid.data[grid.data[t * 2] + k] == light) return true;
+            if (grid.data[grid.data[t * 2] + k] == lightIndex) return true;
         }
         return false;
     };

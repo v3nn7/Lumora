@@ -113,7 +113,7 @@ TEST(Prefab, SavesAndInstantiatesASubtree) {
     scene.registry().emplace<MeshRendererComponent>(car).baseColor = glm::vec3(1.0f, 0.0f, 0.0f);
     const entt::entity wheel = scene.createEntity("Wheel", Uuid::generate(), car);
     scene.registry().emplace<RotatorComponent>(wheel).speedDeg = 90.0f;
-    scene.createEntity("Hubcap", Uuid::generate(), wheel);
+    (void)scene.createEntity("Hubcap", Uuid::generate(), wheel);
     scene.updateWorldTransforms();
 
     test::TempDir dir;

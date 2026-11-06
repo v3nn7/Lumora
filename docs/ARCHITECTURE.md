@@ -46,7 +46,7 @@ where the current design leaves room for them.
 | Winding | Counter-clockwise front faces (tested per primitive) |
 | Colour | HDR linear `R16G16B16A16_SFLOAT` scene colour; sRGB swapchain when available, otherwise the encode happens in the tonemap shader |
 | Errors | `std::expected` (`lumora::Result`) for recoverable failures (I/O, parsing). Exceptions for unrecoverable initialisation failures (`rhi::UnsupportedHardwareError`, `rhi::VulkanError`) and device loss (`rhi::DeviceLostError`), which the viewport turns into a visible message |
-| Ownership | RAII everywhere: `rhi::Buffer` / `rhi::Image` (VMA) and `rhi::DeviceHandle<T, vkDestroyT>` for simple handles. No raw `new`/`delete` in engine code |
+| Ownership | RAII everywhere: NVRHI handles (`nvrhi::BufferHandle`, `TextureHandle`, ...) for GPU resources and `rhi::DeviceHandle<T, vkDestroyT>` for the few raw Vulkan handles left (semaphores). No raw `new`/`delete` in engine code |
 
 ## Renderer
 

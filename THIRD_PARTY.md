@@ -9,7 +9,6 @@ licences compatible with it. Versions are pinned (and hash-verified) in `cmake/`
 | Qt 6 (Core, Gui, Widgets, Network, Svg, Wayland client) | application UI; shipped as separate shared libraries | LGPL-3.0 |
 | GLM | math | MIT |
 | EnTT | entity-component system | MIT |
-| Vulkan Memory Allocator | GPU memory | MIT |
 | nlohmann/json | JSON | MIT |
 | cgltf | glTF import | MIT |
 | stb_image / stb_image_write | image decoding | MIT or public domain |

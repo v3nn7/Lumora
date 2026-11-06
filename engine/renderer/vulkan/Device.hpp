@@ -2,7 +2,6 @@
 
 #include "renderer/vulkan/VulkanCommon.hpp"
 
-#include <vk_mem_alloc.h>
 
 #include <mutex>
 #include <optional>
@@ -72,7 +71,6 @@ public:
     [[nodiscard]] VkDevice handle() const noexcept { return device_; }
     [[nodiscard]] VkPhysicalDevice physical() const noexcept { return physical_; }
     [[nodiscard]] VkInstance instance() const noexcept { return instance_; }
-    [[nodiscard]] VmaAllocator allocator() const noexcept { return allocator_; }
     [[nodiscard]] VkQueue graphicsQueue() const noexcept { return graphicsQueue_; }
     /// Device extensions enabled at creation (NVRHI needs to know them).
     [[nodiscard]] const std::vector<std::string>& enabledExtensions() const noexcept { return enabledExtensions_; }
@@ -106,7 +104,6 @@ private:
     VkInstance instance_ = VK_NULL_HANDLE;
     VkPhysicalDevice physical_ = VK_NULL_HANDLE;
     VkDevice device_ = VK_NULL_HANDLE;
-    VmaAllocator allocator_ = VK_NULL_HANDLE;
     VkQueue graphicsQueue_ = VK_NULL_HANDLE;
     std::vector<std::string> enabledExtensions_;
     std::uint32_t graphicsFamily_ = 0;

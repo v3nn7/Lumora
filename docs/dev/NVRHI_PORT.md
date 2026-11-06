@@ -10,7 +10,7 @@ surface handling. The renderer's public API (`Renderer::render/capture/stats`, `
 
 | Before (own Vulkan)                  | After (NVRHI)                                                        |
 |--------------------------------------|----------------------------------------------------------------------|
-| `rhi::Buffer`, `rhi::Image` (VMA)    | `nvrhi::BufferHandle`, `nvrhi::TextureHandle`                        |
+| `rhi::Buffer`, `rhi::Image` (VMA)    | `nvrhi::BufferHandle`, `nvrhi::TextureHandle` (VMA removed)          |
 | `UploadQueue` (timeline, staging)    | immediate command list: `writeBuffer`, `writeTexture`, execute       |
 | `BindlessTable` (set 1)              | bindless layout {Texture_SRV, Sampler} + `DescriptorTable`, our slot allocator |
 | frame descriptor set (set 0)         | binding layout: CB b0, SRV t1..t4 (+ push constants 32 B), offsets 0 |
@@ -47,9 +47,10 @@ buffers bound at offsets).
 5. [x] Scene renderer passes: depth prepass, shadows, SSAO, sky, opaque, grid, particles, bloom,
        tonemap, FXAA, overlay, HUD.
 6. [x] Renderer frame loop: event queries, swapchain wrap, capture readback, stats.
-7. [~] Remove the old resource/upload/bindless/pipeline/graph-barrier code; tests updated.
+7. [x] Remove the old resource/upload/bindless/pipeline/graph-barrier code and VMA; tests updated.
 8. [ ] D3D12 backend on Windows (device, swapchain via DXGI, DXIL shaders).
 
-Status: steps 1-6 done; old upload queue, bindless table, pipeline code and secondary command
-pools are gone. Left in step 7: `rhi::Buffer`/`rhi::Image` and VMA (no longer used for rendering;
-Device still creates the allocator and reads memory budgets through it).
+Status: steps 1-7 done. Our Vulkan layer keeps the instance, device, swapchain and semaphores;
+memory budgets come from VK_EXT_memory_budget directly. Frame command lists are deferred
+(not "immediate") so passes can be recorded on several threads. Step 8 needs a Windows machine
+to build and test.

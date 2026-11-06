@@ -361,11 +361,11 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                                 std::clamp(env.dofBlur, 0.0f, 32.0f), camera.nearPlane);
     // Image-based lighting from the scene's HDR sky (procedural sky until it has loaded).
     if (!env.skyTexture.empty() && settings.assets != nullptr) {
-        if (const auto* gpu = ctx_.environments().get(*settings.assets, env.skyTexture, settings.blockOnAssets)) {
+        if (const auto* sky = ctx_.environments().get(*settings.assets, env.skyTexture, settings.blockOnAssets)) {
             fc.environmentParams = glm::vec4(1.0f, std::max(env.skyIntensity, 0.0f), glm::radians(env.skyRotationDeg),
-                                             static_cast<float>(gpu->specularLevels - 1));
-            fc.environmentTextures = glm::uvec4(gpu->skyIndex, gpu->specularIndex, ctx_.materialSampler(), 0u);
-            for (std::size_t i = 0; i < gpu->irradiance.size(); ++i) fc.irradianceSh[i] = glm::vec4(gpu->irradiance[i], 0.0f);
+                                             static_cast<float>(sky->specularLevels - 1));
+            fc.environmentTextures = glm::uvec4(sky->skyIndex, sky->specularIndex, ctx_.materialSampler(), 0u);
+            for (std::size_t i = 0; i < sky->irradiance.size(); ++i) fc.irradianceSh[i] = glm::vec4(sky->irradiance[i], 0.0f);
             stats.environmentLit = true;
         }
     }
@@ -802,10 +802,10 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         std::vector<std::vector<Draw>> tileCasters(localTiles.size());
         JobSystem::global().parallelFor(localTiles.size(), 1, [&](std::size_t begin, std::size_t end) {
             for (std::size_t t = begin; t < end; ++t) {
-                const LocalTile& tile = localTiles[t];
-                const Frustum frustumOfTile = Frustum::fromViewProjection(tile.viewProjection);
+                const LocalTile& localTile = localTiles[t];
+                const Frustum frustumOfTile = Frustum::fromViewProjection(localTile.viewProjection);
                 for (const Draw& d : casters) {
-                    if (glm::length(d.center - tile.lightPosition) - glm::length(d.extent) > tile.range) continue;
+                    if (glm::length(d.center - localTile.lightPosition) - glm::length(d.extent) > localTile.range) continue;
                     if (frustumOfTile.intersectsAabb(d.center, d.extent)) tileCasters[t].push_back(d);
                 }
                 tileCasters[t] = instanced(tileCasters[t]);

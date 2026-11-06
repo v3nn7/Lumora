@@ -28,12 +28,6 @@ FetchContent_Declare(EnTT
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     SYSTEM)
 
-FetchContent_Declare(VulkanMemoryAllocator
-    URL https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/archive/refs/tags/v3.3.0.tar.gz
-    URL_HASH SHA256=c4f6bbe6b5a45c2eb610ca9d231158e313086d5b1a40c9922cb42b597419b14e
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    SYSTEM)
-
 FetchContent_Declare(nlohmann_json
     URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
     URL_HASH SHA256=42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa
@@ -87,7 +81,6 @@ set(GLM_BUILD_TESTS OFF CACHE INTERNAL "")
 set(GLM_BUILD_LIBRARY OFF CACHE INTERNAL "")
 set(JSON_BuildTests OFF CACHE INTERNAL "")
 set(JSON_Install OFF CACHE INTERNAL "")
-set(VMA_ENABLE_INSTALL OFF CACHE INTERNAL "")
 
 # Recast & Detour 1.6.0 (zlib): navigation meshes, path finding and crowds of agents.
 FetchContent_Declare(recastnavigation
@@ -113,7 +106,7 @@ set(NVRHI_WITH_DX12 OFF CACHE BOOL "" FORCE)
 set(NVRHI_WITH_RTXMU OFF CACHE BOOL "" FORCE)
 set(NVRHI_FETCH_VULKAN_HEADERS OFF CACHE BOOL "" FORCE)  # the Vulkan SDK's headers (Vulkan::Headers)
 
-FetchContent_MakeAvailable(glm EnTT VulkanMemoryAllocator nlohmann_json cgltf stb JoltPhysics miniaudio nvrhi recastnavigation)
+FetchContent_MakeAvailable(glm EnTT nlohmann_json cgltf stb JoltPhysics miniaudio nvrhi recastnavigation)
 # NVRHI is static; the renderer module may be a shared library.
 set_target_properties(nvrhi nvrhi_vk Recast Detour DetourCrowd PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(stb INTERFACE)

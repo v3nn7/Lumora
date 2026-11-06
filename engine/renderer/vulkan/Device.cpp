@@ -260,19 +260,6 @@ Device::Device(const Instance& instance, const DeviceSelection& selection) : ins
             vkGetDeviceProcAddr(device_, "vkCmdEndDebugUtilsLabelEXT"));
     }
 
-    VmaVulkanFunctions functions{};
-    functions.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
-    functions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
-    VmaAllocatorCreateInfo allocInfo{};
-    allocInfo.vulkanApiVersion = Instance::kRequiredApiVersion;
-    allocInfo.instance = instance_;
-    allocInfo.physicalDevice = physical_;
-    allocInfo.device = device_;
-    allocInfo.pVulkanFunctions = &functions;
-    if (caps_.memoryBudget) allocInfo.flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
-    if (enable.v12.bufferDeviceAddress) allocInfo.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
-    LUMORA_VK_CHECK(vmaCreateAllocator(&allocInfo, &allocator_));
-
     log::info("Vulkan", "using {} ({}, driver {} {}), Vulkan {}, {} MiB VRAM", caps_.name, caps_.typeName(),
               caps_.driverName, caps_.driverInfo, versionString(caps_.apiVersion), caps_.deviceLocalBytes >> 20);
     log::info("Vulkan", "features: timestamps={} anisotropy={} memoryBudget={} rayTracing={} rayQuery={} meshShader={}",
@@ -283,9 +270,6 @@ Device::Device(const Instance& instance, const DeviceSelection& selection) : ins
 Device::~Device() {
     if (device_ != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(device_);
-    }
-    if (allocator_ != VK_NULL_HANDLE) {
-        vmaDestroyAllocator(allocator_);
     }
     if (device_ != VK_NULL_HANDLE) {
         vkDestroyDevice(device_, nullptr);
@@ -344,16 +328,17 @@ void Device::endLabel(VkCommandBuffer cmd) const {
 }
 
 Device::MemoryUsage Device::deviceLocalMemoryUsage() const {
-    VkPhysicalDeviceMemoryProperties mem{};
-    vkGetPhysicalDeviceMemoryProperties(physical_, &mem);
-    std::vector<VmaBudget> budgets(mem.memoryHeapCount);
-    vmaGetHeapBudgets(allocator_, budgets.data());
+    // VK_EXT_memory_budget: what this process uses and may use per heap (the driver's numbers).
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+    if (caps_.memoryBudget) props.pNext = &budget;
+    vkGetPhysicalDeviceMemoryProperties2(physical_, &props);
+    const VkPhysicalDeviceMemoryProperties& mem = props.memoryProperties;
     MemoryUsage total;
     for (std::uint32_t h = 0; h < mem.memoryHeapCount; ++h) {
-        if (mem.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
-            total.usage += budgets[h].usage;
-            total.budget += budgets[h].budget;
-        }
+        if ((mem.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) continue;
+        total.usage += caps_.memoryBudget ? budget.heapUsage[h] : 0;
+        total.budget += caps_.memoryBudget ? budget.heapBudget[h] : mem.memoryHeaps[h].size;
     }
     return total;
 }

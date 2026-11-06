@@ -119,6 +119,9 @@ private:
     nvrhi::GraphicsPipelineHandle ssaoBlur_;
     nvrhi::GraphicsPipelineHandle bloomDown_;
     nvrhi::GraphicsPipelineHandle bloomUp_;
+    nvrhi::GraphicsPipelineHandle depthOfField_;
+    nvrhi::GraphicsPipelineHandle shafts_;
+    nvrhi::GraphicsPipelineHandle shaftsAdd_;
     std::unordered_map<int, nvrhi::GraphicsPipelineHandle> tonemap_;
     std::unordered_map<int, nvrhi::GraphicsPipelineHandle> overlay_;
     std::unordered_map<int, nvrhi::GraphicsPipelineHandle> fxaa_;

@@ -242,6 +242,17 @@ struct EnvironmentSettings {
     std::string skyTexture;
     float skyIntensity = 1.0f;
     float skyRotationDeg = 0.0f;  // turns the environment around the vertical axis
+    // Colour grading, after tone mapping.
+    float contrast = 1.0f;
+    float saturation = 1.0f;
+    float temperature = 0.0f;  // -1 cool .. 1 warm
+    float tint = 0.0f;         // -1 green .. 1 magenta
+    // Depth of field: sharp around the focus distance, blurred beyond the focus range.
+    float dofBlur = 0.0f;           // largest blur radius in pixels (0 = off)
+    float focusDistance = 10.0f;    // metres from the camera
+    float focusRange = 6.0f;        // metres around it that stay sharp
+    /// Light shafts from the sun through gaps in the scene (0 = off).
+    float sunShafts = 0.0f;
 };
 
 } // namespace lumora

@@ -43,6 +43,9 @@ struct FrameData {
     uint4 lightGrid;            // x tiles across, y tiles down, z tile size (px), w point lights
     column_major float4x4 localShadowMatrices[LOCAL_SHADOW_TILES];  // spot / point-face tiles (4x4 atlas)
     float4 localShadowParams;   // x enabled, y 1/atlas size
+    float4 grading;             // x contrast, y saturation, z temperature, w tint
+    float4 depthOfField;        // x focus distance, y focus range, z max blur (px), w near plane
+    float4 sunShafts;           // xy sun on screen (uv), z intensity, w visibility
     GpuLight lights[MAX_LIGHTS];  // directional lights
 };
 

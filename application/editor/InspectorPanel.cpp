@@ -314,6 +314,8 @@ void InspectorPanel::buildEnvironment() {
          [](EnvironmentSettings& e, const FieldValue& v) { e.fogDensity = std::get<float>(v); }},
         {"Fog Falloff", FieldKind::Float, 0.001f, 2, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.fogHeightFalloff); },
          [](EnvironmentSettings& e, const FieldValue& v) { e.fogHeightFalloff = std::get<float>(v); }},
+        {"Sun Shafts", FieldKind::Float, 0, 4, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.sunShafts); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.sunShafts = std::get<float>(v); }},
     };
     const EnvField post[] = {
         {"Exposure", FieldKind::Float, 0.01f, 16, 0.05f, [](const EnvironmentSettings& e) { return FieldValue(e.exposure); },
@@ -322,6 +324,20 @@ void InspectorPanel::buildEnvironment() {
          [](EnvironmentSettings& e, const FieldValue& v) { e.bloomIntensity = std::get<float>(v); }},
         {"Vignette", FieldKind::Float, 0, 1, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.vignette); },
          [](EnvironmentSettings& e, const FieldValue& v) { e.vignette = std::get<float>(v); }},
+        {"Contrast", FieldKind::Float, 0.2f, 3, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.contrast); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.contrast = std::get<float>(v); }},
+        {"Saturation", FieldKind::Float, 0, 3, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.saturation); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.saturation = std::get<float>(v); }},
+        {"Temperature", FieldKind::Float, -1, 1, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.temperature); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.temperature = std::get<float>(v); }},
+        {"Tint", FieldKind::Float, -1, 1, 0.01f, [](const EnvironmentSettings& e) { return FieldValue(e.tint); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.tint = std::get<float>(v); }},
+        {"Depth of Field", FieldKind::Float, 0, 32, 0.5f, [](const EnvironmentSettings& e) { return FieldValue(e.dofBlur); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.dofBlur = std::get<float>(v); }},
+        {"Focus Distance", FieldKind::Float, 0.1f, 1000, 0.1f, [](const EnvironmentSettings& e) { return FieldValue(e.focusDistance); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.focusDistance = std::get<float>(v); }},
+        {"Focus Range", FieldKind::Float, 0.01f, 1000, 0.1f, [](const EnvironmentSettings& e) { return FieldValue(e.focusRange); },
+         [](EnvironmentSettings& e, const FieldValue& v) { e.focusRange = std::get<float>(v); }},
     };
     const EnvField environmentMap[] = {
         {"HDR Sky", FieldKind::Asset, 0, 0, 0, [](const EnvironmentSettings& e) { return FieldValue(e.skyTexture); },

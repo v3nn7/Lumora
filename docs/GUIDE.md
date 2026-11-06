@@ -221,7 +221,9 @@ light takes one, a point light six; the lights nearest the camera come first). A
 -Z axis in a cone (**Spot Angle** is its half-angle, **Spot Softness** how much of it fades out
 at the edge). A scene can have thousands of point and spot lights:
 each part of the screen only computes the ones whose range reaches it, so keep ranges tight. The directional light casts soft cascaded
-shadows across the whole view. Screen-space ambient occlusion darkens ambient light where surfaces meet
+shadows across the whole view. The scene's Inspector (nothing selected) also has colour grading (Contrast, Saturation,
+Temperature, Tint), depth of field (blur, Focus Distance, Focus Range) and Sun Shafts, light rays
+from the sun through gaps in the scene. Screen-space ambient occlusion darkens ambient light where surfaces meet
 (corners, contacts, under objects).
 
 Select nothing to edit the **scene environment** in the Inspector:

@@ -39,7 +39,15 @@ float4 PSMain(FullscreenOut input) : SV_Target0 {
     }
     float2 centered = input.uv - 0.5;
     float vignette = saturate(1.0 - gPush.param2 * pow(dot(centered, centered) * 2.2, 1.3));
+    // White balance in linear light: warm adds red and takes blue, tint trades green for magenta.
+    float temperature = gFrame.grading.z;
+    float tint = gFrame.grading.w;
+    hdr *= float3(1.0 + 0.2 * temperature + 0.1 * tint, 1.0 - 0.2 * tint, 1.0 - 0.2 * temperature + 0.1 * tint);
     float3 color = acesFilm(hdr * gPush.param0 * vignette);
+    // Contrast around middle grey, then saturation, on the display-referred image.
+    color = saturate((color - 0.18) * gFrame.grading.x + 0.18);
+    float luma = dot(color, float3(0.2126, 0.7152, 0.0722));
+    color = saturate(lerp(luma.xxx, color, gFrame.grading.y));
     if ((gPush.flags & 1u) != 0u) {
         color = linearToSrgb(color);
     }

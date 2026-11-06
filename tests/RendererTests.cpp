@@ -905,6 +905,88 @@ TEST_F(RendererTest, SpotAndPointLightsCastShadows) {
     }
 }
 
+TEST_F(RendererTest, ColorGradingDepthOfFieldAndSunShafts) {
+    auto scene = sceneWithSun();
+    scene->environment().fogDensity = 0.0f;
+    const auto cube = scene->createEntity("Cube");
+    scene->registry().emplace<MeshRendererComponent>(cube).baseColor = {0.9f, 0.1f, 0.1f};
+    const auto floor = scene->createEntity("Floor");
+    auto& checker = scene->registry().emplace<MeshRendererComponent>(floor);
+    checker.mesh = MeshPrimitive::Plane;
+    checker.pattern = SurfacePattern::Checker;
+    scene->registry().get<TransformComponent>(floor).position.y = -1.0f;
+    scene->registry().get<TransformComponent>(floor).scale = glm::vec3(80.0f, 1.0f, 80.0f);
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.5f, 3.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const glm::uvec2 size(128, 96);
+    const CameraView view = cam.view(static_cast<float>(size.x) / static_cast<float>(size.y));
+    RenderSettings settings;
+    settings.bloom = false;
+    settings.antiAliasing = false;
+    auto render = [&] {
+        auto image = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+        EXPECT_TRUE(image.has_value());
+        return *image;
+    };
+    const auto plain = render();
+    const auto red = pixel(plain, 64, 48);
+    ASSERT_GT(red.r, red.g + 40);
+
+    // Saturation 0: grey. Warm temperature: more red than blue on a grey surface.
+    scene->environment().saturation = 0.0f;
+    const auto grey = pixel(render(), 64, 48);
+    EXPECT_LT(std::abs(int(grey.r) - int(grey.g)), 4);
+    scene->environment().saturation = 1.0f;
+
+    // Depth of field focused on the cube: the far checkerboard loses contrast, the cube keeps it.
+    // High-frequency energy (neighbour differences) of the far floor beside the cube.
+    auto detail = [&](const CapturedImage& img) {
+        float sum = 0.0f;
+        for (int y = 40; y < 46; ++y) {
+            for (int x = 4; x < 40; ++x) sum += std::abs(luminance(pixel(img, x + 1, y)) - luminance(pixel(img, x, y)));
+        }
+        return sum;
+    };
+    const float farSharp = detail(plain);
+    ASSERT_GT(farSharp, 100.0f) << "the checkerboard has detail to blur";
+    scene->environment().dofBlur = 12.0f;
+    scene->environment().focusDistance = 3.0f;
+    scene->environment().focusRange = 1.5f;
+    const auto blurred = render();
+    EXPECT_LT(detail(blurred), farSharp * 0.6f) << "far floor blurred";
+    const auto cubeAfter = pixel(blurred, 64, 52);
+    EXPECT_GT(cubeAfter.r, cubeAfter.g + 40) << "the cube in focus stays sharp and red";
+    scene->environment().dofBlur = 0.0f;
+
+    // Sun shafts: with the sun in front of the camera the image brightens; behind it nothing.
+    const auto sun = scene->createEntity("Low sun");
+    scene->registry().emplace<LightComponent>(sun).intensity = 4.0f;
+    scene->registry().get<TransformComponent>(sun).rotationDeg = {-10.0f, 0.0f, 0.0f};  // shining towards -Z... from +Z
+    scene->updateWorldTransforms();
+    auto total = [](const CapturedImage& img) {
+        double sum = 0.0;
+        for (std::size_t i = 0; i + 3 < img.rgba.size(); i += 4) sum += img.rgba[i] + img.rgba[i + 1] + img.rgba[i + 2];
+        return sum;
+    };
+    for (auto e : scene->registry().view<LightComponent>()) {
+        if (e != sun) scene->registry().remove<LightComponent>(e);
+    }
+    scene->updateWorldTransforms();
+    // Look along the sun's light, back towards it.
+    FlyCameraController towards;
+    towards.setPosition({0.0f, 0.5f, -3.0f});
+    towards.lookAt({0.0f, 1.2f, 3.0f});
+    const CameraView sunView = towards.view(static_cast<float>(size.x) / static_cast<float>(size.y));
+    scene->environment().sunShafts = 0.0f;
+    auto noShafts = renderer_->capture(*scene, sunView, {size.x, size.y}, settings);
+    scene->environment().sunShafts = 2.0f;
+    auto withShafts = renderer_->capture(*scene, sunView, {size.x, size.y}, settings);
+    ASSERT_TRUE(noShafts && withShafts);
+    EXPECT_GT(total(*withShafts), total(*noShafts) * 1.02) << "shafts add light";
+}
+
 // ---- HUD ------------------------------------------------------------------------------------
 
 #include "renderer/HudRenderer.hpp"

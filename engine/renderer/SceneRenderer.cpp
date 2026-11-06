@@ -276,6 +276,22 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
         bloom.colorFormats = {hdr};
         (up ? bloomUp_ : bloomDown_) = make(bloom);
     }
+    PipelineDesc post;
+    post.vertexShader = "postfx.vert";
+    post.colorFormats = {hdr};
+    post.name = "DepthOfField";
+    post.pixelShader = "postfx.dof.frag";
+    post.pixelEntry = "PSDepthOfField";
+    depthOfField_ = make(post);
+    post.name = "SunShafts";
+    post.pixelShader = "postfx.shafts.frag";
+    post.pixelEntry = "PSShafts";
+    shafts_ = make(post);
+    post.name = "SunShaftsAdd";
+    post.pixelShader = "postfx.shaftsadd.frag";
+    post.pixelEntry = "PSShaftsAdd";
+    post.blend = BlendMode::Additive;
+    shaftsAdd_ = make(post);
 }
 
 SceneRenderer::~SceneRenderer() {
@@ -320,6 +336,10 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     fc.groundColor = glm::vec4(env.groundColor, 0.0f);
     fc.gridParams = glm::vec4(settings.showGrid ? 1.0f : 0.0f, settings.gridCellSize, settings.gridFadeDistance, 0.0f);
     fc.fogParams = glm::vec4(std::max(env.fogDensity, 0.0f), std::max(env.fogHeightFalloff, 1e-4f), 0.97f, 0.0f);
+    fc.grading = glm::vec4(std::max(env.contrast, 0.0f), std::max(env.saturation, 0.0f), std::clamp(env.temperature, -1.0f, 1.0f),
+                           std::clamp(env.tint, -1.0f, 1.0f));
+    fc.depthOfField = glm::vec4(std::max(env.focusDistance, 0.01f), std::max(env.focusRange, 0.01f),
+                                std::clamp(env.dofBlur, 0.0f, 32.0f), camera.nearPlane);
     // Image-based lighting from the scene's HDR sky (procedural sky until it has loaded).
     if (!env.skyTexture.empty() && settings.assets != nullptr) {
         if (const auto* gpu = ctx_.environments().get(*settings.assets, env.skyTexture, settings.blockOnAssets)) {
@@ -379,6 +399,16 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         }
     }
     const bool shadows = settings.shadows && haveSun && settings.shadowResolution > 0 && settings.shadowDistance > 0.0f;
+    // Sun shafts: where the sun is on screen, fading out as it leaves the view.
+    if (haveSun && env.sunShafts > 0.0f) {
+        const glm::vec4 clip = fc.viewProjection * glm::vec4(camera.position - sunTravel * 1000.0f, 1.0f);
+        if (clip.w > 0.0f) {
+            const glm::vec2 ndc = glm::vec2(clip) / clip.w;
+            const float edge = std::max(std::abs(ndc.x), std::abs(ndc.y));
+            const float visibility = std::clamp(1.6f - edge, 0.0f, 1.0f);
+            fc.sunShafts = glm::vec4(ndc * 0.5f + 0.5f, env.sunShafts, visibility);
+        }
+    }
     // Spot and point light shadows: tiles of the local atlas to the lights nearest the camera.
     struct LocalTile {
         glm::mat4 viewProjection;
@@ -894,6 +924,57 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         }
     }
 
+    // ---- Sun shafts (half resolution, added onto the HDR image), then depth of field.
+    const std::uint32_t linearSampler = ctx_.linearClampSampler();
+    if (fc.sunShafts.z > 0.0f && fc.sunShafts.w > 0.0f) {
+        const RGImage shaftsImage = graph.createImage("SunShafts", {ctx_.hdrFormat(), std::max(extent.width / 2, 1u),
+                                                                    std::max(extent.height / 2, 1u)});
+        graph.addRasterPass(
+            "SunShafts",
+            [&](PassBuilder& b) {
+                b.writeColor(shaftsImage, LoadOp::DontCare);
+                b.sample(hdr);
+                b.sample(depth);
+            },
+            [this, stateFor, hdr, depth, linearSampler](PassContext& ctx) {
+                PushConstants pc;
+                pc.index0 = ctx.bindlessIndex(hdr);
+                pc.index1 = ctx.bindlessIndex(depth);
+                pc.index2 = linearSampler;
+                fullscreen(ctx.cmd, stateFor(shafts_, ctx), pc);
+            });
+        graph.addRasterPass(
+            "SunShaftsAdd",
+            [&](PassBuilder& b) {
+                b.writeColor(hdr, LoadOp::Load);
+                b.sample(shaftsImage);
+            },
+            [this, stateFor, shaftsImage, linearSampler](PassContext& ctx) {
+                PushConstants pc;
+                pc.index0 = ctx.bindlessIndex(shaftsImage);
+                pc.index2 = linearSampler;
+                fullscreen(ctx.cmd, stateFor(shaftsAdd_, ctx), pc);
+            });
+    }
+    RGImage sceneColor = hdr;
+    if (fc.depthOfField.z > 0.5f) {
+        sceneColor = graph.createImage("DepthOfField", {ctx_.hdrFormat(), extent.width, extent.height});
+        graph.addRasterPass(
+            "DepthOfField",
+            [&](PassBuilder& b) {
+                b.writeColor(sceneColor, LoadOp::DontCare);
+                b.sample(hdr);
+                b.sample(depth);
+            },
+            [this, stateFor, hdr, depth, linearSampler](PassContext& ctx) {
+                PushConstants pc;
+                pc.index0 = ctx.bindlessIndex(hdr);
+                pc.index1 = ctx.bindlessIndex(depth);
+                pc.index2 = linearSampler;
+                fullscreen(ctx.cmd, stateFor(depthOfField_, ctx), pc);
+            });
+    }
+
     // ---- Bloom: downsample chain, then additive tent upsample back to the half-res level.
     const std::uint32_t sampler = ctx_.linearClampSampler();
     std::vector<RGImage> bloomChain;
@@ -908,7 +989,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     nvrhi::IGraphicsPipeline* bloomDown = bloomDown_;
     nvrhi::IGraphicsPipeline* bloomUp = bloomUp_;
     for (std::size_t i = 0; i < bloomChain.size(); ++i) {
-        const RGImage source = i == 0 ? hdr : bloomChain[i - 1];
+        const RGImage source = i == 0 ? sceneColor : bloomChain[i - 1];
         const RGImage target = bloomChain[i];
         graph.addRasterPass(
             "BloomDown" + std::to_string(i),
@@ -967,13 +1048,13 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     graph.addRasterPass(
         "Tonemap",
         [&](PassBuilder& b) {
-            b.sample(hdr);
+            b.sample(sceneColor);
             if (haveBloom) b.sample(bloomResult);
             b.writeColor(ldr, LoadOp::DontCare);
         },
         [=](PassContext& ctx) {
             PushConstants pc;
-            pc.index0 = ctx.bindlessIndex(hdr);
+            pc.index0 = ctx.bindlessIndex(sceneColor);
             pc.index1 = sampler;
             pc.index2 = haveBloom ? ctx.bindlessIndex(bloomResult) : 0u;
             pc.flags = (shaderSrgb ? 1u : 0u) | (haveBloom ? 2u : 0u) | (fxaa ? 4u : 0u);

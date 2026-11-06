@@ -51,6 +51,9 @@ struct FrameConstants {
     glm::uvec4 lightGrid{0u};               // x tiles across, y tiles down, z tile size (px), w point lights
     glm::mat4 localShadowMatrices[kLocalShadowTiles]{};  // spot / point-face view-projections (atlas tiles)
     glm::vec4 localShadowParams{0.0f};      // x enabled, y 1/atlas size (texels)
+    glm::vec4 grading{1.0f, 1.0f, 0.0f, 0.0f};  // x contrast, y saturation, z temperature, w tint
+    glm::vec4 depthOfField{0.0f};           // x focus distance, y focus range, z max blur (px), w near plane
+    glm::vec4 sunShafts{0.0f};              // xy sun on screen (uv), z intensity, w visibility
     GpuLight lights[kMaxLights]{};
 };
 
@@ -94,8 +97,8 @@ static_assert(offsetof(FrameConstants, cascadeTexelWorld) == 672);
 static_assert(offsetof(FrameConstants, shadowFade) == 688);
 static_assert(offsetof(FrameConstants, fogParams) == 704);
 static_assert(offsetof(FrameConstants, localShadowMatrices) == 912);
-static_assert(offsetof(FrameConstants, lights) == 912 + 64 * kLocalShadowTiles + 16);
-static_assert(sizeof(FrameConstants) == 912 + 64 * kLocalShadowTiles + 16 + 64 * kMaxLights);
+static_assert(offsetof(FrameConstants, lights) == 912 + 64 * kLocalShadowTiles + 64);
+static_assert(sizeof(FrameConstants) == 912 + 64 * kLocalShadowTiles + 64 + 64 * kMaxLights);
 static_assert(sizeof(GpuObject) == 192);
 static_assert(offsetof(GpuObject, textures) == 176);
 static_assert(offsetof(GpuObject, flags) == 160);

@@ -94,6 +94,14 @@ json SceneSerializer::environmentToJson(const EnvironmentSettings& env) {
         {"fogHeightFalloff", env.fogHeightFalloff},
         {"bloomIntensity", env.bloomIntensity},
         {"vignette", env.vignette},
+        {"contrast", env.contrast},
+        {"saturation", env.saturation},
+        {"temperature", env.temperature},
+        {"tint", env.tint},
+        {"dofBlur", env.dofBlur},
+        {"focusDistance", env.focusDistance},
+        {"focusRange", env.focusRange},
+        {"sunShafts", env.sunShafts},
         {"skyTexture", env.skyTexture},
         {"skyIntensity", env.skyIntensity},
         {"skyRotation", env.skyRotationDeg},
@@ -119,6 +127,14 @@ void SceneSerializer::applyEnvironment(EnvironmentSettings& env, const json& j) 
     number("fogHeightFalloff", env.fogHeightFalloff);
     number("bloomIntensity", env.bloomIntensity);
     number("vignette", env.vignette);
+    number("contrast", env.contrast);
+    number("saturation", env.saturation);
+    number("temperature", env.temperature);
+    number("tint", env.tint);
+    number("dofBlur", env.dofBlur);
+    number("focusDistance", env.focusDistance);
+    number("focusRange", env.focusRange);
+    number("sunShafts", env.sunShafts);
     if (const auto it = j.find("skyTexture"); it != j.end() && it->is_string()) env.skyTexture = it->get<std::string>();
     number("skyIntensity", env.skyIntensity);
     number("skyRotation", env.skyRotationDeg);

@@ -1396,3 +1396,39 @@ TEST_F(RendererTest, WaterIsDeeperColouredAndHidesBehindGeometry) {
     EXPECT_GT(d.b, d.r) << "deep water is blue";
     EXPECT_GT(b.r, b.b + 60) << "the box above the water is not covered by it";
 }
+
+TEST(MipChain, CutOutTexturesKeepTheirColourAndCoverage) {
+    // A 64 x 64 leaf: green disc (alpha 255) on transparent white.
+    constexpr std::uint32_t size = 64;
+    std::vector<std::uint8_t> rgba(size * size * 4);
+    std::size_t covered = 0;
+    for (std::uint32_t y = 0; y < size; ++y) {
+        for (std::uint32_t x = 0; x < size; ++x) {
+            const float dx = static_cast<float>(x) - 31.5f, dy = static_cast<float>(y) - 31.5f;
+            const bool leaf = dx * dx + dy * dy < 14.0f * 14.0f;
+            std::uint8_t* p = &rgba[(y * size + x) * 4];
+            p[0] = leaf ? 30 : 255;
+            p[1] = leaf ? 140 : 255;
+            p[2] = leaf ? 40 : 255;
+            p[3] = leaf ? 255 : 0;
+            covered += leaf ? 1 : 0;
+        }
+    }
+    const auto mips = buildMipChain(rgba, size, size, true);
+    ASSERT_EQ(mips.size(), 7u);
+    const float target = static_cast<float>(covered) / static_cast<float>(size * size);
+    for (std::size_t l = 1; l + 3 < mips.size(); ++l) {  // down to 8 x 8 (coarser levels are too few texels)
+        const auto& level = mips[l];
+        std::size_t above = 0;
+        int whitest = 0;
+        for (std::size_t i = 0; i < level.size(); i += 4) {
+            above += level[i + 3] >= 128 ? 1 : 0;
+            if (level[i + 3] > 0) whitest = std::max(whitest, static_cast<int>(level[i]));  // red stays low: no white mixed in
+        }
+        EXPECT_NEAR(static_cast<float>(above) / static_cast<float>(level.size() / 4), target, 0.06f) << "level " << l;
+        EXPECT_LT(whitest, 60) << "level " << l << ": the transparent white does not bleed into the leaf";
+    }
+    // Under the transparent texels sits the leaf's colour, not white.
+    EXPECT_LT(mips[0][0], 60);
+    EXPECT_EQ(mips[0][3], 0) << "full-size alpha unchanged";
+}

@@ -439,3 +439,64 @@ TEST(GltfMaterials, CutOutTwoSidedAndTheModelsOwnUnits) {
     const entt::entity inchRoot = instantiateModel(inchScene, *inches, "Content/Models/sketchup.gltf", "S");
     EXPECT_EQ(inchScene.registry().get<TransformComponent>(inchRoot).scale, glm::vec3(0.0254f));
 }
+
+#include <stb_image_write.h>
+
+namespace {
+/// A 16 x 16 RGB PNG: a noisy green "leaf" in the middle 8 x 8, around it white and a flat
+/// light-green streak (how exporters pad what used to be transparent).
+std::string leafOnWhitePng() {
+    std::vector<unsigned char> pixels(16 * 16 * 3, 255);
+    for (int x = 0; x < 16; ++x) {  // row 13: a padding streak
+        unsigned char* p = &pixels[static_cast<std::size_t>((13 * 16 + x) * 3)];
+        p[0] = 150, p[1] = 200, p[2] = 80;
+    }
+    for (int y = 4; y < 12; ++y) {
+        for (int x = 4; x < 12; ++x) {
+            unsigned char* p = &pixels[static_cast<std::size_t>((y * 16 + x) * 3)];
+            p[0] = static_cast<unsigned char>(20 + (x * 7 + y * 13) % 30);  // photographed: no two alike
+            p[1] = static_cast<unsigned char>(110 + (x * 11 + y * 5) % 50);
+            p[2] = 40;
+        }
+    }
+    std::vector<unsigned char> png;
+    stbi_write_png_to_func(
+        [](void* context, void* data, int size) {
+            auto* out = static_cast<std::vector<unsigned char>*>(context);
+            out->insert(out->end(), static_cast<unsigned char*>(data), static_cast<unsigned char*>(data) + size);
+        },
+        &png, 16, 16, 3, pixels.data(), 16 * 3);
+    return "data:image/png;base64," + test::base64(png);
+}
+} // namespace
+
+TEST(GltfMaterials, LeafMapsWithoutAlphaAreCutOut) {
+    test::TempDir dir;
+    std::filesystem::create_directories(dir.path() / "Content" / "Models");
+    for (const char* name : {"sugar_maple_leaf", "white_wall"}) {
+        editedCube(dir.path() / "Content" / "Models", std::string(name) + ".gltf", [&](nlohmann::json& doc) {
+            doc["materials"][0]["name"] = name;
+            doc["images"][0]["uri"] = leafOnWhitePng();
+        });
+    }
+    auto leaf = importGltf(dir.path() / "Content" / "Models" / "sugar_maple_leaf.gltf");
+    ASSERT_TRUE(leaf.has_value()) << leaf.error().message;
+    EXPECT_TRUE(leaf->images[0].cutOutBackground);
+    EXPECT_FLOAT_EQ(importedAlphaCutoff(leaf->materials[0]), 0.5f);
+    auto wall = importGltf(dir.path() / "Content" / "Models" / "white_wall.gltf");
+    ASSERT_TRUE(wall.has_value());
+    EXPECT_FALSE(wall->images[0].cutOutBackground) << "not foliage: white stays white";
+    EXPECT_FLOAT_EQ(importedAlphaCutoff(wall->materials[0]), 0.0f);
+
+    AssetLibrary library(dir.path());
+    auto texture = library.texture("Content/Models/sugar_maple_leaf.gltf#tex0");
+    ASSERT_TRUE(texture.has_value()) << texture.error().message;
+    auto alphaAt = [&](int x, int y) { return (*texture)->rgba[static_cast<std::size_t>((y * 16 + x) * 4 + 3)]; };
+    EXPECT_EQ(alphaAt(0, 0), 0) << "the white background is gone";
+    EXPECT_EQ(alphaAt(5, 13), 0) << "and so is the padding streak";
+    EXPECT_EQ(alphaAt(8, 8), 255) << "the leaf stays";
+    EXPECT_EQ(alphaAt(4, 4), 255);
+    auto plain = library.texture("Content/Models/white_wall.gltf#tex0");
+    ASSERT_TRUE(plain.has_value());
+    EXPECT_EQ((*plain)->rgba[3], 255);
+}

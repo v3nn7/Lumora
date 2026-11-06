@@ -1,5 +1,6 @@
 #include "assets/GltfImporter.hpp"
 
+#include "assets/Image.hpp"
 #include "assets/Primitives.hpp"
 #include "core/FileSystem.hpp"
 
@@ -11,6 +12,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <cstdlib>
+#include <cctype>
 #include <cstring>
 #include <unordered_map>
 #include <format>
@@ -227,6 +229,83 @@ int imageIndexOf(const cgltf_data& data, const cgltf_texture_view& view, std::ve
 
 } // namespace
 
+float findPaddedBackground(const ImageData& image, std::vector<std::uint8_t>* outMask) {
+    const std::uint32_t w = image.width, h = image.height;
+    if (w < 8 || h < 8) return 0.0f;
+    constexpr int kTolerance = 2;      // per channel: "identical" after compression noise
+    constexpr std::uint32_t kRun = 8;  // padding streaks are at least this long
+    const auto at = [&](std::uint32_t x, std::uint32_t y) { return &image.rgba[(static_cast<std::size_t>(y) * w + x) * 4]; };
+    const auto same = [&](const std::uint8_t* a, const std::uint8_t* b) {
+        return std::abs(a[0] - b[0]) <= kTolerance && std::abs(a[1] - b[1]) <= kTolerance && std::abs(a[2] - b[2]) <= kTolerance;
+    };
+    std::vector<std::uint8_t> candidate(static_cast<std::size_t>(w) * h, 0);
+    for (std::uint32_t y = 0; y < h; ++y) {  // white
+        for (std::uint32_t x = 0; x < w; ++x) {
+            const std::uint8_t* p = at(x, y);
+            if (std::min({p[0], p[1], p[2]}) > 225) candidate[static_cast<std::size_t>(y) * w + x] = 1;
+        }
+    }
+    for (std::uint32_t y = 0; y < h; ++y) {  // horizontal streaks
+        for (std::uint32_t x = 0; x < w;) {
+            std::uint32_t end = x + 1;
+            while (end < w && same(at(end - 1, y), at(end, y))) ++end;
+            if (end - x >= kRun) std::fill_n(candidate.begin() + static_cast<std::ptrdiff_t>(static_cast<std::size_t>(y) * w + x), end - x, 1);
+            x = end;
+        }
+    }
+    for (std::uint32_t x = 0; x < w; ++x) {  // vertical streaks
+        for (std::uint32_t y = 0; y < h;) {
+            std::uint32_t end = y + 1;
+            while (end < h && same(at(x, end - 1), at(x, end))) ++end;
+            if (end - y >= kRun) {
+                for (std::uint32_t k = y; k < end; ++k) candidate[static_cast<std::size_t>(k) * w + x] = 1;
+            }
+            y = end;
+        }
+    }
+    // Background = candidates connected to the border; flat patches inside a leaf stay leaf.
+    std::vector<std::uint8_t> background(candidate.size(), 0);
+    std::vector<std::uint32_t> queue;
+    auto seed = [&](std::uint32_t x, std::uint32_t y) {
+        const std::size_t i = static_cast<std::size_t>(y) * w + x;
+        if (candidate[i] && !background[i]) {
+            background[i] = 1;
+            queue.push_back(static_cast<std::uint32_t>(i));
+        }
+    };
+    std::size_t borderCandidates = 0;
+    for (std::uint32_t x = 0; x < w; ++x) {
+        borderCandidates += candidate[x] + candidate[static_cast<std::size_t>(h - 1) * w + x];
+        seed(x, 0);
+        seed(x, h - 1);
+    }
+    for (std::uint32_t y = 0; y < h; ++y) {
+        borderCandidates += candidate[static_cast<std::size_t>(y) * w] + candidate[static_cast<std::size_t>(y) * w + w - 1];
+        seed(0, y);
+        seed(w - 1, y);
+    }
+    for (std::size_t q = 0; q < queue.size(); ++q) {
+        const std::uint32_t x = queue[q] % w, y = queue[q] / w;
+        if (x > 0) seed(x - 1, y);
+        if (x + 1 < w) seed(x + 1, y);
+        if (y > 0) seed(x, y - 1);
+        if (y + 1 < h) seed(x, y + 1);
+    }
+    // Only a map whose border is mostly background has one.
+    if (borderCandidates * 4 < (2 * static_cast<std::size_t>(w) + 2 * h) * 3) return 0.0f;
+    const float share = static_cast<float>(queue.size()) / static_cast<float>(background.size());
+    if (outMask != nullptr) *outMask = std::move(background);
+    return share;
+}
+
+void cutOutPaddedBackground(ImageData& image) {
+    std::vector<std::uint8_t> background;
+    if (findPaddedBackground(image, &background) <= 0.0f) return;
+    for (std::size_t i = 0; i < background.size(); ++i) {
+        if (background[i]) image.rgba[i * 4 + 3] = 0;
+    }
+}
+
 float importedAlphaCutoff(const ImportedMaterial& m) {
     if (m.baseColorTexture < 0) return 0.0f;
     if (m.alphaMode == ImportedMaterial::AlphaMode::Mask) return std::clamp(m.alphaCutoff, 0.01f, 1.0f);
@@ -376,9 +455,32 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
         }
         return false;
     };
+    // Foliage maps that lost their alpha (common in SketchUp models): cut out the background
+    // (white, or the flat streaks exporters pad with). Only for leaf-like names and only when
+    // the map's border is background, so walls, snow or paper keep their colour.
+    auto foliageName = [](std::string text) {
+        for (char& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (const char* word : {"leaf", "leaves", "foliage", "grass", "plant", "tree", "branch", "fern", "bush", "ivy",
+                                 "flower", "hedge", "palm", "needle", "shrub", "twig", "vine"}) {
+            if (text.find(word) != std::string::npos) return true;
+        }
+        return false;
+    };
+    auto paddedBackground = [](const std::vector<std::byte>& encoded) {
+        auto decoded = decodeImage(encoded);
+        if (!decoded) return false;
+        const float share = findPaddedBackground(*decoded);
+        return share > 0.05f && share < 0.95f;  // some background, and something left
+    };
     for (ImportedMaterial& mat : model.materials) {
-        if (mat.baseColorTexture >= 0 && static_cast<std::size_t>(mat.baseColorTexture) < model.images.size()) {
-            mat.baseColorHasAlpha = pngHasAlpha(model.images[static_cast<std::size_t>(mat.baseColorTexture)].encoded);
+        if (mat.baseColorTexture < 0 || static_cast<std::size_t>(mat.baseColorTexture) >= model.images.size()) continue;
+        ImportedImage& image = model.images[static_cast<std::size_t>(mat.baseColorTexture)];
+        mat.baseColorHasAlpha = pngHasAlpha(image.encoded);
+        if (!mat.baseColorHasAlpha && mat.alphaMode == ImportedMaterial::AlphaMode::Opaque &&
+            (foliageName(mat.name) || foliageName(image.name)) && paddedBackground(image.encoded)) {
+            image.cutOutBackground = true;
+            mat.baseColorHasAlpha = true;  // cut out like a map with alpha
+            model.warnings.push_back(std::format("material '{}': leaf map without alpha, background cut out", mat.name));
         }
     }
 

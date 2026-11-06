@@ -214,6 +214,7 @@ std::function<Result<ImageData>()> AssetLibrary::textureLoader(const TextureRef&
             } else {
                 const ImportedImage& image = (*loaded)->images[static_cast<std::size_t>(ref.image)];
                 decoded = decodeImage(image.encoded);
+                if (decoded && image.cutOutBackground) cutOutPaddedBackground(*decoded);
                 if (!decoded) {
                     decoded = makeError("{} image '{}': {}", ref.file.filename().string(), image.name, decoded.error().message);
                 }

@@ -42,7 +42,18 @@ struct ImportedImage {
     std::string name;
     std::string mimeType;
     std::vector<std::byte> encoded;
+    /// A foliage map that lost its alpha (SketchUp leaves exported to glTF): the background
+    /// around the leaves is cut out when it is decoded as a texture.
+    bool cutOutBackground = false;
 };
+
+/// Finds the background of a foliage map without alpha: white, or the flat streaks exporters
+/// pad transparent areas with (edge colours smeared in straight lines), wherever it reaches the
+/// border. Photographed leaves never hold long runs of identical pixels, so they stay. Returns
+/// the share of the image that is background (0 when it found none).
+float findPaddedBackground(const struct ImageData& image, std::vector<std::uint8_t>* mask = nullptr);
+/// Makes that background transparent.
+void cutOutPaddedBackground(struct ImageData& image);
 
 struct ImportedMesh {
     std::string name;

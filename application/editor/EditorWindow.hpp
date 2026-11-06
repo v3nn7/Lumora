@@ -8,6 +8,9 @@
 
 #include <QMainWindow>
 
+#include <glm/vec2.hpp>
+#include <glm/vec3.hpp>
+
 #include <memory>
 #include <optional>
 #include <string>
@@ -63,8 +66,15 @@ public:
     [[nodiscard]] Scene* editScene() const noexcept { return editScene_.get(); }
     [[nodiscard]] const QString& scenePath() const noexcept { return scenePath_; }
     [[nodiscard]] AssetLibrary& assets() noexcept { return assets_; }
-    /// Instantiates a model that lives inside the project into the scene (one undo step).
-    entt::entity addModelToScene(const QString& absolutePath);
+    [[nodiscard]] EditorViewportClient& viewportClient() noexcept { return *client_; }
+    /// Places a model or prefab of the project (one undo step); at `where`, or where the camera
+    /// looks.
+    entt::entity addModelToScene(const QString& absolutePath, std::optional<glm::vec3> where = std::nullopt);
+    /// Gives an entity (and its children's Mesh Renderers) a material asset; one undo step.
+    bool assignMaterial(Uuid entity, const QString& materialPath);
+    /// What dropping files at a viewport position does: materials go on the object under the
+    /// cursor, models and prefabs are placed there, HDR images become the sky.
+    void dropOnViewport(const QStringList& files, glm::vec2 ndc);
     /// Copies external model files into the project and adds them to the scene.
     void importModels(const QStringList& files, const QString& targetDir);
     /// Asks to save unsaved changes and leaves play mode; false if the user cancelled.
@@ -134,7 +144,9 @@ private:
     void saveSelectionAsPrefab(const QString& folder = {});
     void createSceneFile(const QString& path);
     void openCode(const QString& path, int line = 0);
-    entt::entity addPrefabToScene(const std::filesystem::path& path);
+    entt::entity addPrefabToScene(const std::filesystem::path& path, std::optional<glm::vec3> where = std::nullopt);
+    [[nodiscard]] glm::vec3 placementSpot() const;
+    std::optional<std::string> pickMaterialAsset(QWidget* parent);
 
     app::AppContext& app_;
     Project project_;
@@ -192,6 +204,7 @@ private:
     QAction* exportGame_ = nullptr;
     class ContentBrowserPanel* content_ = nullptr;
     class CodeEditorPanel* code_ = nullptr;
+    class InspectorPanel* inspector_ = nullptr;
     QDockWidget* codeDock_ = nullptr;
     QAction* savePrefab_ = nullptr;
     QAction* newBehaviour_ = nullptr;

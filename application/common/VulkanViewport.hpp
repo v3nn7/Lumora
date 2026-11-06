@@ -11,6 +11,8 @@
 #include <QImage>
 #include <QPointF>
 #include <QTimer>
+#include <QList>
+#include <QUrl>
 #include <QWindow>
 
 #include <memory>
@@ -56,6 +58,16 @@ public:
     virtual void viewportMouseReleased(glm::vec2 ndc, Qt::MouseButton button) {
         (void)ndc;
         (void)button;
+    }
+    /// Files dragged over the viewport: return true to accept them.
+    virtual bool viewportAcceptsDrop(const QList<QUrl>& urls) {
+        (void)urls;
+        return false;
+    }
+    /// Files dropped at ndc.
+    virtual void viewportDropped(const QList<QUrl>& urls, glm::vec2 ndc) {
+        (void)urls;
+        (void)ndc;
     }
     /// Key presses that reach the viewport (Qt key code + modifiers). Return true if handled.
     virtual bool viewportKeyPressed(int key, Qt::KeyboardModifiers modifiers) {
@@ -114,6 +126,8 @@ private:
     void fail(const QString& message);
     [[nodiscard]] VkExtent2D pixelExtent() const;
     [[nodiscard]] glm::vec2 toNdc(QPointF position) const;
+    /// DragEnter/DragMove/Drop with files: asks the client; false if not a file drag.
+    bool handleDrag(QEvent* e);
     /// Keyboard drives the viewport while it is hovered, was clicked last, or is looking.
     [[nodiscard]] bool engaged() const noexcept { return hovered_ || clickFocus_ || looking_; }
     void updateEngagement(bool hovered, bool clickFocus);

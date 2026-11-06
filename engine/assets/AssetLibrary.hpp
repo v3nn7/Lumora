@@ -2,9 +2,11 @@
 
 #include "assets/GltfImporter.hpp"
 #include "assets/Image.hpp"
+#include "assets/Material.hpp"
 #include "core/Error.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <filesystem>
 #include <functional>
@@ -68,6 +70,13 @@ public:
     [[nodiscard]] AssetRequest<ImportedMesh> requestMesh(std::string_view key);
     [[nodiscard]] AssetRequest<ImageData> requestTexture(std::string_view key);
 
+    /// A material asset (.lmat key). Small files, loaded synchronously and cached; a changed file
+    /// is picked up within half a second (it is checked at most twice a second). Null if the
+    /// file is missing or invalid (reported once per change).
+    [[nodiscard]] std::shared_ptr<const MaterialAsset> material(std::string_view key);
+    /// Forgets a cached material so the next request reads the file again at once.
+    void reloadMaterial(std::string_view key);
+
     /// Blocks until every background load started so far has finished.
     void waitIdle();
     /// Drops all cached assets (waits for background loads first).
@@ -108,6 +117,14 @@ private:
     std::filesystem::path root_;
     SlotMap<ImportedModel> models_;
     SlotMap<ImageData> textures_;
+    struct MaterialEntry {
+        std::shared_ptr<const MaterialAsset> value;
+        std::filesystem::file_time_type stamp{};
+        std::chrono::steady_clock::time_point checked{};
+        bool reported = false;
+    };
+    std::mutex materialMutex_;  // guards materials_ (separate: resolving paths takes mutex_)
+    std::unordered_map<std::string, MaterialEntry> materials_;
 
     std::mutex inflightMutex_;
     std::condition_variable inflightDone_;

@@ -26,6 +26,7 @@ works today from what is planned, and nothing listed as planned exists yet.
 | Runtime | Fixed-timestep simulation (deterministic), built-in `Rotator` and `Oscillator` (moving platforms) behaviours, a job system for background asset loading and parallel loops |
 | Audio | miniaudio: Audio Source component (WAV/FLAC/MP3, looping, volume, pitch, 3D attenuation and panning), listener at the camera, pause with play mode, scriptable |
 | Animation | glTF node animation clips (linear, step, cubic-spline; translation, rotation, scale) played by an Animator component, scriptable; GPU skinning (4 joints per vertex) in shading, depth prepass and shadows |
+| Materials | Shared `.lmat` material assets edited in the Inspector, drag & drop onto objects, hot-reloaded, switchable from scripts |
 | Prefabs | Entities with children saved as `.lprefab`, placed from the Content Browser (undoable) or spawned by scripts |
 | Game export | *File > Export Game*: player runtime, content, built game library and a launcher in a standalone folder |
 | HUD | Scripts draw text (embedded DejaVu Sans, Latin incl. Polish, stb_truetype atlas) and rectangles over the game |

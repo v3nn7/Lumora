@@ -261,6 +261,51 @@ AssetRequest<ImageData> AssetLibrary::requestTexture(std::string_view key) {
     return request<ImageData>(s, textureLoader(*ref, std::string(key)));
 }
 
+std::shared_ptr<const MaterialAsset> AssetLibrary::material(std::string_view key) {
+    if (key.empty()) return nullptr;
+    const auto now = std::chrono::steady_clock::now();
+    std::scoped_lock lock(materialMutex_);
+    MaterialEntry& entry = materials_[std::string(key)];
+    if (entry.checked != std::chrono::steady_clock::time_point{} && now - entry.checked < std::chrono::milliseconds(500)) {
+        return entry.value;
+    }
+    entry.checked = now;
+    auto path = resolveRelative(key, key);
+    if (!path) {
+        if (!entry.reported) log::warn("Assets", "{}", path.error().message);
+        entry.reported = true;
+        entry.value = nullptr;
+        return nullptr;
+    }
+    std::error_code ec;
+    const auto stamp = std::filesystem::last_write_time(*path, ec);
+    if (ec) {
+        if (!entry.reported) log::warn("Assets", "material {} not found", std::string(key));
+        entry.reported = true;
+        entry.value = nullptr;
+        entry.stamp = {};
+        return nullptr;
+    }
+    if (entry.value && stamp == entry.stamp) return entry.value;
+    if (!entry.value && entry.reported && stamp == entry.stamp) return nullptr;  // still the broken file
+    entry.stamp = stamp;
+    auto loaded = loadMaterial(*path);
+    if (!loaded) {
+        log::warn("Assets", "{}", loaded.error().message);
+        entry.reported = true;
+        entry.value = nullptr;
+        return nullptr;
+    }
+    entry.reported = false;
+    entry.value = std::make_shared<const MaterialAsset>(std::move(*loaded));
+    return entry.value;
+}
+
+void AssetLibrary::reloadMaterial(std::string_view key) {
+    std::scoped_lock lock(materialMutex_);
+    materials_.erase(std::string(key));
+}
+
 void AssetLibrary::waitIdle() {
     std::unique_lock lock(inflightMutex_);
     inflightDone_.wait(lock, [this] { return inflight_ == 0; });
@@ -271,6 +316,8 @@ void AssetLibrary::clear() {
     std::scoped_lock lock(mutex_);
     models_.clear();
     textures_.clear();
+    std::scoped_lock materialLock(materialMutex_);
+    materials_.clear();
 }
 
 } // namespace lumora

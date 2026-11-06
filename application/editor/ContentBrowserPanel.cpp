@@ -1,6 +1,8 @@
 #include "editor/ContentBrowserPanel.hpp"
 
 #include "common/Theme.hpp"
+#include "assets/Material.hpp"
+#include "common/ProjectUi.hpp"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -40,12 +42,13 @@ bool isModel(const QFileInfo& info) { return hasSuffix(info, {"glb", "gltf"}); }
 bool isPrefab(const QFileInfo& info) { return hasSuffix(info, {"lprefab"}); }
 /// Equirectangular HDR environment: dropping or opening one makes it the scene's sky.
 bool isHdr(const QFileInfo& info) { return hasSuffix(info, {"hdr"}); }
+bool isMaterial(const QFileInfo& info) { return hasSuffix(info, {"lmat"}); }
 bool isCode(const QFileInfo& info) {
     return hasSuffix(info, {"cpp", "hpp", "h", "cc", "cxx", "inl", "txt", "md", "json", "lumora", "lscene", "lprefab"});
 }
 /// Files the browser can bring into the project.
 bool isImportable(const QFileInfo& info) {
-    return isModel(info) || isPrefab(info) || isHdr(info) ||
+    return isModel(info) || isPrefab(info) || isHdr(info) || isMaterial(info) ||
            hasSuffix(info, {"png", "jpg", "jpeg", "tga", "bmp", "wav", "flac", "mp3", "cpp", "hpp", "h"});
 }
 
@@ -57,6 +60,7 @@ public:
         if (isModel(info)) return app::theme::icon(QStringLiteral("cube"));
         if (isPrefab(info)) return app::theme::icon(QStringLiteral("entity"));
         if (isHdr(info)) return app::theme::icon(QStringLiteral("sun"));
+        if (isMaterial(info)) return app::theme::icon(QStringLiteral("sphere"));
         if (hasSuffix(info, {"cpp", "hpp", "h"})) return app::theme::icon(QStringLiteral("console"));
         return app::theme::icon(QStringLiteral("file"));
     }
@@ -170,8 +174,15 @@ ContentBrowserPanel::ContentBrowserPanel(const QString& projectRoot, QWidget* pa
     connect(import, &QToolButton::clicked, this, &ContentBrowserPanel::importFiles);
     connect(reveal, &QToolButton::clicked, this, [this] { QDesktopServices::openUrl(QUrl::fromLocalFile(current_)); });
     connect(view_, &QListView::customContextMenuRequested, this, &ContentBrowserPanel::showContextMenu);
+    // Files drag out (onto the viewport or the Hierarchy) and into folders.
+    view_->setDragEnabled(true);
+    view_->setDragDropMode(QAbstractItemView::DragDrop);
+    view_->setDefaultDropAction(Qt::CopyAction);
     view_->setAcceptDrops(true);
     view_->viewport()->setAcceptDrops(true);
+    connect(view_->selectionModel(), &QItemSelectionModel::currentChanged, this, [this](const QModelIndex& index) {
+        if (index.isValid()) emit assetSelected(model_->filePath(index));
+    });
     view_->viewport()->installEventFilter(this);
     view_->installEventFilter(this);  // Delete / F2 / Backspace
     navigate(QDir(root_).exists(QStringLiteral("Content")) ? QDir(root_).filePath(QStringLiteral("Content")) : root_);
@@ -225,6 +236,8 @@ void ContentBrowserPanel::activate(const QString& path) {
         emit addModelRequested(path);
     } else if (isHdr(info)) {
         emit importRequested({path}, current_);
+    } else if (isMaterial(info)) {
+        emit assetSelected(path);
     } else if (isCode(info)) {
         emit openCodeRequested(path);
     } else {
@@ -235,6 +248,7 @@ void ContentBrowserPanel::activate(const QString& path) {
 void ContentBrowserPanel::populateNewMenu(QMenu& menu) {
     menu.addAction(app::theme::icon(QStringLiteral("folder")), tr("Folder…"), this, &ContentBrowserPanel::newFolder);
     menu.addAction(app::theme::icon(QStringLiteral("scene")), tr("Scene…"), this, &ContentBrowserPanel::newScene);
+    menu.addAction(app::theme::icon(QStringLiteral("sphere")), tr("Material…"), this, &ContentBrowserPanel::newMaterial);
     menu.addAction(app::theme::icon(QStringLiteral("console")), tr("C++ Behaviour…"), this,
                    [this] { emit newBehaviourRequested(); });
     menu.addAction(app::theme::icon(QStringLiteral("entity")), tr("Prefab from Selection"), this,
@@ -262,6 +276,37 @@ void ContentBrowserPanel::newScene() {
         return;
     }
     emit newSceneRequested(path);
+}
+
+void ContentBrowserPanel::newMaterial() {
+    bool ok = false;
+    QString name = QInputDialog::getText(this, tr("New Material"), tr("Material name"), QLineEdit::Normal,
+                                         tr("Material"), &ok)
+                       .trimmed();
+    if (!ok || name.isEmpty()) return;
+    const QString path = createMaterial(name);
+    if (path.isEmpty()) {
+        QMessageBox::warning(this, tr("New Material"), tr("Could not create %1 (does it exist already?).").arg(name));
+    }
+}
+
+QString ContentBrowserPanel::createMaterial(QString name) {
+    if (!name.endsWith(QLatin1String(".lmat"))) name += QStringLiteral(".lmat");
+    const QString path = QDir(current_).filePath(name);
+    if (QFileInfo::exists(path) || !saveMaterial(MaterialAsset{}, app::toPath(path))) return {};
+    emit assetSelected(path);
+    return path;
+}
+
+void ContentBrowserPanel::moveInto(const QStringList& files, const QString& folder) {
+    for (const QString& file : files) {
+        const QFileInfo info(file);
+        const QString target = QDir(folder).filePath(info.fileName());
+        if (info.absoluteFilePath() == target || folder.startsWith(info.absoluteFilePath() + QLatin1Char('/'))) continue;
+        if (QFileInfo::exists(target) || !QFile::rename(file, target)) {
+            QMessageBox::warning(this, tr("Move"), tr("Could not move %1 into %2.").arg(info.fileName(), QFileInfo(folder).fileName()));
+        }
+    }
 }
 
 void ContentBrowserPanel::importFiles() {
@@ -320,13 +365,25 @@ bool ContentBrowserPanel::eventFilter(QObject* watched, QEvent* event) {
             }
         } else if (event->type() == QEvent::Drop) {
             auto* drop = static_cast<QDropEvent*>(event);
+            // Onto a folder: there; anywhere else: the open folder.
+            const QModelIndex target = view_->indexAt(drop->position().toPoint());
+            const QString folder = target.isValid() && model_->isDir(target) ? model_->filePath(target) : current_;
             QStringList files;
+            QStringList moved;
             for (const QUrl& url : drop->mimeData()->urls()) {
+                if (!url.isLocalFile()) continue;
                 const QFileInfo dropped(url.toLocalFile());
-                if (url.isLocalFile() && isImportable(dropped)) files << url.toLocalFile();
+                if (dropped.absoluteFilePath().startsWith(root_ + QLatin1Char('/'))) {
+                    moved << dropped.absoluteFilePath();  // already in the project: a move
+                } else if (isImportable(dropped)) {
+                    files << dropped.absoluteFilePath();
+                }
             }
-            if (!files.isEmpty()) emit importRequested(files, current_);
-            drop->acceptProposedAction();
+            if (!moved.isEmpty() && folder != current_) moveInto(moved, folder);
+            if (!files.isEmpty()) emit importRequested(files, folder);
+            // Copy, never Move: the dragging view would then try to remove the source rows.
+            drop->setDropAction(Qt::CopyAction);
+            drop->accept();
             return true;
         }
     }
@@ -351,6 +408,11 @@ void ContentBrowserPanel::showContextMenu(const QPoint& pos) {
         }
         if (isCode(info)) {
             menu.addAction(app::theme::icon(QStringLiteral("console")), tr("Edit in Code Editor"), [this, path] { emit openCodeRequested(path); });
+        }
+        if (isMaterial(info)) {
+            menu.addAction(app::theme::icon(QStringLiteral("sphere")), tr("Edit Material"), [this, path] { emit assetSelected(path); });
+            menu.addAction(app::theme::icon(QStringLiteral("cube")), tr("Apply to Selected Object"),
+                           [this, path] { emit applyMaterialRequested(path); });
         }
         menu.addSeparator();
         menu.addAction(tr("Rename"), [this, index] { view_->edit(index); });

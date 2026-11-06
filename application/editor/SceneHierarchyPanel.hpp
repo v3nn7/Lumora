@@ -24,8 +24,13 @@ public:
 
 signals:
     void reparentRequested(lumora::Uuid child, lumora::Uuid parent, int index);
+    /// Files dragged in from elsewhere (the Content Browser) and dropped on an entity (or on
+    /// empty space: a null Uuid).
+    void filesDropped(lumora::Uuid target, const QStringList& files);
 
 protected:
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dragMoveEvent(QDragMoveEvent* event) override;
     void dropEvent(QDropEvent* event) override;
 };
 
@@ -33,6 +38,10 @@ class LUMORA_EDITOR_API SceneHierarchyPanel final : public QWidget {
     Q_OBJECT
 public:
     explicit SceneHierarchyPanel(EditorContext& ctx, QWidget* parent = nullptr);
+    [[nodiscard]] HierarchyTree* tree() const noexcept { return tree_; }
+
+signals:
+    void filesDropped(lumora::Uuid target, const QStringList& files);
 
 private:
     void rebuild();

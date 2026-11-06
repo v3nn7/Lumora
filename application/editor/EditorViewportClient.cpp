@@ -170,6 +170,8 @@ render::RenderSettings EditorViewportClient::viewportSettings() const {
     return s;
 }
 
+Ray EditorViewportClient::rayAt(glm::vec2 ndc) const { return rayFromNdc(viewportCamera(lastAspect_), ndc); }
+
 void EditorViewportClient::viewportClicked(glm::vec2 ndc) {
     const Scene* scene = ctx_.scene();
     if (scene == nullptr) return;

@@ -4,6 +4,7 @@
 #include "editor/TransformGizmo.hpp"
 #include "renderer/Overlay.hpp"
 #include "scene/Camera.hpp"
+#include "scene/Picking.hpp"
 
 #include <functional>
 
@@ -24,6 +25,8 @@ public:
 
     std::function<void(float)> onSimulate;                          // advances play mode
     std::function<bool(int, Qt::KeyboardModifiers)> onShortcut;      // window-level shortcuts
+    std::function<bool(const QList<QUrl>&)> onAcceptsDrop;            // files dragged over the viewport
+    std::function<void(const QList<QUrl>&, glm::vec2)> onDrop;        // files dropped (ndc)
 
     [[nodiscard]] FlyCameraController& camera() noexcept { return camera_; }
     [[nodiscard]] TransformGizmo& gizmo() noexcept { return gizmo_; }
@@ -50,6 +53,12 @@ public:
     [[nodiscard]] CameraView viewportCamera(float aspect) const override;
     [[nodiscard]] render::RenderSettings viewportSettings() const override;
     void viewportClicked(glm::vec2 ndc) override;
+    bool viewportAcceptsDrop(const QList<QUrl>& urls) override { return onAcceptsDrop && onAcceptsDrop(urls); }
+    void viewportDropped(const QList<QUrl>& urls, glm::vec2 ndc) override {
+        if (onDrop) onDrop(urls, ndc);
+    }
+    /// The world ray under a viewport position (ndc) for the current camera.
+    [[nodiscard]] Ray rayAt(glm::vec2 ndc) const;
     bool viewportKeyPressed(int key, Qt::KeyboardModifiers modifiers) override;
     bool viewportMousePressed(glm::vec2 ndc, Qt::MouseButton button, Qt::KeyboardModifiers modifiers) override;
     void viewportMouseMoved(glm::vec2 ndc, Qt::KeyboardModifiers modifiers) override;

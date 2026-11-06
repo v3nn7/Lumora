@@ -36,7 +36,8 @@ lumora_engine_module(assets
         assets/AssetImport.cpp
         assets/Image.cpp
         assets/StbImpl.cpp
-    DEPS lumora_core glm::glm cgltf stb)
+        assets/Material.cpp
+    DEPS lumora_core glm::glm cgltf stb nlohmann_json::nlohmann_json)
 
 lumora_engine_module(scene
     SOURCES

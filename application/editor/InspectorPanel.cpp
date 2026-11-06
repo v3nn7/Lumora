@@ -3,9 +3,14 @@
 #include "common/Theme.hpp"
 #include "editor/EditorContext.hpp"
 #include "editor/EntityFactory.hpp"
+#include "editor/MaterialEditor.hpp"
+#include "assets/AssetLibrary.hpp"
+#include "common/ProjectUi.hpp"
 #include "scene/ComponentRegistry.hpp"
 #include "scene/Scene.hpp"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -42,6 +47,18 @@ QIcon componentIcon(const std::string& id) {
     return app::theme::icon(QStringLiteral("settings"));
 }
 
+bool usesMaterial(const Scene& scene, entt::entity e) {
+    const auto* mesh = scene.registry().try_get<MeshRendererComponent>(e);
+    return mesh != nullptr && !mesh->material.empty();
+}
+
+/// Mesh Renderer fields a material asset replaces.
+bool overriddenByMaterial(const std::string& field) {
+    static const char* kFields[] = {"baseColor", "metallic", "roughness", "emissive", "emissiveStrength", "pattern",
+                                    "baseColorTexture", "metallicRoughnessTexture", "normalTexture", "emissiveTexture"};
+    return std::ranges::any_of(kFields, [&](const char* f) { return field == f; });
+}
+
 QLabel* fieldLabel(const QString& text) {
     auto* label = new QLabel(text);
     label->setProperty("muted", true);
@@ -66,7 +83,10 @@ InspectorPanel::InspectorPanel(EditorContext& ctx, AssetPicker pickAsset, QWidge
     connect(refreshTimer_, &QTimer::timeout, this, &InspectorPanel::refreshValues);
     refreshTimer_->start();
 
-    connect(&ctx_, &EditorContext::selectionChanged, this, &InspectorPanel::rebuild);
+    connect(&ctx_, &EditorContext::selectionChanged, this, [this] {
+        assetPath_.clear();  // an entity (or nothing) was selected: show that again
+        rebuild();
+    });
     connect(&ctx_, &EditorContext::sceneReplaced, this, &InspectorPanel::rebuild);
     connect(&ctx_, &EditorContext::structureChanged, this, [this] {
         // Component add/remove or deletion: rebuild; renames only need a value refresh.
@@ -88,9 +108,55 @@ void InspectorPanel::clearContent() {
     scroll_->setWidget(content_);  // deletes the previous content widget
 }
 
+void InspectorPanel::setProject(AssetLibrary* assets, QString projectRoot) {
+    assets_ = assets;
+    projectRoot_ = std::move(projectRoot);
+}
+
+void InspectorPanel::showAsset(const QString& absolutePath) {
+    const bool material = absolutePath.endsWith(QString::fromLatin1(kMaterialExtension));
+    if (!material && assetPath_.isEmpty()) return;  // nothing to show for this file
+    assetPath_ = material ? absolutePath : QString();
+    rebuild();
+}
+
+QWidget* InspectorPanel::materialSection(const std::string& key) {
+    const QString file = QDir(projectRoot_).absoluteFilePath(QString::fromStdString(key));
+    auto* section = new Section(tr("Material  ·  %1").arg(QFileInfo(file).completeBaseName()),
+                                app::theme::icon(QStringLiteral("sphere")), false);
+    auto* layout = new QVBoxLayout(section->body());
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto* hint = new QLabel(tr("Shared: changes apply to every object using %1.").arg(QString::fromStdString(key)));
+    hint->setProperty("muted", true);
+    hint->setWordWrap(true);
+    hint->setContentsMargins(8, 6, 8, 0);
+    layout->addWidget(hint);
+    layout->addWidget(new MaterialEditor(file, key, assets_, pickAsset_));
+    return section;
+}
+
+void InspectorPanel::buildMaterialAsset() {
+    const QString relative = QDir(projectRoot_).relativeFilePath(assetPath_);
+    auto* title = new QLabel(QFileInfo(assetPath_).completeBaseName());
+    title->setStyleSheet(QStringLiteral("font-weight: 600; font-size: 11pt; padding: 2px 2px 2px 2px;"));
+    contentLayout_->addWidget(title);
+    auto* path = new QLabel(relative);
+    path->setProperty("muted", true);
+    path->setStyleSheet(QStringLiteral("font-family: monospace; font-size: 8pt; padding-left: 2px;"));
+    contentLayout_->addWidget(path);
+    contentLayout_->addWidget(materialSection(relative.toStdString()));
+    auto* hint = new QLabel(tr("Drag the material from the Content Browser onto an object in the viewport or the "
+                               "Hierarchy, or choose it in a Mesh Renderer's Material field."));
+    hint->setProperty("muted", true);
+    hint->setWordWrap(true);
+    contentLayout_->addWidget(hint);
+}
+
 void InspectorPanel::rebuild() {
     clearContent();
-    if (ctx_.scene() == nullptr) {
+    if (!assetPath_.isEmpty()) {
+        buildMaterialAsset();
+    } else if (ctx_.scene() == nullptr) {
         auto* label = new QLabel(tr("No scene loaded"));
         label->setProperty("muted", true);
         contentLayout_->addWidget(label);
@@ -151,12 +217,23 @@ void InspectorPanel::buildEntity() {
                 }
                 return field.get(s->registry(), ent);
             };
-            FieldSetter set = [this, id, &desc, &field](const FieldValue& v) { ctx_.setField(id, desc, field, v); };
-            form->addRow(fieldLabel(QString::fromStdString(field.label)),
-                         createFieldEditor(field, std::move(get), std::move(set), refreshers_, pickAsset_));
+            FieldSetter set = [this, id, &desc, &field](const FieldValue& v) {
+                ctx_.setField(id, desc, field, v);
+                // Choosing or clearing a material changes which fields apply.
+                if (field.id == "material") QTimer::singleShot(0, this, &InspectorPanel::rebuild);
+            };
+            QWidget* editor = createFieldEditor(field, std::move(get), std::move(set), refreshers_, pickAsset_);
+            form->addRow(fieldLabel(QString::fromStdString(field.label)), editor);
+            if (desc.id == "MeshRenderer" && usesMaterial(scene, e) && overriddenByMaterial(field.id)) {
+                editor->setEnabled(false);
+                editor->setToolTip(tr("Set by the material"));
+            }
         }
         connect(section, &Section::removeRequested, this, [this, id, &desc] { ctx_.removeComponent(id, desc); });
         contentLayout_->addWidget(section);
+        if (desc.id == "MeshRenderer" && usesMaterial(scene, e) && assets_ != nullptr) {
+            contentLayout_->addWidget(materialSection(scene.registry().get<MeshRendererComponent>(e).material));
+        }
     }
 
     // Add Component

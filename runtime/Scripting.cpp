@@ -5,6 +5,7 @@
 #include "runtime/AnimationSystem.hpp"
 #include "runtime/AudioWorld.hpp"
 #include "runtime/PhysicsWorld.hpp"
+#include "assets/Material.hpp"
 #include "scene/Hud.hpp"
 #include "scene/Prefab.hpp"
 #include "scene/Scene.hpp"
@@ -331,6 +332,29 @@ int apiLoadScene(void* c, const char* path) {
     return 1;
 }
 
+int apiSetMaterial(void* c, script::Entity entity, const char* path) {
+    const entt::entity e = liveEntity(c, entity);
+    if (e == entt::null || path == nullptr) return 0;
+    auto* mesh = context(c).scene->registry().try_get<MeshRendererComponent>(e);
+    if (mesh == nullptr) return 0;
+    const std::string_view key(path);
+    if (!key.empty() && !key.ends_with(kMaterialExtension)) {
+        log::warn("Script", "setMaterial: '{}' is not a .lmat material", key);
+        return 0;
+    }
+    mesh->material = key;
+    return 1;
+}
+
+int apiSetColor(void* c, script::Entity entity, const float* rgb) {
+    const entt::entity e = liveEntity(c, entity);
+    if (e == entt::null || rgb == nullptr) return 0;
+    auto* mesh = context(c).scene->registry().try_get<MeshRendererComponent>(e);
+    if (mesh == nullptr) return 0;
+    mesh->baseColor = glm::vec3(rgb[0], rgb[1], rgb[2]);
+    return 1;
+}
+
 /// "speed=4, jump = 6.5; name=2" -> the number for `key`, or `fallback`.
 double apiParameter(void* c, script::Entity entity, const char* key, double fallback) {
     const entt::entity e = liveEntity(c, entity);
@@ -457,6 +481,8 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.screenSize = apiScreenSize;
     api_.findAll = apiFindAll;
     api_.loadScene = apiLoadScene;
+    api_.setMaterial = apiSetMaterial;
+    api_.setColor = apiSetColor;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }

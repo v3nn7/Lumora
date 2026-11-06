@@ -60,6 +60,9 @@ struct MeshRendererComponent {
     std::string metallicRoughnessTexture;  // glTF packing: G = roughness, B = metallic
     std::string normalTexture;
     std::string emissiveTexture;
+    /// Material asset (.lmat, project-relative). When set it replaces the settings above, and
+    /// every entity using it changes when the file does.
+    std::string material;
     bool visible = true;
 };
 

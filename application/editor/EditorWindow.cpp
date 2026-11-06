@@ -15,6 +15,8 @@
 #include "editor/EditorViewportClient.hpp"
 #include "editor/EntityFactory.hpp"
 #include "editor/InspectorPanel.hpp"
+#include "assets/Material.hpp"
+#include "scene/Picking.hpp"
 #include "editor/ProfilerPanel.hpp"
 #include "editor/SceneHierarchyPanel.hpp"
 #include "project/ProjectTemplates.hpp"
@@ -143,6 +145,21 @@ EditorWindow::EditorWindow(app::AppContext& app, Project project, QWidget* paren
         }
     };
     client_->onShortcut = [this](int key, Qt::KeyboardModifiers mods) { return handleShortcut(key, mods); };
+    client_->onAcceptsDrop = [](const QList<QUrl>& urls) {
+        return std::ranges::any_of(urls, [](const QUrl& url) {
+            const QString suffix = QFileInfo(url.toLocalFile()).suffix().toLower();
+            return url.isLocalFile() && (suffix == QLatin1String("lmat") || suffix == QLatin1String("glb") ||
+                                         suffix == QLatin1String("gltf") || suffix == QLatin1String("lprefab") ||
+                                         suffix == QLatin1String("hdr"));
+        });
+    };
+    client_->onDrop = [this](const QList<QUrl>& urls, glm::vec2 ndc) {
+        QStringList files;
+        for (const QUrl& url : urls) {
+            if (url.isLocalFile()) files << url.toLocalFile();
+        }
+        dropOnViewport(files, ndc);
+    };
     ctx_.onComponentAdded = [this](Scene& scene, entt::entity e, const ComponentDesc& component) {
         // A new collider starts out matching the entity's mesh.
         if (component.id != "Collider") return;
@@ -353,12 +370,30 @@ void EditorWindow::onRenderFailed(const QString& message) {
 }
 
 void EditorWindow::buildDocks() {
-    auto* hierarchy = makeDock(this, tr("Hierarchy"), QStringLiteral("dock.hierarchy"), QStringLiteral("hierarchy"), new SceneHierarchyPanel(ctx_));
-    auto* inspector = makeDock(this, tr("Inspector"), QStringLiteral("dock.inspector"), QStringLiteral("settings"), new InspectorPanel(ctx_, [this](QWidget* parent, const FieldDesc& field) {
+    auto* hierarchyPanel = new SceneHierarchyPanel(ctx_);
+    auto* hierarchy = makeDock(this, tr("Hierarchy"), QStringLiteral("dock.hierarchy"), QStringLiteral("hierarchy"), hierarchyPanel);
+    connect(hierarchyPanel, &SceneHierarchyPanel::filesDropped, this, [this](Uuid target, const QStringList& files) {
+        // Materials go on the entity they are dropped on; anything else is placed or imported.
+        QStringList others;
+        for (const QString& file : files) {
+            if (file.endsWith(QString::fromLatin1(kMaterialExtension))) {
+                if (target.isValid()) assignMaterial(target, file);
+            } else if (project_.relativePath(std::filesystem::absolute(app::toPath(file))).starts_with("..")) {
+                others << file;
+            } else if (isModelFile(app::toPath(file)) || isPrefabFile(app::toPath(file))) {
+                addModelToScene(file);
+            }
+        }
+        if (!others.isEmpty()) importModels(others, {});
+    });
+    inspector_ = new InspectorPanel(ctx_, [this](QWidget* parent, const FieldDesc& field) {
                      if (field.id == "skyHdr") return pickHdrAsset(parent);
                      if (field.id == "audioClip") return pickAudioAsset(parent);
+                     if (field.id == "material") return pickMaterialAsset(parent);
                      return field.id.ends_with("Texture") ? pickTextureAsset(parent) : pickMeshAsset(parent);
-                 }));
+                 });
+    inspector_->setProject(&assets_, app::toQString(project_.rootDir()));
+    auto* inspector = makeDock(this, tr("Inspector"), QStringLiteral("dock.inspector"), QStringLiteral("settings"), inspector_);
     auto* content = new ContentBrowserPanel(app::toQString(project_.rootDir()));
     content_ = content;
     auto* contentDock = makeDock(this, tr("Content Browser"), QStringLiteral("dock.content"), QStringLiteral("folder"), content);
@@ -403,6 +438,10 @@ void EditorWindow::buildDocks() {
     connect(content, &ContentBrowserPanel::addModelRequested, this, [this](const QString& path) { addModelToScene(path); });
     connect(content, &ContentBrowserPanel::importRequested, this, &EditorWindow::importModels);
     connect(content, &ContentBrowserPanel::openCodeRequested, this, [this](const QString& path) { openCode(path); });
+    connect(content, &ContentBrowserPanel::assetSelected, inspector_, &InspectorPanel::showAsset);
+    connect(content, &ContentBrowserPanel::applyMaterialRequested, this, [this](const QString& path) {
+        if (!assignMaterial(ctx_.selectedUuid(), path)) statusBar()->showMessage(tr("Select an object first"), 4000);
+    });
     connect(content, &ContentBrowserPanel::newBehaviourRequested, this, &EditorWindow::newBehaviour);
     connect(content, &ContentBrowserPanel::newSceneRequested, this, &EditorWindow::createSceneFile);
     connect(content, &ContentBrowserPanel::prefabFromSelectionRequested, this,
@@ -713,9 +752,20 @@ void EditorWindow::openCode(const QString& path, int line) {
     codeDock_->raise();
 }
 
-entt::entity EditorWindow::addModelToScene(const QString& absolutePath) {
+glm::vec3 EditorWindow::placementSpot() const {
+    // Where the camera looks: on the ground plane if the view ray hits it nearby.
+    const FlyCameraController& cam = client_->camera();
+    glm::vec3 spot = cam.position() + cam.forward() * 5.0f;
+    if (cam.forward().y < -0.05f) {
+        const float t = -cam.position().y / cam.forward().y;
+        if (t > 0.0f && t < 60.0f) spot = cam.position() + cam.forward() * t;
+    }
+    return spot;
+}
+
+entt::entity EditorWindow::addModelToScene(const QString& absolutePath, std::optional<glm::vec3> where) {
     const std::filesystem::path path = app::toPath(absolutePath);
-    if (isPrefabFile(path)) return addPrefabToScene(path);
+    if (isPrefabFile(path)) return addPrefabToScene(path, where);
     const std::string relative = project_.relativePath(path);
     if (relative.empty() || relative.starts_with("..")) {
         QMessageBox::warning(this, tr("Add model"), tr("Only models inside the project can be placed. Use Import Model."));
@@ -726,13 +776,7 @@ entt::entity EditorWindow::addModelToScene(const QString& absolutePath) {
         QMessageBox::critical(this, tr("Cannot load model"), QString::fromStdString(model.error().message));
         return entt::null;
     }
-    // Drop it where the camera looks: on the ground plane if the view ray hits it nearby.
-    const FlyCameraController& cam = client_->camera();
-    glm::vec3 spot = cam.position() + cam.forward() * 5.0f;
-    if (cam.forward().y < -0.05f) {
-        const float t = -cam.position().y / cam.forward().y;
-        if (t > 0.0f && t < 60.0f) spot = cam.position() + cam.forward() * t;
-    }
+    const glm::vec3 spot = where.value_or(placementSpot());
     entt::entity root = entt::null;
     const std::string name = path.stem().string();
     ctx_.edit(tr("Add %1").arg(QString::fromStdString(name)), [&](Scene& scene) {
@@ -778,6 +822,85 @@ std::optional<std::string> EditorWindow::pickMeshAsset(QWidget* parent) {
         index = static_cast<int>(names.indexOf(chosen));
     }
     return AssetLibrary::meshKey(relative, index);
+}
+
+std::optional<std::string> EditorWindow::pickMaterialAsset(QWidget* parent) {
+    const QString file = QFileDialog::getOpenFileName(parent, tr("Choose Material"), app::toQString(project_.contentDir()),
+                                                      tr("Materials (*.lmat)"));
+    if (file.isEmpty()) return std::nullopt;
+    std::filesystem::path path = std::filesystem::absolute(app::toPath(file));
+    if (project_.relativePath(path).starts_with("..")) {
+        auto imported = importFile(path, project_.contentDir() / "Materials");
+        if (!imported) {
+            QMessageBox::critical(parent, tr("Import failed"), QString::fromStdString(imported.error().message));
+            return std::nullopt;
+        }
+        path = *imported;
+    }
+    if (auto material = loadMaterial(path); !material) {
+        QMessageBox::critical(parent, tr("Cannot use material"), QString::fromStdString(material.error().message));
+        return std::nullopt;
+    }
+    return project_.relativePath(path);
+}
+
+bool EditorWindow::assignMaterial(Uuid id, const QString& materialPath) {
+    Scene* scene = ctx_.scene();
+    const entt::entity target = scene != nullptr ? scene->findByUuid(id) : entt::entity{entt::null};
+    if (target == entt::null) return false;
+    const std::string key = project_.relativePath(std::filesystem::absolute(app::toPath(materialPath)));
+    if (key.empty() || key.starts_with("..")) return false;
+    // The entity and everything under it that renders a mesh (an imported model's parts).
+    std::vector<Uuid> meshes;
+    std::vector<entt::entity> stack{target};
+    while (!stack.empty()) {
+        const entt::entity e = stack.back();
+        stack.pop_back();
+        if (scene->registry().all_of<MeshRendererComponent>(e)) meshes.push_back(scene->uuidOf(e));
+        for (entt::entity child : scene->childrenOf(e)) stack.push_back(child);
+    }
+    if (meshes.empty()) {
+        statusBar()->showMessage(tr("%1 has no Mesh Renderer to give a material").arg(QString::fromStdString(scene->nameOf(target))), 4000);
+        return false;
+    }
+    ctx_.edit(tr("Assign Material"), [&](Scene& s) {
+        for (Uuid m : meshes) {
+            const entt::entity e = s.findByUuid(m);
+            if (e != entt::null) s.registry().get<MeshRendererComponent>(e).material = key;
+        }
+    });
+    statusBar()->showMessage(tr("%1 now uses %2").arg(QString::fromStdString(scene->nameOf(target)), QFileInfo(materialPath).fileName()), 4000);
+    return true;
+}
+
+void EditorWindow::dropOnViewport(const QStringList& files, glm::vec2 ndc) {
+    Scene* scene = ctx_.scene();
+    if (scene == nullptr) return;
+    const Ray ray = client_->rayAt(ndc);
+    QStringList imports;
+    for (const QString& file : files) {
+        const std::filesystem::path path = std::filesystem::absolute(app::toPath(file));
+        const bool inProject = !project_.relativePath(path).starts_with("..");
+        if (path.extension() == kMaterialExtension) {
+            const entt::entity hit = pickEntity(*scene, ray, &assets_);
+            if (hit == entt::null) {
+                statusBar()->showMessage(tr("Drop the material onto an object"), 4000);
+            } else if (inProject) {
+                assignMaterial(scene->uuidOf(hit), file);
+            }
+        } else if (inProject && (isModelFile(path) || isPrefabFile(path)) && !ctx_.isPlaying()) {
+            // On the ground under the cursor, or a few metres along the ray.
+            glm::vec3 spot = ray.origin + ray.direction * 6.0f;
+            if (ray.direction.y < -0.02f) {
+                const float t = -ray.origin.y / ray.direction.y;
+                if (t > 0.0f && t < 200.0f) spot = ray.origin + ray.direction * t;
+            }
+            addModelToScene(file, spot);
+        } else {
+            imports << file;
+        }
+    }
+    if (!imports.isEmpty()) importModels(imports, {});
 }
 
 std::optional<std::string> EditorWindow::pickAudioAsset(QWidget* parent) {
@@ -1355,18 +1478,13 @@ void EditorWindow::saveSelectionAsPrefab(const QString& folder) {
     statusBar()->showMessage(tr("Saved prefab %1").arg(app::toQString(path.filename())), 4000);
 }
 
-entt::entity EditorWindow::addPrefabToScene(const std::filesystem::path& path) {
+entt::entity EditorWindow::addPrefabToScene(const std::filesystem::path& path, std::optional<glm::vec3> where) {
     auto prefab = loadPrefab(path);
     if (!prefab) {
         QMessageBox::critical(this, tr("Cannot load prefab"), QString::fromStdString(prefab.error().message));
         return entt::null;
     }
-    const FlyCameraController& cam = client_->camera();
-    glm::vec3 spot = cam.position() + cam.forward() * 5.0f;
-    if (cam.forward().y < -0.05f) {
-        const float t = -cam.position().y / cam.forward().y;
-        if (t > 0.0f && t < 60.0f) spot = cam.position() + cam.forward() * t;
-    }
+    const glm::vec3 spot = where.value_or(placementSpot());
     entt::entity root = entt::null;
     QString error;
     ctx_.edit(tr("Add %1").arg(app::toQString(path.stem())), [&](Scene& scene) {

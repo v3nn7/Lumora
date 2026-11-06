@@ -6,6 +6,7 @@
 #include "scene/Scene.hpp"
 
 #include <QDropEvent>
+#include <QMimeData>
 #include <QHeaderView>
 #include <QLineEdit>
 #include <QMenu>
@@ -24,7 +25,41 @@ Uuid itemUuid(const QTreeWidgetItem* item) {
 }
 } // namespace
 
+namespace {
+bool externalFiles(const QDropEvent* event, const QWidget* self) {
+    return event->source() != self && event->mimeData() != nullptr && event->mimeData()->hasUrls();
+}
+} // namespace
+
+void HierarchyTree::dragEnterEvent(QDragEnterEvent* event) {
+    if (externalFiles(event, this)) {
+        event->setDropAction(Qt::CopyAction);
+        event->accept();
+        return;
+    }
+    QTreeWidget::dragEnterEvent(event);
+}
+
+void HierarchyTree::dragMoveEvent(QDragMoveEvent* event) {
+    if (externalFiles(event, this)) {
+        event->setDropAction(Qt::CopyAction);
+        event->accept();
+        return;
+    }
+    QTreeWidget::dragMoveEvent(event);
+}
+
 void HierarchyTree::dropEvent(QDropEvent* event) {
+    if (externalFiles(event, this)) {
+        QStringList files;
+        for (const QUrl& url : event->mimeData()->urls()) {
+            if (url.isLocalFile()) files << url.toLocalFile();
+        }
+        event->setDropAction(Qt::CopyAction);
+        event->accept();
+        emit filesDropped(itemUuid(itemAt(event->position().toPoint())), files);
+        return;
+    }
     QTreeWidgetItem* dragged = currentItem();
     if (dragged == nullptr) {
         event->ignore();
@@ -106,6 +141,7 @@ SceneHierarchyPanel::SceneHierarchyPanel(EditorContext& ctx, QWidget* parent) : 
     connect(tree_, &HierarchyTree::reparentRequested, this,
             [this](Uuid child, Uuid parentId, int index) { ctx_.reparent(child, parentId, index); });
     connect(tree_, &QTreeWidget::customContextMenuRequested, this, &SceneHierarchyPanel::showContextMenu);
+    connect(tree_, &HierarchyTree::filesDropped, this, &SceneHierarchyPanel::filesDropped);
 
     connect(&ctx_, &EditorContext::sceneReplaced, this, &SceneHierarchyPanel::rebuild);
     connect(&ctx_, &EditorContext::structureChanged, this, &SceneHierarchyPanel::rebuild);

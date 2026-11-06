@@ -17,7 +17,9 @@
 #include <QTextEdit>
 #include <QGuiApplication>
 #include <QKeyEvent>
+#include <QMimeData>
 #include <QMouseEvent>
+#include <QDropEvent>
 #include <QPlatformSurfaceEvent>
 #include <QScreen>
 #include <QTimer>
@@ -128,8 +130,24 @@ void VulkanViewport::stopLooking() {
     if (inputContainer_ != nullptr) inputContainer_->unsetCursor();
 }
 
+bool VulkanViewport::handleDrag(QEvent* e) {
+    auto* d = static_cast<QDropEvent*>(e);
+    if (d->mimeData() == nullptr || !d->mimeData()->hasUrls()) return false;
+    const QList<QUrl> urls = d->mimeData()->urls();
+    if (e->type() == QEvent::Drop) {
+        client_.viewportDropped(urls, toNdc(d->position()));
+    } else if (!client_.viewportAcceptsDrop(urls)) {
+        d->ignore();
+        return true;
+    }
+    d->setDropAction(Qt::CopyAction);
+    d->accept();
+    return true;
+}
+
 void VulkanViewport::setInputContainer(QWidget* container) {
     inputContainer_ = container;
+    if (container != nullptr) container->setAcceptDrops(true);  // assets dragged onto the viewport
     // LUMORA_POINTER_PASSTHROUGH=1 forces the Wayland routing elsewhere (tests, debugging).
     const bool forced = qEnvironmentVariableIntValue("LUMORA_POINTER_PASSTHROUGH") == 1;
     if ((pointerLock_ == nullptr && !forced) || container == nullptr) return;
@@ -227,6 +245,11 @@ bool VulkanViewport::event(QEvent* e) {
         case QEvent::UpdateRequest:
             scheduleNextFrame();
             return true;
+        case QEvent::DragEnter:
+        case QEvent::DragMove:
+        case QEvent::Drop:
+            if (handleDrag(e)) return true;
+            break;
         case QEvent::PlatformSurface:
             if (static_cast<QPlatformSurfaceEvent*>(e)->surfaceEventType() ==
                 QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed) {
@@ -368,6 +391,10 @@ bool VulkanViewport::eventFilter(QObject* watched, QEvent* event) {
             default:
                 break;
         }
+    }
+    if (watched == inputContainer_ && inputContainer_ != nullptr &&
+        (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove || event->type() == QEvent::Drop)) {
+        if (handleDrag(event)) return true;
     }
     switch (event->type()) {
         case QEvent::MouseButtonPress:

@@ -471,6 +471,7 @@ TEST_F(EditorUiTest, PointerPassThroughReachesTheViewport) {
 // ---- Content Browser and code editor ---------------------------------------------------------
 
 #include "editor/CodeEditorPanel.hpp"
+#include <QDir>
 #include "editor/ContentBrowserPanel.hpp"
 
 #include <QListView>
@@ -652,4 +653,74 @@ TEST(CodeEditor, CompletesTheScriptingApiWhileTyping) {
     EXPECT_TRUE(offered().contains(QStringLiteral("myVariable")));
     QCoreApplication::sendEvent(edit, &ctrlSpace);
     EXPECT_TRUE(completer->popup()->isVisible());
+}
+
+#include "assets/Material.hpp"
+#include <QDir>
+#include "editor/ContentBrowserPanel.hpp"
+#include "editor/EditorViewportClient.hpp"
+#include "editor/InspectorPanel.hpp"
+#include "editor/MaterialEditor.hpp"
+#include "editor/SceneHierarchyPanel.hpp"
+
+TEST_F(EditorUiTest, MaterialsAreCreatedEditedAndDroppedOnObjects) {
+    editor::EditorWindow* editor = openEditor();
+    ASSERT_NE(editor, nullptr);
+    editor->resize(1600, 960);
+    Scene& scene = *editor->editScene();
+    entt::entity cube = entt::null;
+    for (auto [e, rot] : scene.registry().view<RotatorComponent>().each()) cube = e;
+    ASSERT_TRUE(cube != entt::null);
+    const Uuid cubeId = scene.uuidOf(cube);
+
+    // New → Material in the Content Browser: a default .lmat, shown in the Inspector.
+    auto* browser = editor->findChild<editor::ContentBrowserPanel*>();
+    auto* inspector = editor->findChild<editor::InspectorPanel*>();
+    ASSERT_NE(browser, nullptr);
+    ASSERT_NE(inspector, nullptr);
+    const QString materials = app::toQString(editor->project().contentDir() / "Materials");
+    QDir().mkpath(materials);
+    browser->navigate(materials);
+    const QString paint = browser->createMaterial(QStringLiteral("Paint"));
+    ASSERT_FALSE(paint.isEmpty());
+    ASSERT_TRUE(loadMaterial(app::toPath(paint)).has_value());
+    processEvents();
+    EXPECT_EQ(inspector->shownAsset(), paint);
+    auto* materialEditor = inspector->findChild<editor::MaterialEditor*>();
+    ASSERT_NE(materialEditor, nullptr);
+    EXPECT_TRUE(materialEditor->isLoaded());
+    EXPECT_EQ(browser->createMaterial(QStringLiteral("Paint")), QString()) << "never overwrites";
+
+    // Dropped on the object under the cursor: one undo step.
+    editor->viewportClient().camera().setPosition(glm::vec3(scene.worldMatrix(cube)[3]) + glm::vec3(0.0f, 1.0f, 4.0f));
+    editor->viewportClient().camera().lookAt(glm::vec3(scene.worldMatrix(cube)[3]));
+    editor->dropOnViewport({paint}, glm::vec2(0.0f));
+    auto materialOf = [&] { return scene.registry().get<MeshRendererComponent>(scene.findByUuid(cubeId)).material; };
+    EXPECT_EQ(materialOf(), "Content/Materials/Paint.lmat");
+    editor->context().undoStack().undo();
+    EXPECT_EQ(materialOf(), "");
+    editor->context().undoStack().redo();
+    EXPECT_EQ(materialOf(), "Content/Materials/Paint.lmat");
+
+    // Selecting the object: its Inspector shows the shared material, the own colour is off.
+    editor->context().select(cubeId);
+    processEvents();
+    EXPECT_TRUE(inspector->shownAsset().isEmpty());
+    QStringList sections;
+    for (QToolButton* b : inspector->findChildren<QToolButton*>()) {
+        if (b->objectName() == QLatin1String("sectionTitle")) sections << b->text();
+    }
+    EXPECT_TRUE(sections.filter(QStringLiteral("Paint")).size() == 1) << sections.join(',').toStdString();
+    EXPECT_NE(inspector->findChild<editor::MaterialEditor*>(), nullptr);
+
+    // Dropped on an entity in the Hierarchy: the sun has no mesh, the floor gets it.
+    entt::entity other = entt::null;
+    for (auto [e, mesh] : scene.registry().view<MeshRendererComponent>().each()) {
+        if (e != cube && mesh.material.empty()) other = e;
+    }
+    ASSERT_TRUE(other != entt::null);
+    auto* hierarchy = editor->findChild<editor::SceneHierarchyPanel*>();
+    ASSERT_NE(hierarchy, nullptr);
+    emit hierarchy->tree()->filesDropped(scene.uuidOf(other), {paint});
+    EXPECT_EQ(scene.registry().get<MeshRendererComponent>(other).material, "Content/Materials/Paint.lmat");
 }

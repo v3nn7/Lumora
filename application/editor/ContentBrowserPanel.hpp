@@ -40,6 +40,15 @@ signals:
     void newBehaviourRequested();
     void prefabFromSelectionRequested(const QString& folder);
     void openCodeRequested(const QString& path);
+    /// A file was selected or opened (materials show in the Inspector).
+    void assetSelected(const QString& path);
+    void applyMaterialRequested(const QString& path);
+
+public:
+    /// Writes a default material into the open folder; returns its path (empty on failure).
+    QString createMaterial(QString name);
+    /// Moves project files into a folder (dragging them onto it).
+    void moveInto(const QStringList& files, const QString& folder);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -50,6 +59,7 @@ private:
     void activate(const QString& path);
     void newFolder();
     void newScene();
+    void newMaterial();
     void importFiles();
     void duplicate(const QString& path);
     void remove(const QStringList& paths);

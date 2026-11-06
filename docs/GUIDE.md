@@ -200,6 +200,14 @@ The Mesh Renderer component holds the material: base colour, metallic, roughness
 and strength, an optional procedural grid or checker pattern, and optional base-colour, metallic-roughness, normal and emissive textures. Shading is physically
 based (GGX), so metallic and roughness behave as in other PBR tools.
 
+**Material assets** (`.lmat`) share one surface between many objects. *New → Material* in the
+Content Browser creates one; select it to edit it in the Inspector (changes are saved at once and
+every object using it updates). Drag it onto an object in the viewport or the Hierarchy, use
+*Apply to Selected Object*, or pick it in a Mesh Renderer's **Material** field. While a material
+is set, the renderer's own colour and texture settings are greyed out; clear the field to use
+them again. Scripts switch materials with `setMaterial()`. Models and prefabs can be dragged into
+the viewport too: they land where you drop them.
+
 Lights are directional (the sun), point or spot lights. A spot light shines along the entity's
 -Z axis in a cone (**Spot Angle** is its half-angle, **Spot Softness** how much of it fades out
 at the edge). A scene can have thousands of point and spot lights:
@@ -319,6 +327,7 @@ What a behaviour can do:
 | `raycast(origin, direction, maxDistance, hit)` | Closest collider along a ray: `hit.entity`, `hit.point`, `hit.normal`, `hit.distance` |
 | `onCollision(Entity other)` | Override: this entity's collider (or character) started touching another, triggers included |
 | `spawn("Content/Prefabs/X.lprefab", position)` | Add a copy of a prefab |
+| `setMaterial("Content/Materials/Glow.lmat")`, `setMaterialOf(e, path)`, `setColor(v)` | Change how a Mesh Renderer looks |
 | `loadScene("Content/Scenes/Level2.lscene")` | Switch to another scene at the end of the step (menus, levels); `time()` starts again from 0. In the editor, Stop returns to the scene you were editing |
 | `move(velocity)`, `jump(speed)`, `grounded()` | Character Controller: walk, jump, stand |
 | `clone(e)`, `destroy(e)` | Copy an entity with its children, components and scripts; remove one at the end of the step |

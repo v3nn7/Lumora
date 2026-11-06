@@ -500,13 +500,16 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         const MeshRendererComponent* mesh;
         const glm::mat4* world;
         const GpuMesh* gpuMesh;
+        std::shared_ptr<const MaterialAsset> material;  // the .lmat it uses, if any
     };
     std::vector<Candidate> candidates;
     for (auto [e, mesh, world] : reg.view<MeshRendererComponent, WorldTransformComponent>().each()) {
         if (!mesh.visible) continue;
         const GpuMesh* gpuMeshPtr = meshFor(mesh, settings.assets, settings.blockOnAssets);
         if (gpuMeshPtr == nullptr) continue;  // still loading, or unresolved (already reported)
-        candidates.push_back({e, &mesh, &world.matrix, gpuMeshPtr});
+        std::shared_ptr<const MaterialAsset> material;
+        if (!mesh.material.empty() && settings.assets != nullptr) material = settings.assets->material(mesh.material);
+        candidates.push_back({e, &mesh, &world.matrix, gpuMeshPtr, std::move(material)});
     }
 
     // 2. Bounds, culling and per-object constants on the job system's threads (pure math).
@@ -531,12 +534,19 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             p.visible = !settings.frustumCulling || c.gpuMesh->skinned() || frustum.intersectsAabb(p.center, p.extent);
             if (!p.visible && !shadows) continue;
             const MeshRendererComponent& mesh = *c.mesh;
+            const MaterialAsset* mat = c.material.get();
             GpuObject& obj = p.object;
             obj.world = world;
             obj.normalMatrix = glm::mat4(glm::transpose(glm::inverse(glm::mat3(world))));
-            obj.baseColorMetallic = glm::vec4(mesh.baseColor, mesh.metallic);
-            obj.emissiveRoughness = glm::vec4(mesh.emissive * mesh.emissiveStrength, mesh.roughness);
-            obj.flags = glm::vec4(c.entity == settings.selected ? 1.0f : 0.0f, static_cast<float>(mesh.pattern), 0.0f, 0.0f);
+            if (mat != nullptr) {
+                obj.baseColorMetallic = glm::vec4(mat->baseColor, mat->metallic);
+                obj.emissiveRoughness = glm::vec4(mat->emissive * mat->emissiveStrength, mat->roughness);
+            } else {
+                obj.baseColorMetallic = glm::vec4(mesh.baseColor, mesh.metallic);
+                obj.emissiveRoughness = glm::vec4(mesh.emissive * mesh.emissiveStrength, mesh.roughness);
+            }
+            const float pattern = static_cast<float>(mat != nullptr ? mat->pattern : static_cast<std::int32_t>(mesh.pattern));
+            obj.flags = glm::vec4(c.entity == settings.selected ? 1.0f : 0.0f, pattern, 0.0f, 0.0f);
         }
     });
 
@@ -552,12 +562,17 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         GpuObject& obj = p.object;
         if (p.visible && settings.assets != nullptr) {  // casters only need depth, not materials
             const MeshRendererComponent& mesh = *candidates[i].mesh;
+            const MaterialAsset* m = candidates[i].material.get();
             TextureCache& textures = ctx_.textures();
             const bool block = settings.blockOnAssets;
-            obj.textures = glm::uvec4(textures.index(*settings.assets, mesh.baseColorTexture, TextureColorSpace::Srgb, block),
-                                      textures.index(*settings.assets, mesh.metallicRoughnessTexture, TextureColorSpace::Linear, block),
-                                      textures.index(*settings.assets, mesh.emissiveTexture, TextureColorSpace::Srgb, block),
-                                      textures.index(*settings.assets, mesh.normalTexture, TextureColorSpace::Linear, block));
+            const std::string& baseMap = m != nullptr ? m->baseColorTexture : mesh.baseColorTexture;
+            const std::string& mrMap = m != nullptr ? m->metallicRoughnessTexture : mesh.metallicRoughnessTexture;
+            const std::string& emissiveMap = m != nullptr ? m->emissiveTexture : mesh.emissiveTexture;
+            const std::string& normalMap = m != nullptr ? m->normalTexture : mesh.normalTexture;
+            obj.textures = glm::uvec4(textures.index(*settings.assets, baseMap, TextureColorSpace::Srgb, block),
+                                      textures.index(*settings.assets, mrMap, TextureColorSpace::Linear, block),
+                                      textures.index(*settings.assets, emissiveMap, TextureColorSpace::Srgb, block),
+                                      textures.index(*settings.assets, normalMap, TextureColorSpace::Linear, block));
         }
         if (candidates[i].gpuMesh->skinned()) {
             obj.flags.z = static_cast<float>(joints.size());

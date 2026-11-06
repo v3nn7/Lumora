@@ -44,6 +44,10 @@ constexpr ScriptApiEntry kApi[] = {
     {S::Behaviour, "drawRect", "void drawRect(x, y, w, h, Vec3 color, float alpha = 1)", "HUD rectangle (pixels)"},
     {S::Behaviour, "drawText", "void drawText(text, x, y, size = 24, Vec3 color = white, alpha = 1)", "HUD text"},
     {S::Behaviour, "screenSize", "Vec3 screenSize()", "Game view size in pixels (x, y)"},
+    // Looks
+    {S::Behaviour, "setMaterial", "bool setMaterial(path)", "Use a .lmat material (\"\" = own settings)"},
+    {S::Behaviour, "setMaterialOf", "bool setMaterialOf(Entity e, path)", "Another entity's material"},
+    {S::Behaviour, "setColor", "bool setColor(Vec3 rgb)", "Mesh Renderer base colour (0..1)"},
     // Animation and sound
     {S::Behaviour, "playAnimation", "bool playAnimation(clip = \"\")", "Start an Animator clip"},
     {S::Behaviour, "stopAnimation", "void stopAnimation()", "Stop the Animator"},

@@ -107,6 +107,8 @@ struct EngineApi {
     int (*findAll)(void* context, const char* name, Entity* out, int capacity);  // returns the total
     // ABI 3
     int (*loadScene)(void* context, const char* path);  // queued for the end of the step; 0 if invalid
+    int (*setMaterial)(void* context, Entity entity, const char* path);  // "" = own settings; 0 if no mesh
+    int (*setColor)(void* context, Entity entity, const float* rgb);       // Mesh Renderer base colour
 };
 
 class Behaviour;
@@ -247,6 +249,18 @@ protected:
     }
     void stopAnimation() const { api_->animation(api_->context, entity_, nullptr, 0); }
     [[nodiscard]] bool animationPlaying() const { return api_->animation(api_->context, entity_, nullptr, 2) != 0; }
+
+    // Looks (the entity's Mesh Renderer).
+    /// Uses a material asset (project-relative .lmat), or the renderer's own settings with "".
+    bool setMaterial(std::string_view path) const { return setMaterialOf(entity_, path); }
+    bool setMaterialOf(Entity e, std::string_view path) const {
+        return api_->setMaterial(api_->context, e, std::string(path).c_str()) != 0;
+    }
+    /// Base colour (sRGB 0..1) of the renderer's own settings (not of a shared material).
+    bool setColor(Vec3 rgb) const {
+        const float c[3] = {rgb.x, rgb.y, rgb.z};
+        return api_->setColor(api_->context, entity_, c) != 0;
+    }
 
     // Sound (the entity's Audio Source component).
     void playSound() const { api_->sound(api_->context, entity_, 1); }

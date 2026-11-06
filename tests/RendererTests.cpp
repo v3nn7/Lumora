@@ -708,6 +708,65 @@ TEST_F(RendererTest, SpotLightLightsOnlyItsCone) {
     EXPECT_LT(dark.r, 15) << "outside the cone (a point light this strong would light it)";
 }
 
+TEST_F(RendererTest, MaterialAssetsColourEveryObjectUsingThem) {
+    // Two cubes share Content/Materials/Paint.lmat (red), their own colour is grey; editing
+    // the file turns both blue.
+    test::TempDir project;
+    MaterialAsset paint;
+    paint.baseColor = {1.0f, 0.0f, 0.0f};
+    paint.roughness = 1.0f;
+    const auto file = project.path() / "Content" / "Materials" / "Paint.lmat";
+    ASSERT_TRUE(saveMaterial(paint, file).has_value());
+    AssetLibrary assets(project.path());
+
+    auto scene = sceneWithSun();
+    for (float x : {-1.2f, 1.2f}) {
+        const auto e = scene->createEntity("Cube");
+        auto& mesh = scene->registry().emplace<MeshRendererComponent>(e);
+        mesh.baseColor = glm::vec3(0.5f);
+        mesh.material = "Content/Materials/Paint.lmat";
+        scene->registry().get<TransformComponent>(e).position = {x, 0.0f, 0.0f};
+    }
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 1.0f, 5.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const glm::uvec2 size(128, 96);
+    const CameraView view = cam.view(static_cast<float>(size.x) / static_cast<float>(size.y));
+    RenderSettings settings;
+    settings.assets = &assets;
+    settings.blockOnAssets = true;
+    settings.bloom = false;
+    const glm::ivec2 left = toPixel(view, glm::vec3(-1.2f, 0.0f, 0.5f), size);
+    const glm::ivec2 right = toPixel(view, glm::vec3(1.2f, 0.0f, 0.5f), size);
+
+    auto red = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(red.has_value()) << red.error().message;
+    for (const glm::ivec2 p : {left, right}) {
+        const auto c = pixel(*red, p.x, p.y);
+        EXPECT_GT(c.r, c.g + 40) << "red from the material, not the grey of the component";
+        EXPECT_GT(c.r, c.b + 40);
+    }
+
+    paint.baseColor = {0.0f, 0.0f, 1.0f};
+    ASSERT_TRUE(saveMaterial(paint, file).has_value());
+    assets.reloadMaterial("Content/Materials/Paint.lmat");
+    auto blue = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(blue.has_value());
+    for (const glm::ivec2 p : {left, right}) {
+        const auto c = pixel(*blue, p.x, p.y);
+        EXPECT_GT(c.b, c.r + 40) << "both cubes follow the edited file";
+    }
+
+    // A missing material falls back to the component's own settings.
+    std::filesystem::remove(file);
+    assets.reloadMaterial("Content/Materials/Paint.lmat");
+    auto grey = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(grey.has_value());
+    const auto g = pixel(*grey, left.x, left.y);
+    EXPECT_LT(std::abs(int(g.r) - int(g.b)), 20) << "grey again";
+}
+
 // ---- HUD ------------------------------------------------------------------------------------
 
 #include "renderer/HudRenderer.hpp"

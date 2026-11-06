@@ -13,6 +13,8 @@ lumora_add_shader(LUMORA_SHADER_FILES SOURCE depth_skinned.hlsl STAGE frag ENTRY
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE taa.hlsl       STAGE comp ENTRY CSMain OUTPUT taa.comp.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE ssr.hlsl       STAGE comp ENTRY CSTrace OUTPUT ssr.trace.comp.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE ssr.hlsl       STAGE comp ENTRY CSResolve OUTPUT ssr.resolve.comp.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE fog.hlsl       STAGE comp ENTRY CSInject OUTPUT fog.inject.comp.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE fog_integrate.hlsl STAGE comp ENTRY CSMain OUTPUT fog.integrate.comp.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE mesh_reflections.hlsl STAGE frag ENTRY PSMain OUTPUT mesh.reflections.frag.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE vsm_clear.hlsl STAGE vert ENTRY VSMain OUTPUT vsm.clear.vert.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE pattern.hlsl   STAGE comp ENTRY CSMain OUTPUT pattern.comp.spv)
@@ -49,4 +51,4 @@ lumora_add_shader(LUMORA_SHADER_FILES SOURCE tonemap.hlsl  STAGE vert ENTRY VSMa
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE tonemap.hlsl  STAGE frag ENTRY PSMain OUTPUT tonemap.frag.spv)
 
 add_custom_target(lumora_shaders ALL DEPENDS ${LUMORA_SHADER_FILES}
-    SOURCES common.hlsli fullscreen.hlsli lighting.hlsli)
+    SOURCES common.hlsli fullscreen.hlsli lighting.hlsli shadows.hlsli)

@@ -71,6 +71,11 @@ struct FrameData {
     GpuReflectionProbe probes[MAX_REFLECTION_PROBES];
     uint4 volumeCount;          // x light probe volumes
     GpuProbeVolume volumes[MAX_PROBE_VOLUMES];
+    uint4 fogVolume;            // x 1 = volumetric fog, yzw froxels along x, y, z
+    float4 fogVolumeParams;     // x distance it reaches (m), y anisotropy, z depth jitter (0..1)
+    float4 fogAlbedo;           // rgb: share of the light the fog scatters
+    float4 clouds;              // x coverage, y bottom (m), z thickness (m), w density
+    float4 cloudWind;           // xy how far the wind moved the clouds (m)
     GpuLight lights[MAX_LIGHTS];  // directional lights
 };
 
@@ -281,20 +286,56 @@ float fogAmount(float3 worldPosition) {
     return min(1.0 - exp(-opticalDepth), gFrame.fogParams.z);
 }
 
+/// Analytic height fog: the colour it fades into along a direction.
+float3 fogColorTowards(float3 dir) {
+    float3 fogDir = float3(dir.x, max(dir.y, 0.02), dir.z);
+    // With an environment map the fog takes its blurred colour, so distance fades into the sky.
+#if defined(LUMORA_STAGE_FRAG)
+    return environmentEnabled() ? environmentRadiance(fogDir, gFrame.environmentParams.w) : skyGradient(fogDir);
+#else
+    return skyGradient(fogDir);
+#endif
+}
+
+#if defined(LUMORA_STAGE_FRAG)
+/// Volumetric fog between the camera and a point (rgb in-scattering, a transmittance), from the
+/// integrated froxel volume (bindless index in gPush.param2); see fog.hlsl.
+float4 volumetricFog(float3 worldPosition) {
+    float distance = length(worldPosition - gFrame.cameraPositionTime.xyz);
+    float4 clip = mul(gFrame.viewProjection, float4(worldPosition, 1.0));
+    float2 uv = clip.xy / max(clip.w, 1e-6) * 0.5 + 0.5;
+    float slices = float(gFrame.fogVolume.w);
+    // Texel z holds the end of slice z; slice ends lie at far * ((z + 1) / slices)^2.
+    float boundary = sqrt(saturate(distance / gFrame.fogVolumeParams.x)) * slices;
+    float4 fog = gVolumes[asuint(gPush.param2)].SampleLevel(gSamplers[0], float3(uv, (boundary - 0.5) / slices), 0.0);
+    return lerp(float4(0.0, 0.0, 0.0, 1.0), fog, saturate(boundary));  // nothing in front of the first slice end
+}
+#endif
+
 float3 applyFog(float3 color, float3 worldPosition) {
+#if defined(LUMORA_STAGE_FRAG)
+    if (gFrame.fogVolume.x != 0u) {
+        // Beyond the volume the analytic fog covers the rest of the way, then the volume on top.
+        float3 delta = worldPosition - gFrame.cameraPositionTime.xyz;
+        float far = gFrame.fogVolumeParams.x;
+        float distance = length(delta);
+        if (distance > far) {
+            float3 dir = delta / distance;
+            float total = 1.0 - fogAmount(worldPosition);
+            float near = 1.0 - fogAmount(gFrame.cameraPositionTime.xyz + dir * far);
+            float beyond = saturate(total / max(near, 1e-4));
+            color = lerp(fogColorTowards(dir), color, beyond);
+        }
+        float4 fog = volumetricFog(worldPosition);
+        return color * fog.a + fog.rgb;
+    }
+#endif
     float amount = fogAmount(worldPosition);
     if (amount <= 0.0) {
         return color;
     }
     float3 dir = normalize(worldPosition - gFrame.cameraPositionTime.xyz);
-    float3 fogDir = float3(dir.x, max(dir.y, 0.02), dir.z);
-    // With an environment map the fog takes its blurred colour, so distance fades into the sky.
-#if defined(LUMORA_STAGE_FRAG)
-    float3 fogColor = environmentEnabled() ? environmentRadiance(fogDir, gFrame.environmentParams.w) : skyGradient(fogDir);
-#else
-    float3 fogColor = skyGradient(fogDir);
-#endif
-    return lerp(color, fogColor, amount);
+    return lerp(color, fogColorTowards(dir), amount);
 }
 
 #endif

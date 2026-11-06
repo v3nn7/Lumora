@@ -30,8 +30,9 @@ public:
 
     /// Start of a frame (after the slot's frame completed): frees textures idle for too long.
     void beginFrame();
+    /// depth > 1 makes a 3D texture (storage, not a render target).
     const PooledImage& acquire(nvrhi::Format format, std::uint32_t width, std::uint32_t height, const char* name,
-                               bool storage = false);
+                               bool storage = false, std::uint32_t depth = 1);
     void clear();
     [[nodiscard]] std::size_t size() const noexcept { return images_.size(); }
 

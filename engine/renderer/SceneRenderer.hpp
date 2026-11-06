@@ -97,6 +97,7 @@ struct SceneDrawStats {
     bool screenSpaceReflections = false;
     std::uint32_t reflectionProbes = 0;       // baked probes the frame used
     std::uint32_t lightProbeVolumes = 0;      // baked light probe volumes the frame used
+    bool volumetricFog = false;               // froxel fog injected and integrated this frame
     std::uint32_t virtualPagesRequested = 0;  // pages the view needed
     std::uint32_t virtualPagesCached = 0;     // of those, kept from earlier frames
     std::uint32_t virtualPagesRendered = 0;   // drawn this frame
@@ -170,6 +171,8 @@ private:
     // Temporal anti-aliasing: the jitter sequence, last frame's matrices (camera and per object,
     // by entity) and two history images that swap every frame.
     nvrhi::ComputePipelineHandle taa_;
+    nvrhi::ComputePipelineHandle fogInject_;
+    nvrhi::ComputePipelineHandle fogIntegrate_;
     nvrhi::ComputePipelineHandle ssrTrace_;
     nvrhi::ComputePipelineHandle ssrResolve_;
     // The opaque pipelines writing normal + roughness and the specular weight too (for SSR).

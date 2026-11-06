@@ -92,6 +92,15 @@ json SceneSerializer::environmentToJson(const EnvironmentSettings& env) {
         {"exposure", env.exposure},
         {"fogDensity", env.fogDensity},
         {"fogHeightFalloff", env.fogHeightFalloff},
+        {"volumetricFog", env.volumetricFog},
+        {"fogColor", vec3ToJson(env.fogColor)},
+        {"fogAnisotropy", env.fogAnisotropy},
+        {"volumetricFogDistance", env.volumetricFogDistance},
+        {"cloudCoverage", env.cloudCoverage},
+        {"cloudHeight", env.cloudHeight},
+        {"cloudThickness", env.cloudThickness},
+        {"cloudDensity", env.cloudDensity},
+        {"cloudWindSpeed", env.cloudWindSpeed},
         {"bloomIntensity", env.bloomIntensity},
         {"vignette", env.vignette},
         {"contrast", env.contrast},
@@ -126,6 +135,15 @@ void SceneSerializer::applyEnvironment(EnvironmentSettings& env, const json& j) 
     number("exposure", env.exposure);
     number("fogDensity", env.fogDensity);
     number("fogHeightFalloff", env.fogHeightFalloff);
+    if (const auto it = j.find("volumetricFog"); it != j.end() && it->is_boolean()) env.volumetricFog = it->get<bool>();
+    colour("fogColor", env.fogColor);
+    number("fogAnisotropy", env.fogAnisotropy);
+    number("volumetricFogDistance", env.volumetricFogDistance);
+    number("cloudCoverage", env.cloudCoverage);
+    number("cloudHeight", env.cloudHeight);
+    number("cloudThickness", env.cloudThickness);
+    number("cloudDensity", env.cloudDensity);
+    number("cloudWindSpeed", env.cloudWindSpeed);
     number("bloomIntensity", env.bloomIntensity);
     number("vignette", env.vignette);
     number("contrast", env.contrast);

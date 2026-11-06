@@ -2,6 +2,8 @@
 
 #include "renderer/vulkan/VulkanCommon.hpp"
 
+#include <algorithm>
+
 namespace lumora::render {
 
 TransientImagePool::TransientImagePool(nvrhi::IDevice* device, BindlessTable& bindless)
@@ -29,23 +31,29 @@ void TransientImagePool::beginFrame() {
 }
 
 const PooledImage& TransientImagePool::acquire(nvrhi::Format format, std::uint32_t width, std::uint32_t height,
-                                               const char* name, bool storage) {
+                                               const char* name, bool storage, std::uint32_t depth) {
+    depth = std::max(depth, 1u);
     for (const auto& image : images_) {
         const nvrhi::TextureDesc& d = image->texture->getDesc();
-        if (!image->inUse && d.format == format && d.width == width && d.height == height && d.isUAV == storage) {
+        if (!image->inUse && d.format == format && d.width == width && d.height == height && d.isUAV == storage &&
+            d.depth == depth) {
             image->inUse = true;
             return *image;
         }
     }
-    const bool depth = nvrhi::getFormatInfo(format).hasDepth;
     nvrhi::TextureDesc desc;
     desc.width = width;
     desc.height = height;
     desc.format = format;
     desc.debugName = name;
-    desc.isRenderTarget = true;
     desc.isUAV = storage;
-    desc.setClearValue(depth ? nvrhi::Color(0.0f) : nvrhi::Color(0.0f));
+    if (depth > 1) {
+        desc.dimension = nvrhi::TextureDimension::Texture3D;
+        desc.depth = depth;
+    } else {
+        desc.isRenderTarget = true;
+        desc.setClearValue(nvrhi::Color(0.0f));
+    }
     // Every command list starts and ends with transients sampleable; render passes move them
     // to attachment states and back.
     desc.initialState = nvrhi::ResourceStates::ShaderResource;

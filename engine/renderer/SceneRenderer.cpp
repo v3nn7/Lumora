@@ -309,6 +309,8 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     clear.depthFormat = depth;
     vsmClear_ = make(clear);
     taa_ = ctx_.createComputePipeline("taa.comp");
+    fogInject_ = ctx_.createComputePipeline("fog.inject.comp", "CSInject");
+    fogIntegrate_ = ctx_.createComputePipeline("fog.integrate.comp");
     ssrTrace_ = ctx_.createComputePipeline("ssr.trace.comp", "CSTrace");
     ssrResolve_ = ctx_.createComputePipeline("ssr.resolve.comp", "CSResolve");
 
@@ -530,6 +532,24 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     fc.groundColor = glm::vec4(env.groundColor, 0.0f);
     fc.gridParams = glm::vec4(settings.showGrid ? 1.0f : 0.0f, settings.gridCellSize, settings.gridFadeDistance, 0.0f);
     fc.fogParams = glm::vec4(std::max(env.fogDensity, 0.0f), std::max(env.fogHeightFalloff, 1e-4f), 0.97f, 0.0f);
+    // Volumetric fog: froxels of 8 x 8 pixels, 64 slices (see fog.hlsl).
+    const bool volumetricFog = env.volumetricFog && env.fogDensity > 0.0f && fogInject_ && fogIntegrate_ &&
+                               extent.width >= 8 && extent.height >= 8;
+    const glm::uvec3 froxels((extent.width + 7) / 8, (extent.height + 7) / 8, 64u);
+    if (volumetricFog) {
+        fc.fogVolume = glm::uvec4(1u, froxels);
+        // Slices jittered along the ray from frame to frame when TAA blends the frames.
+        const float jitter = settings.temporalAntiAliasing ? std::fmod(static_cast<float>(taaFrame_) * 0.618034f, 1.0f) : 0.5f;
+        fc.fogVolumeParams = glm::vec4(std::clamp(env.volumetricFogDistance, 5.0f, 2000.0f),
+                                       std::clamp(env.fogAnisotropy, 0.0f, 0.95f), jitter, 0.0f);
+        fc.fogAlbedo = glm::vec4(glm::max(env.fogColor, glm::vec3(0.0f)), 1.0f);
+        stats.volumetricFog = true;
+    }
+    if (env.cloudCoverage > 0.0f) {
+        fc.clouds = glm::vec4(std::clamp(env.cloudCoverage, 0.0f, 1.0f), env.cloudHeight, std::max(env.cloudThickness, 1.0f),
+                              std::max(env.cloudDensity, 0.0f));
+        fc.cloudWind = glm::vec4(static_cast<float>(std::fmod(timeSeconds * env.cloudWindSpeed, 1.0e6)), 0.0f, 0.0f, 0.0f);
+    }
     fc.grading = glm::vec4(std::max(env.contrast, 0.0f), std::max(env.saturation, 0.0f), std::clamp(env.temperature, -1.0f, 1.0f),
                            std::clamp(env.tint, -1.0f, 1.0f));
     fc.depthOfField = glm::vec4(std::max(env.focusDistance, 0.01f), std::max(env.focusRange, 0.01f),
@@ -1389,9 +1409,58 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         stats.ambientOcclusion = true;
     }
 
+    RGImage fogVolume{};  // integrated volumetric fog, read by the passes that apply fog
+    if (volumetricFog) {
+        const RGImage injected = graph.createImage("FogInjected", {kSurfaceFormat, froxels.x, froxels.y, true, froxels.z});
+        fogVolume = graph.createImage("FogIntegrated", {kSurfaceFormat, froxels.x, froxels.y, true, froxels.z});
+        nvrhi::IDescriptorTable* bindlessTable = ctx_.bindless().table();
+        graph.addComputePass(
+            "FogInject",
+            [&](PassBuilder& b) {
+                b.writeStorage(injected);
+                if (shadows && !virtualShadows) b.sample(shadowMap);
+                if (virtualShadows) {
+                    b.sample(vsmPool);
+                    b.sample(vsmPageTable);
+                }
+                if (localShadows) b.sample(localAtlas);
+            },
+            [this, bindlessTable, froxels, shadows, shadowMap, virtualShadows, vsmPool, vsmPageTable, localShadows, localAtlas](PassContext& ctx) {
+                ctx.cmd->setComputeState(nvrhi::ComputeState().setPipeline(fogInject_).addBindingSet(ctx.frameBindings())
+                                             .addBindingSet(bindlessTable).addBindingSet(ctx.storageBindings()));
+                PushConstants pc;
+                pc.index1 = virtualShadows ? ctx.bindlessIndex(vsmPool) : shadows ? ctx.bindlessIndex(shadowMap) : 0u;
+                pc.param0 = std::bit_cast<float>(localShadows ? ctx.bindlessIndex(localAtlas) : 0u);
+                pc.param1 = std::bit_cast<float>(virtualShadows ? ctx.bindlessIndex(vsmPageTable) : 0u);
+                pc.flags = shadows ? 1u : 0u;
+                push(ctx.cmd, pc);
+                ctx.cmd->dispatch((froxels.x + 3) / 4, (froxels.y + 3) / 4, (froxels.z + 3) / 4);
+            });
+        graph.addComputePass(
+            "FogIntegrate",
+            [&](PassBuilder& b) {
+                b.writeStorage(fogVolume);
+                b.writeStorage(injected);  // u1, read
+            },
+            [this, bindlessTable, froxels](PassContext& ctx) {
+                ctx.cmd->setComputeState(nvrhi::ComputeState().setPipeline(fogIntegrate_).addBindingSet(ctx.frameBindings())
+                                             .addBindingSet(bindlessTable).addBindingSet(ctx.storageBindings()));
+                push(ctx.cmd, PushConstants{});
+                ctx.cmd->dispatch((froxels.x + 7) / 8, (froxels.y + 7) / 8, 1);
+            });
+    }
     graph.addRasterPass(
-        "Sky", [&](PassBuilder& b) { b.writeColor(hdr, LoadOp::DontCare); },
-        [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline](PassContext& ctx) { fullscreen(ctx.cmd, stateFor(sky_, ctx), PushConstants{}); });
+        "Sky",
+        [&](PassBuilder& b) {
+            b.writeColor(hdr, LoadOp::DontCare);
+            if (fogVolume.valid()) b.sample(fogVolume);
+        },
+        [this, stateFor, fogVolume](PassContext& ctx) {
+            PushConstants pc;
+            if (fogVolume.valid()) pc.param2 = std::bit_cast<float>(ctx.bindlessIndex(fogVolume));
+            fullscreen(ctx.cmd, stateFor(sky_, ctx), pc);
+        });
+
 
     const bool parallelOpaque = draws.size() >= settings.parallelRecordingMinDraws;
     stats.parallelRecording = stats.parallelRecording || parallelOpaque;
@@ -1416,16 +1485,18 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             }
             if (localShadows) b.sample(localAtlas);
             if (ambientOcclusion) b.sample(ao);
+            if (fogVolume.valid()) b.sample(fogVolume);
             b.recordInParallel(parallelOpaque);
         },
         [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, shadows, shadowMap, virtualShadows, vsmPool, vsmPageTable, localShadows, localAtlas, ambientOcclusion, ao,
-         debugCascades = settings.debugCascades,
+         fogVolume, debugCascades = settings.debugCascades,
          draws = std::move(draws)](PassContext& ctx) {
             if (draws.empty()) return;
             const std::uint32_t shadowIndex = virtualShadows ? ctx.bindlessIndex(vsmPool) : shadows ? ctx.bindlessIndex(shadowMap) : 0u;
             const float pageTableIndex = std::bit_cast<float>(virtualShadows ? ctx.bindlessIndex(vsmPageTable) : 0u);
             const std::uint32_t aoIndex = ambientOcclusion ? ctx.bindlessIndex(ao) : 0u;
             const float localAtlasIndex = std::bit_cast<float>(localShadows ? ctx.bindlessIndex(localAtlas) : 0u);
+            const float fogIndex = std::bit_cast<float>(fogVolume.valid() ? ctx.bindlessIndex(fogVolume) : 0u);
             const std::uint32_t flags =
                 (shadows ? 1u : 0u) | (shadows && debugCascades ? 2u : 0u) | (ambientOcclusion ? 4u : 0u);
             // Draws are sorted by mesh, so each chunk rebinds buffers only where meshes change.
@@ -1449,6 +1520,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     pc.flags = flags;
                     pc.param0 = localAtlasIndex;
                     pc.param1 = pageTableIndex;
+                    pc.param2 = fogIndex;
                     push(cmd, pc);
                     cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount).setInstanceCount(d.count));
                 }
@@ -1543,8 +1615,9 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 b.writeColor(hdr, LoadOp::Load);
                 b.sample(depth);
                 if (opaqueColor.valid()) b.sample(opaqueColor);
+                if (fogVolume.valid()) b.sample(fogVolume);
             },
-            [this, stateFor, waterGrid, depth, sampler, waters, opaqueColor](PassContext& ctx) {
+            [this, stateFor, waterGrid, depth, sampler, waters, opaqueColor, fogVolume](PassContext& ctx) {
                 nvrhi::GraphicsState state = stateFor(water_, ctx);
                 bindMesh(state, *waterGrid);
                 ctx.cmd->setGraphicsState(state);
@@ -1553,6 +1626,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     pc.index0 = object;
                     pc.index1 = ctx.bindlessIndex(depth);
                     pc.index2 = sampler;
+                    if (fogVolume.valid()) pc.param2 = std::bit_cast<float>(ctx.bindlessIndex(fogVolume));
                     if (opaqueColor.valid()) {  // the scene before SSR, to reflect on screen
                         pc.param0 = std::bit_cast<float>(ctx.bindlessIndex(opaqueColor));
                         pc.flags = 1u;
@@ -1576,8 +1650,9 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     b.sample(vsmPageTable);
                 }
                 if (localShadows) b.sample(localAtlas);
+                if (fogVolume.valid()) b.sample(fogVolume);
             },
-            [this, stateFor, shadows, shadowMap, virtualShadows, vsmPool, vsmPageTable, localShadows, localAtlas,
+            [this, stateFor, shadows, shadowMap, virtualShadows, vsmPool, vsmPageTable, localShadows, localAtlas, fogVolume,
              debugCascades = settings.debugCascades, draws = transparents](PassContext& ctx) {
                 const std::uint32_t shadowIndex = virtualShadows ? ctx.bindlessIndex(vsmPool) : shadows ? ctx.bindlessIndex(shadowMap) : 0u;
                 const float pageTableIndex = std::bit_cast<float>(virtualShadows ? ctx.bindlessIndex(vsmPageTable) : 0u);
@@ -1604,6 +1679,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     pc.flags = flags;
                     pc.param0 = localAtlasIndex;
                     pc.param1 = pageTableIndex;
+                    pc.param2 = std::bit_cast<float>(fogVolume.valid() ? ctx.bindlessIndex(fogVolume) : 0u);
                     push(ctx.cmd, pc);
                     ctx.cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount));
                 }

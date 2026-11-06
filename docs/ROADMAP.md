@@ -85,6 +85,10 @@ Warunek dla kompresji tekstur (1.7).
 - **Sprawdzenie:** czerwona ściana farbuje białą podłogę obok; test liczb SH na prostej scenie.
 
 ### 1.5 Mgła wolumetryczna i chmury (L), zależy od 0.1
+- **Stan: zrobione.** Froksele 8×8 px × 64 plastry (kwadratowo w głąb), wstrzyknięcie (słońce z cieniem
+  kaskad/VSM, światła z siatki, niebo, wolumeny sond), całkowanie, `applyFog` w opaque/przezroczystych/
+  wodzie/niebie; dalej mgła analityczna. Chmury: warstwa raymarchingu z szumem wartości w `sky.hlsl`.
+  Brakuje: reprojekcji czasowej objętości (dziś tylko jitter + TAA), cieni chmur na ziemi.
 - **Mgła:** froxele (np. 160×90×64), compute: rozpraszanie słońca z cieniem VSM i świateł lokalnych,
   całkowanie wzdłuż promienia; zastępuje dzisiejszą analityczną mgłę `fogParams` (z opcją zachowania).
   Promienie słońca (`SunShafts`) wynikną same.

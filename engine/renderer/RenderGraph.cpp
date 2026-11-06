@@ -169,7 +169,7 @@ std::vector<nvrhi::CommandListHandle> RenderGraph::execute(nvrhi::CommandListHan
     for (Resource& r : resources_) {
         if (r.imported) continue;
         const PooledImage& image =
-            runtime.pool->acquire(r.desc.format, r.desc.width, r.desc.height, r.name.c_str(), r.desc.storage);
+            runtime.pool->acquire(r.desc.format, r.desc.width, r.desc.height, r.name.c_str(), r.desc.storage, r.desc.depth);
         r.physical.texture = image.texture;
         r.physical.bindlessIndex = image.bindlessIndex;
     }

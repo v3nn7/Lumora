@@ -392,6 +392,18 @@ struct EnvironmentSettings {
     float exposure = 0.9f;
     float fogDensity = 0.008f;        // extinction per metre at height 0
     float fogHeightFalloff = 0.12f;   // fog thins out with altitude
+    /// Volumetric fog: lit by the sun (with its shadows, so light shafts appear by themselves)
+    /// and by point and spot lights, out to volumetricFogDistance; the simple fog beyond.
+    bool volumetricFog = false;
+    glm::vec3 fogColor{1.0f};         // how much light the fog scatters (its albedo)
+    float fogAnisotropy = 0.6f;       // 0 = scatters evenly, towards 1 = bright looking towards the light
+    float volumetricFogDistance = 80.0f;
+    /// Clouds: a layer ray-marched in the sky (0 coverage = none).
+    float cloudCoverage = 0.0f;       // 0..1
+    float cloudHeight = 1500.0f;      // metres, bottom of the layer
+    float cloudThickness = 800.0f;
+    float cloudDensity = 1.0f;
+    float cloudWindSpeed = 10.0f;     // metres per second, along +X
     float bloomIntensity = 0.05f;     // fraction of the blurred image mixed back in
     float vignette = 0.35f;
     // Image-based lighting: an equirectangular .hdr replaces the procedural sky and lights the

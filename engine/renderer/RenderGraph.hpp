@@ -45,6 +45,7 @@ struct TransientImageDesc {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
     bool storage = false;  // compute passes write it (unordered access)
+    std::uint32_t depth = 1;  // > 1: a 3D image (froxel volumes), sampled through gVolumes
 };
 
 class RenderGraph;

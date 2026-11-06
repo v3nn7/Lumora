@@ -1839,3 +1839,42 @@ TEST_F(RendererTest, LightProbeVolumesBleedColourOntoNearbySurfaces) {
     EXPECT_EQ(volume.baked, kept);
     EXPECT_TRUE(std::filesystem::exists(project.path() / kept));
 }
+
+TEST_F(RendererTest, VolumetricFogGlowsAroundLights) {
+    // Night: a black sky, no ambient light, one point light hanging in thick fog.
+    auto scene = std::make_unique<Scene>("Night");
+    auto& env = scene->environment();
+    env.skyZenithColor = env.skyHorizonColor = env.groundColor = glm::vec3(0.0f);
+    env.ambientIntensity = 0.0f;
+    env.fogDensity = 0.08f;
+    env.fogHeightFalloff = 0.001f;
+    env.volumetricFogDistance = 40.0f;
+    const auto lamp = scene->createEntity("Lamp");
+    auto& light = scene->registry().emplace<LightComponent>(lamp);
+    light.type = LightType::Point;
+    light.intensity = 40.0f;
+    light.range = 12.0f;
+    scene->registry().get<TransformComponent>(lamp).position = {0.0f, 2.0f, 0.0f};
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 2.0f, 8.0f});
+    cam.lookAt({0.0f, 2.0f, 0.0f});
+    const glm::uvec2 size(96, 96);
+    const CameraView view = cam.view(1.0f);
+    RenderSettings settings;
+    settings.bloom = false;
+    auto analytic = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(analytic.has_value());
+    EXPECT_FALSE(renderer_->stats().scene.volumetricFog);
+    env.volumetricFog = true;
+    auto volumetric = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(volumetric.has_value());
+    EXPECT_TRUE(renderer_->stats().scene.volumetricFog);
+    const glm::ivec2 near = toPixel(view, {1.0f, 2.0f, 0.0f}, size);
+    const glm::ivec2 far = toPixel(view, {0.0f, 2.0f, 0.0f}, size);
+    const glm::ivec2 corner(2, 2);
+    EXPECT_LT(luminance(pixel(*analytic, near.x, near.y)), 5.0f) << "the simple fog is not lit by the lamp";
+    EXPECT_GT(luminance(pixel(*volumetric, far.x, far.y)), 60.0f) << "the fog glows around the lamp";
+    EXPECT_GT(luminance(pixel(*volumetric, near.x, near.y)), luminance(pixel(*volumetric, corner.x, corner.y)) + 20.0f)
+        << "brightest near it, fading away";
+}

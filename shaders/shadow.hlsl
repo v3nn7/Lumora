@@ -1,5 +1,6 @@
 // Depth-only pass rendering shadow casters from the sun's point of view into one cascade tile
-// of the shadow atlas (gPush.index1 = cascade).
+// of the shadow atlas (gPush.index1 = cascade), or from a spot/point light into a tile of the local
+// shadow atlas (flags bit0, index1 = tile).
 #include "common.hlsli"
 
 struct VSInput {
@@ -18,5 +19,8 @@ float4 VSMain(VSInput input) : SV_Position {
 #if defined(LUMORA_SKINNED)
     position = mul(skinMatrix(input.joints, input.weights, (uint)object.flags.z), float4(position, 1.0)).xyz;
 #endif
-    return toTarget(mul(gFrame.cascadeViewProjection[gPush.index1], mul(object.world, float4(position, 1.0))));
+    // flags bit0: a spot/point-light tile of the local shadow atlas instead of a sun cascade.
+    float4x4 lightViewProjection = (gPush.flags & 1u) != 0u ? gFrame.localShadowMatrices[gPush.index1]
+                                                           : gFrame.cascadeViewProjection[gPush.index1];
+    return toTarget(mul(lightViewProjection, mul(object.world, float4(position, 1.0))));
 }

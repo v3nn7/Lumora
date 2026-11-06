@@ -4,6 +4,7 @@
 
 #define MAX_LIGHTS 16
 #define SHADOW_CASCADES 4
+#define LOCAL_SHADOW_TILES 16
 #define LIGHT_DIRECTIONAL 0
 #define LIGHT_POINT 1
 #define LIGHT_SPOT 2
@@ -14,7 +15,7 @@ struct GpuLight {
     float4 positionRange;   // xyz world position, w range
     float4 colorIntensity;  // rgb color, w intensity
     float4 directionType;   // xyz direction the light travels, w type
-    float4 spot;            // x cos(outer angle), y cos(inner angle) (spot lights)
+    float4 spot;            // x cos(outer angle), y cos(inner angle), z first shadow tile (-1 = none)
 };
 
 struct FrameData {
@@ -40,6 +41,8 @@ struct FrameData {
     uint4 environmentTextures;  // x sky, y prefiltered specular (bindless), z sampler
     float4 irradianceSh[9];     // SH9 irradiance / pi
     uint4 lightGrid;            // x tiles across, y tiles down, z tile size (px), w point lights
+    column_major float4x4 localShadowMatrices[LOCAL_SHADOW_TILES];  // spot / point-face tiles (4x4 atlas)
+    float4 localShadowParams;   // x enabled, y 1/atlas size
     GpuLight lights[MAX_LIGHTS];  // directional lights
 };
 

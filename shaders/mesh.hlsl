@@ -68,6 +68,48 @@ float surfacePattern(float3 p, float3 n, uint pattern) {
     return lerp(0.72, 1.0, parity);
 }
 
+// ---- Spot and point light shadows: 4x4 tiles of a second depth atlas ----------------------
+
+/// Visibility from a shadowed spot or point light. A point light's six cube faces are six tiles
+/// starting at its first one (+X, -X, +Y, -Y, +Z, -Z). 3x3 PCF from four bilinear comparisons.
+float localShadow(GpuLight light, float3 position, float3 normal, float distance) {
+    int tile = (int)light.spot.z;
+    if (tile < 0 || gFrame.localShadowParams.x == 0.0) {
+        return 1.0;
+    }
+    if ((int)light.directionType.w != LIGHT_SPOT) {
+        float3 d = position - light.positionRange.xyz;
+        float3 a = abs(d);
+        tile += a.x >= a.y && a.x >= a.z ? (d.x > 0.0 ? 0 : 1) : (a.y >= a.z ? (d.y > 0.0 ? 2 : 3) : (d.z > 0.0 ? 4 : 5));
+    }
+    // Normal offset grows with the distance (texels get larger further from the light).
+    float3 p = position + normal * (0.02 + distance * 0.006);
+    float4 clip = mul(gFrame.localShadowMatrices[tile], float4(p, 1.0));
+    if (clip.w <= 0.0) {
+        return 1.0;
+    }
+    float3 ndc = clip.xyz / clip.w;
+    if (any(abs(ndc.xy) > 1.0) || ndc.z > 1.0) {
+        return 1.0;
+    }
+    float texel = gFrame.localShadowParams.y;
+    float2 tileOrigin = float2(tile % 4, tile / 4) * 0.25;
+    // Stay a texel inside the tile so the filter never reads the neighbour.
+    float2 inTile = clamp(ndc.xy * 0.5 + 0.5, texel * 6.0, 1.0 - texel * 6.0);
+    float2 uv = tileOrigin + inTile * 0.25;
+    uint atlas = asuint(gPush.param0);
+    uint smp = (uint)gFrame.shadowParams.y;
+    float depth = ndc.z - 0.0005;
+    float sum = 0.0;
+    [unroll] for (int j = 0; j < 2; ++j) {
+        [unroll] for (int i = 0; i < 2; ++i) {
+            float2 offset = (float2(i, j) - 0.5) * texel;
+            sum += gTextures[atlas].SampleCmpLevelZero(gShadowSamplers[smp], uv + offset, depth);
+        }
+    }
+    return sum * 0.25;
+}
+
 // ---- Sun shadows: 4 cascades in a 2x2 depth atlas ---------------------------------------
 
 static const float2 kCascadeTile[SHADOW_CASCADES] = {float2(0.0, 0.0), float2(1.0, 0.0), float2(0.0, 1.0),
@@ -256,6 +298,7 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
             }
             if (attenuation > 0.0) {
                 float3 radiance = light.colorIntensity.rgb * light.colorIntensity.w * attenuation;
+                radiance *= localShadow(light, s.position, geometricNormal, distance);
                 color += evaluateLight(s, toLight / max(distance, 1e-4), radiance);
             }
         }

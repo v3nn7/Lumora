@@ -216,7 +216,8 @@ is set, the renderer's own colour and texture settings are greyed out; clear the
 them again. Scripts switch materials with `setMaterial()`. Models and prefabs can be dragged into
 the viewport too: they land where you drop them.
 
-Lights are directional (the sun), point or spot lights. A spot light shines along the entity's
+Lights are directional (the sun), point or spot lights. Spot and point lights with **Cast Shadows** get shadows from a shared atlas (16 tiles: a spot
+light takes one, a point light six; the lights nearest the camera come first). A spot light shines along the entity's
 -Z axis in a cone (**Spot Angle** is its half-angle, **Spot Softness** how much of it fades out
 at the edge). A scene can have thousands of point and spot lights:
 each part of the screen only computes the ones whose range reaches it, so keep ranges tight. The directional light casts soft cascaded

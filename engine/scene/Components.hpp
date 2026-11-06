@@ -76,6 +76,9 @@ struct LightComponent {
     float range = 10.0f;
     float spotAngleDeg = 35.0f;  // spot: half-angle of the cone
     float spotSoftness = 0.25f;  // spot: fraction of the cone that fades out at its edge
+    /// Spot and point lights: shadows from a tile of the local shadow atlas (16 tiles; a spot
+    /// takes one, a point light six; the lights nearest the camera get them first).
+    bool castShadows = false;
 };
 
 struct CameraComponent {

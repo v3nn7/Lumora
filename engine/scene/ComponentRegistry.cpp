@@ -78,6 +78,7 @@ ComponentRegistry makeBuiltin() {
             ranged(R::field(&LightComponent::range, "range", "Range", FieldKind::Float), 0.01f, 10000.0f, 0.1f),
             ranged(R::field(&LightComponent::spotAngleDeg, "spotAngle", "Spot Angle", FieldKind::Float), 1.0f, 89.0f, 0.5f),
             ranged(R::field(&LightComponent::spotSoftness, "spotSoftness", "Spot Softness", FieldKind::Float), 0.0f, 1.0f, 0.01f),
+            R::field(&LightComponent::castShadows, "castShadows", "Cast Shadows", FieldKind::Bool),
         };
         reg.add(std::move(d));
     }

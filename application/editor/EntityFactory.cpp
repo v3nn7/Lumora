@@ -168,6 +168,7 @@ void populateCreateMenu(QMenu& menu, EditorContext& ctx, bool asChild) {
         ctx.createEntity(QObject::tr("Spot Light"), [](Scene& scene, entt::entity e) {
             auto& light = scene.registry().emplace<LightComponent>(e);
             light.type = LightType::Spot;
+            light.castShadows = true;
             light.intensity = 20.0f;
             light.range = 12.0f;
             auto& t = scene.registry().get<TransformComponent>(e);

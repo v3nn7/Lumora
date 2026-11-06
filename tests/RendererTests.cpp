@@ -853,6 +853,58 @@ TEST_F(RendererTest, DebugShapesDrawOnTop) {
     EXPECT_GT(magenta, 40) << "the line shows through the wall, a couple of pixels thick";
 }
 
+TEST_F(RendererTest, SpotAndPointLightsCastShadows) {
+    // A dark floor, a cube 1 m above it, a light above the cube. With castShadows the floor right
+    // under the cube is dark while the floor beside it is lit; without, both are lit.
+    for (const LightType type : {LightType::Spot, LightType::Point}) {
+        auto scene = std::make_unique<Scene>("Local shadows");
+        scene->environment().ambientIntensity = 0.0f;
+        scene->environment().fogDensity = 0.0f;
+        const auto floor = scene->createEntity("Floor");
+        auto& mesh = scene->registry().emplace<MeshRendererComponent>(floor);
+        mesh.mesh = MeshPrimitive::Plane;
+        mesh.baseColor = glm::vec3(0.8f);
+        mesh.roughness = 1.0f;
+        scene->registry().get<TransformComponent>(floor).scale = glm::vec3(20.0f, 1.0f, 20.0f);
+        const auto cube = scene->createEntity("Cube");
+        scene->registry().emplace<MeshRendererComponent>(cube).baseColor = glm::vec3(0.8f);
+        scene->registry().get<TransformComponent>(cube).position = {0.0f, 1.5f, 0.0f};
+        const auto lamp = scene->createEntity("Lamp");
+        auto& light = scene->registry().emplace<LightComponent>(lamp);
+        light.type = type;
+        light.intensity = 40.0f;
+        light.range = 15.0f;
+        light.spotAngleDeg = 60.0f;
+        light.castShadows = true;
+        auto& t = scene->registry().get<TransformComponent>(lamp);
+        t.position = {0.0f, 4.0f, 0.0f};
+        t.rotationDeg = {-90.0f, 0.0f, 0.0f};
+        scene->updateWorldTransforms();
+
+        FlyCameraController cam;
+        cam.setPosition({0.0f, 9.0f, 6.0f});
+        cam.lookAt({0.0f, 0.0f, 0.0f});
+        const glm::uvec2 size(160, 120);
+        const CameraView view = cam.view(static_cast<float>(size.x) / static_cast<float>(size.y));
+        RenderSettings settings;
+        settings.bloom = false;
+        settings.ambientOcclusion = false;
+        auto shadowed = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+        ASSERT_TRUE(shadowed.has_value()) << shadowed.error().message;
+        // Under the cube but outside it from this camera: the floor just in front of the cube.
+        const glm::ivec2 under = toPixel(view, glm::vec3(0.0f, 0.0f, 0.75f), size);
+        const glm::ivec2 beside = toPixel(view, glm::vec3(2.6f, 0.0f, 0.75f), size);
+        const float dark = luminance(pixel(*shadowed, under.x, under.y));
+        const float lit = luminance(pixel(*shadowed, beside.x, beside.y));
+        EXPECT_LT(dark, lit * 0.5f) << (type == LightType::Spot ? "spot" : "point") << " light shadow under the cube";
+
+        scene->registry().get<LightComponent>(lamp).castShadows = false;
+        auto unshadowed = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+        ASSERT_TRUE(unshadowed.has_value());
+        EXPECT_GT(luminance(pixel(*unshadowed, under.x, under.y)), dark * 1.5f) << "no shadow without castShadows";
+    }
+}
+
 // ---- HUD ------------------------------------------------------------------------------------
 
 #include "renderer/HudRenderer.hpp"

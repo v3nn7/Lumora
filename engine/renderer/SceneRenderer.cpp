@@ -10,10 +10,12 @@
 #include "scene/Scene.hpp"
 
 #include <glm/geometric.hpp>
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/matrix.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <span>
 #include <string>
@@ -333,6 +335,13 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     // a storage buffer, binned into screen tiles so each pixel only visits the ones near it.
     std::uint32_t lightCount = 0;
     std::vector<GpuLight> pointLights;
+    struct ShadowCandidate {
+        std::uint32_t light;  // index into pointLights
+        LightType type;
+        float outerAngle;     // spot: half-angle (radians)
+        float distance;       // to the camera
+    };
+    std::vector<ShadowCandidate> shadowCandidates;
     bool haveSun = false;
     std::uint32_t sunIndex = UINT32_MAX;
     glm::vec3 sunTravel(0.0f, -1.0f, 0.0f);
@@ -346,10 +355,17 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         if (light.type == LightType::Spot) {
             const float outer = glm::radians(std::clamp(light.spotAngleDeg, 1.0f, 89.0f));
             const float inner = outer * (1.0f - std::clamp(light.spotSoftness, 0.0f, 1.0f));
-            gl.spot = glm::vec4(std::cos(outer), std::cos(inner) + 1e-4f, 0.0f, 0.0f);
+            gl.spot = glm::vec4(std::cos(outer), std::cos(inner) + 1e-4f, -1.0f, 0.0f);
         }
         if (light.type != LightType::Directional) {
-            if (pointLights.size() < kMaxPointLights && light.intensity > 0.0f) pointLights.push_back(gl);
+            if (pointLights.size() < kMaxPointLights && light.intensity > 0.0f) {
+                if (light.castShadows && settings.shadows) {
+                    shadowCandidates.push_back({static_cast<std::uint32_t>(pointLights.size()), light.type,
+                                                glm::radians(std::clamp(light.spotAngleDeg, 1.0f, 89.0f)),
+                                                glm::length(position - camera.position)});
+                }
+                pointLights.push_back(gl);
+            }
             continue;
         }
         if (lightCount >= kMaxLights) continue;
@@ -363,6 +379,47 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         }
     }
     const bool shadows = settings.shadows && haveSun && settings.shadowResolution > 0 && settings.shadowDistance > 0.0f;
+    // Spot and point light shadows: tiles of the local atlas to the lights nearest the camera.
+    struct LocalTile {
+        glm::mat4 viewProjection;
+        glm::vec3 lightPosition;
+        float range;
+    };
+    std::vector<LocalTile> localTiles;
+    std::ranges::sort(shadowCandidates, std::less<>{}, &ShadowCandidate::distance);
+    for (const ShadowCandidate& c : shadowCandidates) {
+        const std::uint32_t needed = c.type == LightType::Spot ? 1u : 6u;
+        if (localTiles.size() + needed > kLocalShadowTiles) continue;
+        GpuLight& gl = pointLights[c.light];
+        const glm::vec3 position(gl.positionRange);
+        const float range = std::max(gl.positionRange.w, 0.1f);
+        const float nearPlane = std::clamp(range * 0.005f, 0.02f, 0.5f);
+        gl.spot.z = static_cast<float>(localTiles.size());
+        auto add = [&](const glm::vec3& forward, const glm::vec3& up, float fov) {
+            const glm::mat4 view = glm::lookAt(position, position + forward, up);
+            const glm::mat4 projection = glm::perspective(fov, 1.0f, nearPlane, range);
+            fc.localShadowMatrices[localTiles.size()] = projection * view;
+            localTiles.push_back({projection * view, position, range});
+        };
+        if (c.type == LightType::Spot) {
+            const glm::vec3 dir = glm::normalize(glm::vec3(gl.directionType));
+            add(dir, std::abs(dir.y) > 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0),
+                std::min(2.0f * c.outerAngle + glm::radians(4.0f), glm::radians(170.0f)));
+        } else {
+            const float quarter = glm::half_pi<float>();
+            add({1, 0, 0}, {0, 1, 0}, quarter);
+            add({-1, 0, 0}, {0, 1, 0}, quarter);
+            add({0, 1, 0}, {0, 0, 1}, quarter);
+            add({0, -1, 0}, {0, 0, 1}, quarter);
+            add({0, 0, 1}, {0, 1, 0}, quarter);
+            add({0, 0, -1}, {0, 1, 0}, quarter);
+        }
+    }
+    const bool localShadows = !localTiles.empty();
+    const std::uint32_t localAtlasSize = std::min(4096u, ctx_.caps().maxImageDimension2D);
+    if (localShadows) fc.localShadowParams = glm::vec4(1.0f, 1.0f / static_cast<float>(localAtlasSize), 0.0f, 0.0f);
+    fc.shadowParams.y = static_cast<float>(ctx_.shadowCompareSampler());  // local shadows use it without a sun
+    const bool anyShadows = shadows || localShadows;
     fc.counts = glm::uvec4(lightCount, shadows ? sunIndex : UINT32_MAX, ctx_.materialSampler(), 0);
     stats.lights = lightCount + static_cast<std::uint32_t>(pointLights.size());
     {
@@ -448,7 +505,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             p.extent = glm::abs(m[0]) * localExtent.x + glm::abs(m[1]) * localExtent.y + glm::abs(m[2]) * localExtent.z;
             // Skinned meshes are never culled: animated limbs leave the bind-pose bounds.
             p.visible = !settings.frustumCulling || c.gpuMesh->skinned() || frustum.intersectsAabb(p.center, p.extent);
-            if (!p.visible && !shadows) continue;
+            if (!p.visible && !anyShadows) continue;
             const MeshRendererComponent& mesh = *c.mesh;
             const MaterialAsset* mat = c.material.get();
             GpuObject& obj = p.object;
@@ -475,7 +532,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         Prepared& p = prepared[i];
         if (!p.visible) {
             ++stats.culledObjects;
-            if (!shadows) continue;
+            if (!anyShadows) continue;
         }
         GpuObject& obj = p.object;
         if (p.visible && settings.assets != nullptr) {  // casters only need depth, not materials
@@ -498,7 +555,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         }
         const Draw draw{candidates[i].gpuMesh, static_cast<std::uint32_t>(objects.size()), p.center, p.extent};
         if (p.visible) draws.push_back(draw);
-        if (shadows) casters.push_back(draw);
+        if (anyShadows) casters.push_back(draw);
         objects.push_back(obj);
     }
     // Unskinned first, then skinned (one pipeline switch); within each, grouped by mesh.
@@ -586,6 +643,51 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             });
     }
 
+    RGImage localAtlas{};
+    if (localShadows) {
+        // Casters per tile: inside the light's range and the tile's frustum.
+        std::vector<std::vector<Draw>> tileCasters(localTiles.size());
+        JobSystem::global().parallelFor(localTiles.size(), 1, [&](std::size_t begin, std::size_t end) {
+            for (std::size_t t = begin; t < end; ++t) {
+                const LocalTile& tile = localTiles[t];
+                const Frustum frustumOfTile = Frustum::fromViewProjection(tile.viewProjection);
+                for (const Draw& d : casters) {
+                    if (glm::length(d.center - tile.lightPosition) - glm::length(d.extent) > tile.range) continue;
+                    if (frustumOfTile.intersectsAabb(d.center, d.extent)) tileCasters[t].push_back(d);
+                }
+            }
+        });
+        for (const auto& list : tileCasters) stats.drawCalls += static_cast<std::uint32_t>(list.size());
+        localAtlas = graph.createImage("LocalShadowAtlas", {ctx_.depthFormat(), localAtlasSize, localAtlasSize});
+        const std::uint32_t tileSize = localAtlasSize / 4;
+        graph.addRasterPass(
+            "LocalShadows", [&](PassBuilder& b) { b.writeDepth(localAtlas, LoadOp::Clear, 1.0f); },
+            [this, stateFor, tileSize, tileCasters = std::move(tileCasters)](PassContext& ctx) {
+                for (std::size_t t = 0; t < tileCasters.size(); ++t) {
+                    const float x = static_cast<float>((t % 4) * tileSize);
+                    const float y = static_cast<float>((t / 4) * tileSize);
+                    nvrhi::GraphicsState state = stateFor(shadow_, ctx);
+                    state.viewport = nvrhi::ViewportState().addViewportAndScissorRect(
+                        nvrhi::Viewport(x, x + static_cast<float>(tileSize), y, y + static_cast<float>(tileSize), 0.0f, 1.0f));
+                    const GpuMesh* mesh = nullptr;
+                    for (const Draw& d : tileCasters[t]) {
+                        if (d.mesh != mesh) {
+                            mesh = d.mesh;
+                            state.pipeline = mesh->skinned() ? shadowSkinned_ : shadow_;
+                            bindMesh(state, *mesh);
+                            ctx.cmd->setGraphicsState(state);
+                        }
+                        PushConstants pc;
+                        pc.index0 = d.object;
+                        pc.index1 = static_cast<std::uint32_t>(t);
+                        pc.flags = 1u;  // a local shadow tile
+                        push(ctx.cmd, pc);
+                        ctx.cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount));
+                    }
+                }
+            });
+    }
+
     // ---- Depth prepass, then ambient occlusion from it ---------------------------------------
     const bool parallelPrepass = draws.size() >= settings.parallelRecordingMinDraws;
     graph.addRasterPass(
@@ -665,14 +767,17 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             b.writeColor(hdr, LoadOp::Load);
             b.readDepth(depth);  // from the prepass; the opaque pass only tests against it
             if (shadows) b.sample(shadowMap);
+            if (localShadows) b.sample(localAtlas);
             if (ambientOcclusion) b.sample(ao);
             b.recordInParallel(parallelOpaque);
         },
-        [this, stateFor, shadows, shadowMap, ambientOcclusion, ao, debugCascades = settings.debugCascades,
+        [this, stateFor, shadows, shadowMap, localShadows, localAtlas, ambientOcclusion, ao,
+         debugCascades = settings.debugCascades,
          draws = std::move(draws)](PassContext& ctx) {
             if (draws.empty()) return;
             const std::uint32_t shadowIndex = shadows ? ctx.bindlessIndex(shadowMap) : 0u;
             const std::uint32_t aoIndex = ambientOcclusion ? ctx.bindlessIndex(ao) : 0u;
+            const float localAtlasIndex = std::bit_cast<float>(localShadows ? ctx.bindlessIndex(localAtlas) : 0u);
             const std::uint32_t flags =
                 (shadows ? 1u : 0u) | (shadows && debugCascades ? 2u : 0u) | (ambientOcclusion ? 4u : 0u);
             // Draws are sorted by mesh, so each chunk rebinds buffers only where meshes change.
@@ -692,6 +797,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     pc.index1 = shadowIndex;
                     pc.index2 = aoIndex;
                     pc.flags = flags;
+                    pc.param0 = localAtlasIndex;
                     push(cmd, pc);
                     cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount));
                 }

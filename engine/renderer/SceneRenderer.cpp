@@ -276,6 +276,16 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
         bloom.colorFormats = {hdr};
         (up ? bloomUp_ : bloomDown_) = make(bloom);
     }
+    PipelineDesc decal;
+    decal.name = "Decals";
+    decal.vertexShader = "decal.vert";
+    decal.pixelShader = "decal.frag";
+    decal.input = VertexInput::MeshPosition;
+    decal.cull = nvrhi::RasterCullMode::Front;  // the box's far side: also drawn with the camera inside it
+    decal.blend = BlendMode::Multiply;
+    decal.colorFormats = {hdr};
+    decal_ = make(decal);
+
     PipelineDesc post;
     post.vertexShader = "postfx.vert";
     post.colorFormats = {hdr};
@@ -592,6 +602,23 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     auto byPipelineAndMesh = [](const Draw& d) { return std::pair(d.mesh->skinned(), d.mesh); };
     std::ranges::sort(draws, std::less<>{}, byPipelineAndMesh);
     std::ranges::sort(casters, std::less<>{}, byPipelineAndMesh);
+    // Decals are objects too: world, inverse world (in normalMatrix), colour + opacity, texture.
+    std::vector<std::uint32_t> decals;
+    for (auto [e, decal, world] : reg.view<DecalComponent, WorldTransformComponent>().each()) {
+        const glm::vec3 center(world.matrix[3]);
+        const glm::mat3 m(world.matrix);
+        const glm::vec3 halfExtent = (glm::abs(m[0]) + glm::abs(m[1]) + glm::abs(m[2])) * 0.5f;
+        if (settings.frustumCulling && !frustum.intersectsAabb(center, halfExtent)) continue;
+        GpuObject obj;
+        obj.world = world.matrix;
+        obj.normalMatrix = glm::inverse(world.matrix);
+        obj.baseColorMetallic = glm::vec4(decal.color, std::clamp(decal.opacity, 0.0f, 1.0f));
+        if (!decal.texture.empty() && settings.assets != nullptr) {
+            obj.textures.x = ctx_.textures().index(*settings.assets, decal.texture, TextureColorSpace::Srgb, settings.blockOnAssets);
+        }
+        decals.push_back(static_cast<std::uint32_t>(objects.size()));
+        objects.push_back(obj);
+    }
     if (objects.empty()) objects.emplace_back();  // structured buffers may not be empty
     if (joints.empty()) joints.emplace_back(1.0f);
     frame.objects.write(gpu, std::as_bytes(std::span(objects)), DynamicBuffer::Kind::Structured, sizeof(GpuObject),
@@ -833,6 +860,31 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 }
             });
         });
+
+    if (!decals.empty()) {
+        const GpuMesh* box = &ctx_.meshes().primitive(MeshPrimitive::Cube);
+        const std::uint32_t sampler = ctx_.linearClampSampler();
+        graph.addRasterPass(
+            "Decals",
+            [&](PassBuilder& b) {
+                b.writeColor(hdr, LoadOp::Load);
+                b.sample(depth);
+            },
+            [this, stateFor, box, depth, sampler, decals](PassContext& ctx) {
+                nvrhi::GraphicsState state = stateFor(decal_, ctx);
+                bindMesh(state, *box);
+                ctx.cmd->setGraphicsState(state);
+                for (const std::uint32_t object : decals) {
+                    PushConstants pc;
+                    pc.index0 = object;
+                    pc.index1 = ctx.bindlessIndex(depth);
+                    pc.index2 = sampler;
+                    push(ctx.cmd, pc);
+                    ctx.cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(box->indexCount));
+                }
+            });
+        stats.drawCalls += static_cast<std::uint32_t>(decals.size());
+    }
 
     if (settings.showGrid) {
         graph.addRasterPass(

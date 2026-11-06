@@ -56,7 +56,7 @@ private:
     std::unordered_map<std::string, nvrhi::ShaderHandle> shaders_;
 };
 
-enum class BlendMode : std::uint8_t { Opaque, Alpha, Additive };
+enum class BlendMode : std::uint8_t { Opaque, Alpha, Additive, Multiply };
 
 /// Vertex streams the pipelines read (see shaders: [[vk::location]] numbers in order).
 enum class VertexInput : std::uint8_t {

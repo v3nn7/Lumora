@@ -144,6 +144,12 @@ void populateCreateMenu(QMenu& menu, EditorContext& ctx, bool asChild) {
             p.endAlpha = 0.2f;
         }, asChild);
     });
+    effects->addAction(icon(QStringLiteral("grid")), QObject::tr("Decal"), [&ctx, asChild] {
+        ctx.createEntity(QObject::tr("Decal"), [](Scene& scene, entt::entity e) {
+            scene.registry().emplace<DecalComponent>(e);
+            scene.registry().get<TransformComponent>(e).scale = {2.0f, 1.0f, 2.0f};
+        }, asChild);
+    });
     effects->addAction(icon(QStringLiteral("sparkle")), QObject::tr("Fire"), [&ctx, asChild] {
         ctx.createEntity(QObject::tr("Fire"), [](Scene& scene, entt::entity e) {
             auto& p = scene.registry().emplace<ParticleEmitterComponent>(e);

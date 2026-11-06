@@ -21,6 +21,8 @@ lumora_add_shader(LUMORA_SHADER_FILES SOURCE overlay.hlsl  STAGE vert ENTRY VSMa
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE overlay.hlsl  STAGE frag ENTRY PSMain OUTPUT overlay.frag.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE hud.hlsl      STAGE vert ENTRY VSMain OUTPUT hud.vert.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE hud.hlsl      STAGE frag ENTRY PSMain OUTPUT hud.frag.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE decal.hlsl   STAGE vert ENTRY VSMain OUTPUT decal.vert.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE decal.hlsl   STAGE frag ENTRY PSMain OUTPUT decal.frag.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE postfx.hlsl  STAGE vert ENTRY VSMain OUTPUT postfx.vert.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE postfx.hlsl  STAGE frag ENTRY PSDepthOfField OUTPUT postfx.dof.frag.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE postfx.hlsl  STAGE frag ENTRY PSShafts OUTPUT postfx.shafts.frag.spv)

@@ -213,6 +213,13 @@ nvrhi::GraphicsPipelineHandle RenderContext::createPipeline(const PipelineDesc& 
                     .setSrcBlendAlpha(nvrhi::BlendFactor::One)
                     .setDestBlendAlpha(nvrhi::BlendFactor::InvSrcAlpha);
                 break;
+            case BlendMode::Multiply:
+                target.setBlendEnable(true)
+                    .setSrcBlend(nvrhi::BlendFactor::DstColor)
+                    .setDestBlend(nvrhi::BlendFactor::Zero)
+                    .setSrcBlendAlpha(nvrhi::BlendFactor::Zero)
+                    .setDestBlendAlpha(nvrhi::BlendFactor::One);
+                break;
             case BlendMode::Additive:
                 target.setBlendEnable(true)
                     .setSrcBlend(nvrhi::BlendFactor::One)

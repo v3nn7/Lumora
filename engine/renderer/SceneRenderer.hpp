@@ -119,6 +119,7 @@ private:
     nvrhi::GraphicsPipelineHandle ssaoBlur_;
     nvrhi::GraphicsPipelineHandle bloomDown_;
     nvrhi::GraphicsPipelineHandle bloomUp_;
+    nvrhi::GraphicsPipelineHandle decal_;
     nvrhi::GraphicsPipelineHandle depthOfField_;
     nvrhi::GraphicsPipelineHandle shafts_;
     nvrhi::GraphicsPipelineHandle shaftsAdd_;

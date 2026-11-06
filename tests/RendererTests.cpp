@@ -987,6 +987,41 @@ TEST_F(RendererTest, ColorGradingDepthOfFieldAndSunShafts) {
     EXPECT_GT(total(*withShafts), total(*noShafts) * 1.02) << "shafts add light";
 }
 
+TEST_F(RendererTest, DecalsTintTheSurfacesInsideTheirBox) {
+    auto scene = sceneWithSun();
+    scene->environment().fogDensity = 0.0f;
+    const auto floor = scene->createEntity("Floor");
+    auto& mesh = scene->registry().emplace<MeshRendererComponent>(floor);
+    mesh.mesh = MeshPrimitive::Plane;
+    mesh.baseColor = glm::vec3(0.8f);
+    scene->registry().get<TransformComponent>(floor).scale = glm::vec3(20.0f, 1.0f, 20.0f);
+    const auto decal = scene->createEntity("Stain");
+    auto& d = scene->registry().emplace<DecalComponent>(decal);
+    d.color = {0.1f, 0.2f, 1.0f};
+    scene->registry().get<TransformComponent>(decal).scale = {2.0f, 1.0f, 2.0f};
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 6.0f, 0.01f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const glm::uvec2 size(96, 96);
+    const CameraView view = cam.view(1.0f);
+    RenderSettings settings;
+    settings.bloom = false;
+    auto image = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(image.has_value());
+    const glm::ivec2 inside = toPixel(view, glm::vec3(0.0f), size);
+    const glm::ivec2 outside = toPixel(view, glm::vec3(2.5f, 0.0f, 0.0f), size);
+    const auto in = pixel(*image, inside.x, inside.y);
+    const auto out = pixel(*image, outside.x, outside.y);
+    EXPECT_GT(in.b, in.r + 40) << "blue inside the box";
+    EXPECT_LT(std::abs(int(out.r) - int(out.b)), 15) << "untouched outside";
+    scene->registry().get<DecalComponent>(decal).opacity = 0.0f;
+    auto faded = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(faded.has_value());
+    const auto clear = pixel(*faded, inside.x, inside.y);
+    EXPECT_LT(std::abs(int(clear.r) - int(clear.b)), 15) << "opacity 0: no decal";
+}
+
 // ---- HUD ------------------------------------------------------------------------------------
 
 #include "renderer/HudRenderer.hpp"

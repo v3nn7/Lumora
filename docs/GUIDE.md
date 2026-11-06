@@ -266,6 +266,12 @@ button layout. Saved values (`saveNumber`, `saveText`) live in `Saved/GameSave.j
 playing in the editor (*Play → Clear Saved Game Data* resets them) and in the player's data
 folder in exported games.
 
+### Decals
+
+*Create → Effects → Decal* (or a **Decal** component) projects a texture or a plain colour down
+the entity's -Y axis onto every surface inside its box (the entity's scale sets the size),
+multiplying their colour: dirt, cracks, paint marks, footprints. **Opacity** fades it.
+
 ### Particle effects
 
 *Create → Effects* adds ready-made **Smoke**, **Sparks** and **Fire**; any entity can get a

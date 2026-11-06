@@ -129,6 +129,14 @@ struct ParticleEmitterComponent {
     bool worldSpace = true;       // false: particles move with the entity
 };
 
+/// Projects a texture down the entity's local -Y axis onto the surfaces inside its box (the
+/// entity's unit cube, sized by its scale), multiplying their colour: dirt, cracks, paint, stains.
+struct DecalComponent {
+    std::string texture;        // project-relative image; empty = a plain colour
+    glm::vec3 color{0.25f};
+    float opacity = 1.0f;
+};
+
 /// Run-time state of an emitter (not saved): the live particles.
 struct ParticleStateComponent {
     struct Particle {

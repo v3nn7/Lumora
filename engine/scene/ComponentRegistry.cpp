@@ -176,6 +176,15 @@ ComponentRegistry makeBuiltin() {
         reg.add(std::move(d));
     }
     {
+        auto d = R::describe<DecalComponent>("Decal", "Decal");
+        d.fields = {
+            R::field(&DecalComponent::texture, "decalTexture", "Texture", FieldKind::Asset),
+            R::field(&DecalComponent::color, "color", "Color", FieldKind::Color),
+            ranged(R::field(&DecalComponent::opacity, "opacity", "Opacity", FieldKind::Float), 0.0f, 1.0f, 0.01f),
+        };
+        reg.add(std::move(d));
+    }
+    {
         auto d = R::describe<ParticleEmitterComponent>("ParticleEmitter", "Particle Emitter");
         using P = ParticleEmitterComponent;
         d.fields = {

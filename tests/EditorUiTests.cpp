@@ -23,6 +23,7 @@
 #include <QDockWidget>
 #include <QEnterEvent>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QLineEdit>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -424,4 +425,45 @@ TEST_F(EditorUiTest, TwoEditorsShareASceneLive) {
     ASSERT_TRUE(waitFor([&] { return host->sessionClient()->participants().size() == 1; }));
     host->leaveSession();
     EXPECT_FALSE(host->inSession());
+}
+
+TEST_F(EditorUiTest, PointerPassThroughReachesTheViewport) {
+    // On Wayland the viewport lets the pointer through to its container (so the cursor can be
+    // locked on the main surface); the container's mouse events must drive the viewport.
+    qputenv("LUMORA_POINTER_PASSTHROUGH", "1");
+    editor::EditorWindow* editor = openEditor();
+    qunsetenv("LUMORA_POINTER_PASSTHROUGH");
+    ASSERT_NE(editor, nullptr);
+    app::VulkanViewport* viewport = nullptr;
+    for (QWindow* w : QGuiApplication::allWindows()) {
+        if (auto* v = qobject_cast<app::VulkanViewport*>(w)) viewport = v;
+    }
+    ASSERT_NE(viewport, nullptr);
+    EXPECT_TRUE(viewport->flags().testFlag(Qt::WindowTransparentForInput));
+    QWidget* container = nullptr;
+    for (QWidget* w : editor->findChildren<QWidget*>()) {
+        if (QString::fromLatin1(w->metaObject()->className()) == QLatin1String("QWindowContainer")) container = w;
+    }
+    ASSERT_NE(container, nullptr);
+
+    const QPointF at(40, 30);
+    QMouseEvent press(QEvent::MouseButtonPress, at, container->mapToGlobal(at), Qt::RightButton, Qt::RightButton,
+                      Qt::NoModifier);
+    QCoreApplication::sendEvent(container, &press);
+    EXPECT_TRUE(viewport->input().isDown(MouseButton::Right)) << "right press reached the viewport";
+    EXPECT_EQ(container->cursor().shape(), Qt::BlankCursor) << "the cursor hides while looking";
+    QMouseEvent release(QEvent::MouseButtonRelease, at, container->mapToGlobal(at), Qt::RightButton, Qt::NoButton,
+                        Qt::NoModifier);
+    QCoreApplication::sendEvent(container, &release);
+    EXPECT_FALSE(viewport->input().isDown(MouseButton::Right));
+    EXPECT_NE(container->cursor().shape(), Qt::BlankCursor);
+
+    // Hovering the container engages the keyboard like hovering the viewport itself.
+    QEnterEvent enter(at, at, container->mapToGlobal(at));
+    QCoreApplication::sendEvent(container, &enter);
+    QKeyEvent w(QEvent::KeyPress, Qt::Key_W, Qt::NoModifier);
+    QCoreApplication::sendEvent(editor->windowHandle(), &w);
+    EXPECT_TRUE(viewport->input().isDown(Key::W));
+    QKeyEvent wUp(QEvent::KeyRelease, Qt::Key_W, Qt::NoModifier);
+    QCoreApplication::sendEvent(editor->windowHandle(), &wUp);
 }

@@ -130,7 +130,9 @@ void VulkanViewport::stopLooking() {
 
 void VulkanViewport::setInputContainer(QWidget* container) {
     inputContainer_ = container;
-    if (pointerLock_ == nullptr || container == nullptr) return;
+    // LUMORA_POINTER_PASSTHROUGH=1 forces the Wayland routing elsewhere (tests, debugging).
+    const bool forced = qEnvironmentVariableIntValue("LUMORA_POINTER_PASSTHROUGH") == 1;
+    if ((pointerLock_ == nullptr && !forced) || container == nullptr) return;
     // Compositors lock the pointer only on a window's main surface: KWin activates a lock just
     // when the surface under the pointer is the window's own surface, and an embedded QWindow
     // like this one is a subsurface. So on Wayland this surface takes no pointer input (empty

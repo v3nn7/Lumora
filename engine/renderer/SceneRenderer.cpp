@@ -1,5 +1,7 @@
 #include "renderer/SceneRenderer.hpp"
 
+#include "assets/AssetLibrary.hpp"
+
 #include "core/JobSystem.hpp"
 #include "renderer/FrameResources.hpp"
 #include "renderer/GpuTypes.hpp"
@@ -102,6 +104,56 @@ std::array<float, kShadowCascades> cascadeSplits(float nearPlane, float distance
 
 namespace {
 constexpr VkFormat kAoFormat = VK_FORMAT_R8_UNORM;
+
+/// Joint matrices of a skinned mesh entity: inverse(mesh world) * joint world * inverse bind, for
+/// every joint of its skin, appended to `out`. The joints are the entities that mirror the skin's
+/// joint nodes under the same model root. False (palette of identities) if anything is missing.
+bool appendSkinPalette(const Scene& scene, entt::entity entity, const MeshRendererComponent& mesh, AssetLibrary* assets,
+                       std::vector<glm::mat4>& out) {
+    const auto& reg = scene.registry();
+    const auto* skinComponent = reg.try_get<SkinComponent>(entity);
+    const ImportedModel* model = nullptr;
+    if (skinComponent != nullptr && assets != nullptr) {
+        if (auto ref = assets->resolveMeshKey(mesh.meshAsset)) {
+            if (auto loaded = assets->model(ref->file)) model = *loaded;
+        }
+    }
+    if (model == nullptr || skinComponent->skin < 0 || static_cast<std::size_t>(skinComponent->skin) >= model->skins.size()) {
+        out.push_back(glm::mat4(1.0f));
+        return false;
+    }
+    const ImportedSkin& skin = model->skins[static_cast<std::size_t>(skinComponent->skin)];
+    // The model root: the first ancestor that does not mirror a model node.
+    entt::entity root = entity;
+    while (root != entt::null && reg.all_of<ModelNodeComponent>(root)) root = scene.parentOf(root);
+    std::vector<entt::entity> nodes(model->nodes.size(), entt::entity{entt::null});
+    auto collect = [&](auto& self, entt::entity e) -> void {
+        for (entt::entity child : scene.childrenOf(e)) {
+            if (const auto* node = reg.try_get<ModelNodeComponent>(child)) {
+                if (node->node >= 0 && static_cast<std::size_t>(node->node) < nodes.size()) {
+                    nodes[static_cast<std::size_t>(node->node)] = child;
+                }
+            }
+            self(self, child);
+        }
+    };
+    if (root != entt::null) collect(collect, root);
+    const glm::mat4 toMesh = glm::inverse(scene.worldMatrix(entity));
+    for (std::size_t j = 0; j < skin.joints.size(); ++j) {
+        const int node = skin.joints[j];
+        const entt::entity joint = node >= 0 && static_cast<std::size_t>(node) < nodes.size() ? nodes[static_cast<std::size_t>(node)] : entt::null;
+        out.push_back(joint != entt::null ? toMesh * scene.worldMatrix(joint) * skin.inverseBind[j] : glm::mat4(1.0f));
+    }
+    return true;
+}
+
+/// Binds a mesh's vertex (and, when skinned, skin) stream and its index buffer.
+void bindMeshBuffers(VkCommandBuffer cmd, const GpuMesh& mesh) {
+    const VkBuffer buffers[2] = {mesh.vertices.handle(), mesh.skinned() ? mesh.skin.handle() : VK_NULL_HANDLE};
+    const VkDeviceSize offsets[2] = {0, 0};
+    vkCmdBindVertexBuffers(cmd, 0, mesh.skinned() ? 2u : 1u, buffers, offsets);
+    vkCmdBindIndexBuffer(cmd, mesh.indices.handle(), 0, VK_INDEX_TYPE_UINT32);
+}
 } // namespace
 
 SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
@@ -129,6 +181,10 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     opaque.layout = ctx_.pipelineLayout();
     opaque.debugName = "OpaquePBR";
     opaque_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), opaque);
+    opaque.vertexShader = shaders.get("mesh.skinned.vert");
+    opaque.skinVertexInput = true;
+    opaque.debugName = "OpaquePBRSkinned";
+    opaqueSkinned_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), opaque);
 
     rhi::GraphicsPipelineDesc grid;
     grid.vertexShader = shaders.get("grid.vert");
@@ -158,6 +214,10 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     shadow.layout = ctx_.pipelineLayout();
     shadow.debugName = "SunShadow";
     shadow_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), shadow);
+    shadow.vertexShader = shaders.get("shadow.skinned.vert");
+    shadow.skinVertexInput = true;
+    shadow.debugName = "SunShadowSkinned";
+    shadowSkinned_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), shadow);
 
     rhi::GraphicsPipelineDesc prepass;
     prepass.vertexShader = shaders.get("depth.vert");
@@ -171,6 +231,10 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     prepass.layout = ctx_.pipelineLayout();
     prepass.debugName = "DepthPrepass";
     depthPrepass_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), prepass);
+    prepass.vertexShader = shaders.get("depth.skinned.vert");
+    prepass.skinVertexInput = true;
+    prepass.debugName = "DepthPrepassSkinned";
+    depthPrepassSkinned_ = rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), prepass);
 
     for (int blur = 0; blur < 2; ++blur) {
         rhi::GraphicsPipelineDesc ao;
@@ -256,6 +320,23 @@ void SceneRenderer::ensureObjectCapacity(FrameResources& frame, std::uint32_t co
     VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     write.dstSet = frame.set;
     write.dstBinding = 1;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.pBufferInfo = &info;
+    vkUpdateDescriptorSets(ctx_.device().handle(), 1, &write, 0, nullptr);
+}
+
+void SceneRenderer::ensureJointCapacity(FrameResources& frame, std::uint32_t count) {
+    if (count <= frame.jointCapacity && frame.joints) return;
+    std::uint32_t capacity = std::max(frame.jointCapacity, 64u);
+    while (capacity < count) capacity *= 2;
+    frame.joints = rhi::Buffer(ctx_.device(), {capacity * sizeof(glm::mat4), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                               rhi::MemoryUsage::CpuToGpu, "FrameJoints"});
+    frame.jointCapacity = capacity;
+    const VkDescriptorBufferInfo info{frame.joints.handle(), 0, VK_WHOLE_SIZE};
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet = frame.set;
+    write.dstBinding = 2;
     write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     write.pBufferInfo = &info;
@@ -383,7 +464,8 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             p.center = glm::vec3(world * glm::vec4(localCenter, 1.0f));
             const glm::mat3 m(world);
             p.extent = glm::abs(m[0]) * localExtent.x + glm::abs(m[1]) * localExtent.y + glm::abs(m[2]) * localExtent.z;
-            p.visible = !settings.frustumCulling || frustum.intersectsAabb(p.center, p.extent);
+            // Skinned meshes are never culled: animated limbs leave the bind-pose bounds.
+            p.visible = !settings.frustumCulling || c.gpuMesh->skinned() || frustum.intersectsAabb(p.center, p.extent);
             if (!p.visible && !shadows) continue;
             const MeshRendererComponent& mesh = *c.mesh;
             GpuObject& obj = p.object;
@@ -397,6 +479,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
 
     // 3. Textures (serial: the cache may start uploads) and the draw lists, in scene order.
     objects.reserve(candidates.size());
+    std::vector<glm::mat4> joints;  // skinning palettes of every skinned object, back to back
     for (std::size_t i = 0; i < candidates.size(); ++i) {
         Prepared& p = prepared[i];
         if (!p.visible) {
@@ -413,14 +496,22 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                                       textures.index(*settings.assets, mesh.emissiveTexture, TextureColorSpace::Srgb, block),
                                       textures.index(*settings.assets, mesh.normalTexture, TextureColorSpace::Linear, block));
         }
+        if (candidates[i].gpuMesh->skinned()) {
+            obj.flags.z = static_cast<float>(joints.size());
+            obj.flags.w = appendSkinPalette(scene, candidates[i].entity, *candidates[i].mesh, settings.assets, joints) ? 1.0f : 0.0f;
+        }
         const Draw draw{candidates[i].gpuMesh, static_cast<std::uint32_t>(objects.size()), p.center, p.extent};
         if (p.visible) draws.push_back(draw);
         if (shadows) casters.push_back(draw);
         objects.push_back(obj);
     }
-    std::ranges::sort(draws, std::less<>{}, [](const Draw& d) { return d.mesh; });
-    std::ranges::sort(casters, std::less<>{}, [](const Draw& d) { return d.mesh; });
+    // Unskinned first, then skinned (one pipeline switch); within each, grouped by mesh.
+    auto byPipelineAndMesh = [](const Draw& d) { return std::pair(d.mesh->skinned(), d.mesh); };
+    std::ranges::sort(draws, std::less<>{}, byPipelineAndMesh);
+    std::ranges::sort(casters, std::less<>{}, byPipelineAndMesh);
     ensureObjectCapacity(frame, static_cast<std::uint32_t>(std::max<std::size_t>(objects.size(), 1)));
+    ensureJointCapacity(frame, static_cast<std::uint32_t>(std::max<std::size_t>(joints.size(), 1)));
+    if (!joints.empty()) frame.joints.write(std::as_bytes(std::span(joints)));
     if (!objects.empty()) {
         frame.objects.write(std::as_bytes(std::span(objects)));
     }
@@ -481,11 +572,12 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                         const GpuMesh* mesh = nullptr;
                         for (const Draw& d : cascadeCasters[c]) {
                             if (d.mesh != mesh) {
+                                if (mesh == nullptr || d.mesh->skinned() != mesh->skinned()) {
+                                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                                      d.mesh->skinned() ? shadowSkinned_.get() : shadow_.get());
+                                }
                                 mesh = d.mesh;
-                                const VkBuffer vb = mesh->vertices.handle();
-                                const VkDeviceSize offset = 0;
-                                vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &offset);
-                                vkCmdBindIndexBuffer(cmd, mesh->indices.handle(), 0, VK_INDEX_TYPE_UINT32);
+                                bindMeshBuffers(cmd, *mesh);
                             }
                             PushConstants pc;
                             pc.index0 = d.object;
@@ -516,11 +608,12 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 for (std::size_t i = begin; i < end; ++i) {
                     const Draw& d = draws[i];
                     if (d.mesh != mesh) {
+                        if (mesh == nullptr || d.mesh->skinned() != mesh->skinned()) {
+                            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                              d.mesh->skinned() ? depthPrepassSkinned_.get() : depthPrepass_.get());
+                        }
                         mesh = d.mesh;
-                        const VkBuffer vb = mesh->vertices.handle();
-                        const VkDeviceSize offset = 0;
-                        vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &offset);
-                        vkCmdBindIndexBuffer(cmd, mesh->indices.handle(), 0, VK_INDEX_TYPE_UINT32);
+                        bindMeshBuffers(cmd, *mesh);
                     }
                     PushConstants pc;
                     pc.index0 = d.object;
@@ -611,11 +704,12 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 for (std::size_t i = begin; i < end; ++i) {
                     const Draw& d = draws[i];
                     if (d.mesh != mesh) {
+                        if (mesh == nullptr || d.mesh->skinned() != mesh->skinned()) {
+                            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                              d.mesh->skinned() ? opaqueSkinned_.get() : opaque_.get());
+                        }
                         mesh = d.mesh;
-                        const VkBuffer vb = mesh->vertices.handle();
-                        const VkDeviceSize offset = 0;
-                        vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &offset);
-                        vkCmdBindIndexBuffer(cmd, mesh->indices.handle(), 0, VK_INDEX_TYPE_UINT32);
+                        bindMeshBuffers(cmd, *mesh);
                     }
                     PushConstants pc;
                     pc.index0 = d.object;

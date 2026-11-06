@@ -17,6 +17,14 @@ struct Vertex {
 };
 static_assert(sizeof(Vertex) == 48, "GPU vertex layout");
 
+/// Skinning influences of one vertex: up to four joints (indices into the skin's joint list)
+/// with weights that sum to 1.
+struct SkinVertex {
+    std::uint16_t joints[4] = {0, 0, 0, 0};
+    glm::vec4 weights{1.0f, 0.0f, 0.0f, 0.0f};
+};
+static_assert(sizeof(SkinVertex) == 24, "GPU skin vertex layout");
+
 struct Aabb {
     glm::vec3 min{0.0f};
     glm::vec3 max{0.0f};
@@ -27,6 +35,7 @@ struct MeshData {
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
     Aabb bounds;
+    std::vector<SkinVertex> skin;  // empty, or one per vertex for a skinned mesh
 };
 
 Aabb computeBounds(const std::vector<Vertex>& vertices);

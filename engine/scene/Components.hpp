@@ -108,6 +108,12 @@ struct AnimatorComponent {
     bool playOnStart = true;
 };
 
+/// The mesh on this entity is deformed by a skin of its model: the joints are the entities
+/// mirroring the skin's joint nodes (ModelNodeComponent) under the same model root.
+struct SkinComponent {
+    int skin = -1;  // index into the model's skins (the model is the one of MeshRenderer::meshAsset)
+};
+
 /// Which node of the source model an entity mirrors (set by instantiateModel; used by animation).
 struct ModelNodeComponent {
     int node = -1;

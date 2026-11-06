@@ -24,6 +24,8 @@ struct GpuMesh {
     rhi::Buffer indices;
     std::uint32_t indexCount = 0;
     Aabb bounds;
+    rhi::Buffer skin;  // lumora::SkinVertex per vertex, when the mesh is skinned
+    [[nodiscard]] bool skinned() const noexcept { return static_cast<bool>(skin); }
 };
 
 /// GPU meshes: built-in primitives (uploaded at startup) and imported mesh assets (uploaded

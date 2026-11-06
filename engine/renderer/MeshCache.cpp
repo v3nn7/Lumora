@@ -54,6 +54,10 @@ const GpuMesh* MeshCache::asset(AssetLibrary& library, const std::string& key, b
                                         (name + ".indices").c_str());
     gpu.indexCount = static_cast<std::uint32_t>(data.indices.size());
     gpu.bounds = data.bounds;
+    if (!data.skin.empty() && data.skin.size() == data.vertices.size()) {
+        gpu.skin = uploads_.uploadBuffer(std::as_bytes(std::span(data.skin)), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                         (name + ".skin").c_str());
+    }
     log::debug("Renderer", "uploaded mesh '{}' ({} triangles)", key, gpu.indexCount / 3);
     return &assets_.emplace(*canonical, std::move(gpu)).first->second;
 }

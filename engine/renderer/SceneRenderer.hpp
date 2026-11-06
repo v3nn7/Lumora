@@ -91,6 +91,7 @@ public:
 
 private:
     void ensureObjectCapacity(FrameResources& frame, std::uint32_t count);
+    void ensureJointCapacity(FrameResources& frame, std::uint32_t count);
     [[nodiscard]] const struct GpuMesh* meshFor(const MeshRendererComponent& mesh, AssetLibrary* assets, bool block);
     VkPipeline tonemapPipeline(VkFormat outputFormat);
     VkPipeline overlayPipeline(VkFormat outputFormat);
@@ -102,6 +103,9 @@ private:
     rhi::UniquePipeline grid_;
     rhi::UniquePipeline shadow_;
     rhi::UniquePipeline depthPrepass_;
+    rhi::UniquePipeline opaqueSkinned_;
+    rhi::UniquePipeline shadowSkinned_;
+    rhi::UniquePipeline depthPrepassSkinned_;
     rhi::UniquePipeline ssao_;
     rhi::UniquePipeline ssaoBlur_;
     std::unordered_map<int, rhi::UniquePipeline> bloom_;  // 0 = downsample, 1 = upsample

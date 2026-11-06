@@ -6,6 +6,7 @@
 #include "renderer/vulkan/Device.hpp"
 
 #include <cstddef>
+#include <vector>
 #include <cstring>
 #include <format>
 
@@ -112,11 +113,19 @@ UniquePipeline createGraphicsPipeline(const Device& device, const PipelineCache&
         vertexInput.vertexAttributeDescriptionCount = 2;
         vertexInput.pVertexAttributeDescriptions = overlayAttributes;
     }
+    const VkVertexInputBindingDescription meshBindings[2] = {
+        binding, {1, sizeof(SkinVertex), VK_VERTEX_INPUT_RATE_VERTEX}};
+    std::vector<VkVertexInputAttributeDescription> meshAttributes;
     if (d.meshVertexInput) {
-        vertexInput.vertexBindingDescriptionCount = 1;
-        vertexInput.pVertexBindingDescriptions = &binding;
-        vertexInput.vertexAttributeDescriptionCount = d.positionOnly ? 1u : 4u;
-        vertexInput.pVertexAttributeDescriptions = attributes;
+        meshAttributes.assign(attributes, attributes + (d.positionOnly ? 1 : 4));
+        if (d.skinVertexInput) {
+            meshAttributes.push_back({4, 1, VK_FORMAT_R16G16B16A16_UINT, static_cast<std::uint32_t>(offsetof(SkinVertex, joints))});
+            meshAttributes.push_back({5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, static_cast<std::uint32_t>(offsetof(SkinVertex, weights))});
+        }
+        vertexInput.vertexBindingDescriptionCount = d.skinVertexInput ? 2u : 1u;
+        vertexInput.pVertexBindingDescriptions = meshBindings;
+        vertexInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(meshAttributes.size());
+        vertexInput.pVertexAttributeDescriptions = meshAttributes.data();
     }
 
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};

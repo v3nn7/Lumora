@@ -169,3 +169,69 @@ inline void writeAnimatedGltf(const std::filesystem::path& file) {
 }
 
 } // namespace lumora::test
+
+namespace lumora::test {
+
+/// A skinned glTF: an upright red quad (x -0.5..0.5, y 0..2, facing +Z) on node "Body", deformed
+/// by joints "Root" (origin) and its child "Bone" (at y = 1). The top two vertices follow Bone,
+/// the others Root, so turning Bone bends the top of the quad.
+inline void writeSkinnedGltf(const std::filesystem::path& file) {
+    std::vector<unsigned char> bin;
+    auto put = [&](const void* p, std::size_t n) {
+        const auto* b = static_cast<const unsigned char*>(p);
+        bin.insert(bin.end(), b, b + n);
+    };
+    const float positions[6][3] = {{-0.5f, 0, 0}, {0.5f, 0, 0}, {-0.5f, 1, 0}, {0.5f, 1, 0}, {-0.5f, 2, 0}, {0.5f, 2, 0}};
+    const float normals[6][3] = {{0, 0, 1}, {0, 0, 1}, {0, 0, 1}, {0, 0, 1}, {0, 0, 1}, {0, 0, 1}};
+    const std::uint16_t joints[6][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {1, 0, 0, 0}, {1, 0, 0, 0}};
+    const float weights[6][4] = {{1, 0, 0, 0}, {1, 0, 0, 0}, {1, 0, 0, 0}, {1, 0, 0, 0}, {1, 0, 0, 0}, {1, 0, 0, 0}};
+    const std::uint16_t indices[12] = {0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4};
+    // Column-major inverse bind matrices: Root at the origin, Bone at y = 1.
+    const float inverseBind[2][16] = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+                                      {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -1, 0, 1}};
+    const std::size_t oPos = bin.size();
+    put(positions, sizeof positions);
+    const std::size_t oNrm = bin.size();
+    put(normals, sizeof normals);
+    const std::size_t oJnt = bin.size();
+    put(joints, sizeof joints);
+    const std::size_t oWgt = bin.size();
+    put(weights, sizeof weights);
+    const std::size_t oIdx = bin.size();
+    put(indices, sizeof indices);
+    while (bin.size() % 4 != 0) bin.push_back(0);
+    const std::size_t oIbm = bin.size();
+    put(inverseBind, sizeof inverseBind);
+    auto view = [](std::size_t offset, std::size_t length) {
+        return std::format(R"({{"buffer":0,"byteOffset":{},"byteLength":{}}})", offset, length);
+    };
+    const std::string json = std::format(R"({{
+  "asset": {{"version": "2.0"}},
+  "scene": 0,
+  "scenes": [{{"nodes": [0, 2]}}],
+  "nodes": [{{"name": "Root", "children": [1]}}, {{"name": "Bone", "translation": [0, 1, 0]}},
+            {{"name": "Body", "mesh": 0, "skin": 0}}],
+  "skins": [{{"joints": [0, 1], "inverseBindMatrices": 6}}],
+  "meshes": [{{"name": "Quad", "primitives": [{{"attributes": {{"POSITION": 0, "NORMAL": 1, "JOINTS_0": 2, "WEIGHTS_0": 3}},
+                                               "indices": 4, "material": 0}}]}}],
+  "materials": [{{"pbrMetallicRoughness": {{"baseColorFactor": [1, 0, 0, 1], "metallicFactor": 0, "roughnessFactor": 1}},
+                  "doubleSided": true}}],
+  "buffers": [{{"byteLength": {}, "uri": "data:application/octet-stream;base64,{}"}}],
+  "bufferViews": [{}, {}, {}, {}, {}, {}, {}],
+  "accessors": [
+    {{"bufferView": 0, "componentType": 5126, "count": 6, "type": "VEC3", "min": [-0.5, 0, 0], "max": [0.5, 2, 0]}},
+    {{"bufferView": 1, "componentType": 5126, "count": 6, "type": "VEC3"}},
+    {{"bufferView": 2, "componentType": 5123, "count": 6, "type": "VEC4"}},
+    {{"bufferView": 3, "componentType": 5126, "count": 6, "type": "VEC4"}},
+    {{"bufferView": 4, "componentType": 5123, "count": 12, "type": "SCALAR"}},
+    {{"bufferView": 5, "componentType": 5126, "count": 2, "type": "MAT4"}},
+    {{"bufferView": 6, "componentType": 5126, "count": 2, "type": "MAT4"}}
+  ]
+}})",
+        bin.size(), base64(bin), view(oPos, sizeof positions), view(oNrm, sizeof normals), view(oJnt, sizeof joints),
+        view(oWgt, sizeof weights), view(oIdx, sizeof indices), view(oIbm, sizeof inverseBind), view(oIbm, sizeof inverseBind));
+    std::filesystem::create_directories(file.parent_path());
+    std::ofstream(file) << json;
+}
+
+} // namespace lumora::test

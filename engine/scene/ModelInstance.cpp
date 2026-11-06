@@ -31,6 +31,7 @@ entt::entity instantiateModel(Scene& scene, const ImportedModel& model, std::str
             const ImportedMesh& mesh = model.meshes[static_cast<std::size_t>(node.mesh)];
             auto& renderer = scene.registry().emplace<MeshRendererComponent>(e);
             renderer.meshAsset = AssetLibrary::meshKey(relativeFile, node.mesh);
+            if (node.skin >= 0 && !mesh.data.skin.empty()) scene.registry().emplace<SkinComponent>(e).skin = node.skin;
             if (mesh.material >= 0 && mesh.material < static_cast<int>(model.materials.size())) {
                 const ImportedMaterial& m = model.materials[static_cast<std::size_t>(mesh.material)];
                 renderer.baseColor = glm::vec3(m.baseColor);

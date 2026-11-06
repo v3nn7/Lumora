@@ -54,6 +54,7 @@ struct GraphicsPipelineDesc {
     const char* fragmentEntry = "PSMain";
     bool meshVertexInput = false;  // binds lumora::Vertex (position, normal, uv)
     bool positionOnly = false;     // with meshVertexInput: only location 0 (depth-only passes)
+    bool skinVertexInput = false;  // with meshVertexInput: binding 1 = lumora::SkinVertex (locations 4, 5)
     bool overlayVertexInput = false;  // render::OverlayVertex: float3 position + RGBA8 colour
     VkCullModeFlags cullMode = VK_CULL_MODE_NONE;
     bool depthTest = false;

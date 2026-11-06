@@ -53,6 +53,18 @@ static const uint NO_TEXTURE = 0xFFFFFFFFu;
 
 [[vk::binding(0, 0)]] cbuffer FrameCB { FrameData gFrame; };
 [[vk::binding(1, 0)]] StructuredBuffer<GpuObject> gObjects;
+// Skinning palettes: GpuObject.flags.z is where an object's joint matrices start.
+struct GpuJoint {
+    column_major float4x4 transform;
+};
+[[vk::binding(2, 0)]] StructuredBuffer<GpuJoint> gJoints;
+
+/// Blend of up to four joint matrices (skinned meshes).
+float4x4 skinMatrix(uint4 joints, float4 weights, uint first) {
+    return gJoints[first + joints.x].transform * weights.x + gJoints[first + joints.y].transform * weights.y +
+           gJoints[first + joints.z].transform * weights.z + gJoints[first + joints.w].transform * weights.w;
+}
+
 [[vk::binding(0, 1)]] Texture2D gTextures[];
 [[vk::binding(1, 1)]] SamplerState gSamplers[];
 // Same descriptors viewed as comparison samplers (descriptor aliasing of VK_DESCRIPTOR_TYPE_SAMPLER).

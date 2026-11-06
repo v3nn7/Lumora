@@ -39,13 +39,14 @@ RenderContext::RenderContext(const RenderContextConfig& config) {
         *device_, config.pipelineCacheFile.empty() ? paths::userCacheDir() / "pipeline_cache.bin"
                                                    : config.pipelineCacheFile);
 
-    // Set 0: per-frame constants + object buffer.
-    const VkDescriptorSetLayoutBinding bindings[2] = {
+    // Set 0: per-frame constants, object buffer and skinning joint matrices.
+    const VkDescriptorSetLayoutBinding bindings[3] = {
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr},
     };
     VkDescriptorSetLayoutCreateInfo setInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    setInfo.bindingCount = 2;
+    setInfo.bindingCount = 3;
     setInfo.pBindings = bindings;
     VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
     LUMORA_VK_CHECK(vkCreateDescriptorSetLayout(device_->handle(), &setInfo, nullptr, &setLayout));

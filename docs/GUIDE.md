@@ -186,8 +186,11 @@ entity when it is added to the scene:
 
 Clips animate the entities made from the model's nodes (they move, turn and scale); anything
 the clip does not animate keeps its value. Scripts on the root entity control it with
-`playAnimation("Walk")`, `stopAnimation()` and `animationPlaying()`. Skinned characters (bones
-deforming a mesh) are not supported yet; their node animation still plays.
+`playAnimation("Walk")`, `stopAnimation()` and `animationPlaying()`.
+
+Skinned characters work too: meshes with a glTF skin get a **Skin** component and are deformed
+on the GPU by the entities made from their joints, so a clip animating the bones (or a script
+turning one) bends the mesh. Up to four joints influence each vertex.
 
 ### Materials and lighting
 

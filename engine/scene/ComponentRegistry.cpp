@@ -124,6 +124,13 @@ ComponentRegistry makeBuiltin() {
         reg.add(std::move(d));
     }
     {
+        auto d = R::describe<SkinComponent>("Skin", "Skin");
+        d.fields = {
+            ranged(R::field(&SkinComponent::skin, "skin", "Skin Index", FieldKind::Int), -1.0f, 1e6f, 1.0f),
+        };
+        reg.add(std::move(d));
+    }
+    {
         auto d = R::describe<ModelNodeComponent>("ModelNode", "Model Node");
         d.fields = {
             ranged(R::field(&ModelNodeComponent::node, "node", "Node Index", FieldKind::Int), -1.0f, 1e6f, 1.0f),

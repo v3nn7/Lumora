@@ -5,6 +5,10 @@ struct VSInput {
     [[vk::location(1)]] float3 normal : NORMAL;
     [[vk::location(2)]] float2 uv : TEXCOORD0;
     [[vk::location(3)]] float4 tangent : TANGENT;
+#if defined(LUMORA_SKINNED)
+    [[vk::location(4)]] uint4 joints : BLENDINDICES;
+    [[vk::location(5)]] float4 weights : BLENDWEIGHT;
+#endif
 };
 
 struct VSOutput {
@@ -17,13 +21,23 @@ struct VSOutput {
 
 VSOutput VSMain(VSInput input) {
     GpuObject object = gObjects[gPush.index0];
-    float4 world = mul(object.world, float4(input.position, 1.0));
+    float3 position = input.position;
+    float3 normal = input.normal;
+    float3 tangent = input.tangent.xyz;
+#if defined(LUMORA_SKINNED)
+    // Joint matrices bring the vertex from bind pose into the mesh node's space.
+    float4x4 skin = skinMatrix(input.joints, input.weights, (uint)object.flags.z);
+    position = mul(skin, float4(position, 1.0)).xyz;
+    normal = mul((float3x3)skin, normal);
+    tangent = mul((float3x3)skin, tangent);
+#endif
+    float4 world = mul(object.world, float4(position, 1.0));
     VSOutput o;
     o.position = mul(gFrame.viewProjection, world);
     o.worldPosition = world.xyz;
-    o.normal = mul((float3x3)object.normalMatrix, input.normal);
+    o.normal = mul((float3x3)object.normalMatrix, normal);
     o.uv = input.uv;
-    o.tangent = float4(mul((float3x3)object.world, input.tangent.xyz), input.tangent.w);
+    o.tangent = float4(mul((float3x3)object.world, tangent), input.tangent.w);
     return o;
 }
 

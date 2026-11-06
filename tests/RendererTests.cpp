@@ -523,3 +523,56 @@ TEST_F(RendererTest, FxaaSmoothsEdgesOnly) {
     EXPECT_LT(changed, 128u * 128u / 8u) << "FXAA only touches edges";
     EXPECT_LT(changedAwayFromEdges, changed / 10 + 2) << "flat areas stay as they were";
 }
+
+// ---- Skinning -------------------------------------------------------------------------------
+
+#include "GltfTestUtils.hpp"
+
+TEST_F(RendererTest, SkinnedMeshFollowsItsJoints) {
+    test::TempDir project;
+    test::writeSkinnedGltf(project.path() / "Content" / "Models" / "bend.gltf");
+    AssetLibrary assets(project.path());
+    auto model = assets.model(project.path() / "Content" / "Models" / "bend.gltf");
+    ASSERT_TRUE(model.has_value()) << model.error().message;
+    ASSERT_EQ((*model)->skins.size(), 1u);
+    ASSERT_EQ((*model)->meshes[0].data.skin.size(), 6u);
+
+    auto scene = sceneWithSun();
+    scene->environment().fogDensity = 0.0f;
+    const entt::entity root = instantiateModel(*scene, **model, "Content/Models/bend.gltf", "Bender");
+    (void)root;
+    entt::entity bone = entt::null, body = entt::null;
+    for (auto [e, n] : scene->registry().view<NameComponent>().each()) {
+        if (n.name == "Bone") bone = e;
+        if (n.name == "Body") body = e;
+    }
+    ASSERT_TRUE(bone != entt::null && body != entt::null);
+    EXPECT_TRUE(scene->registry().all_of<SkinComponent>(body));
+    scene->updateWorldTransforms();
+
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 1.0f, 5.0f});
+    cam.lookAt({0.0f, 1.0f, 0.0f});
+    const glm::uvec2 size(96, 96);
+    const CameraView view = cam.view(1.0f);
+    RenderSettings settings;
+    settings.assets = &assets;
+    settings.blockOnAssets = true;
+    settings.bloom = false;
+    auto isRed = [](glm::u8vec4 p) { return p.r > 2 * p.g + 20 && p.r > 2 * p.b + 20; };
+
+    auto straight = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(straight.has_value()) << straight.error().message;
+    const glm::ivec2 top = toPixel(view, glm::vec3(0.0f, 1.8f, 0.0f), size);
+    const glm::ivec2 left = toPixel(view, glm::vec3(-0.85f, 1.2f, 0.0f), size);
+    EXPECT_TRUE(isRed(pixel(*straight, top.x, top.y))) << "upright: the quad covers (0, 1.8)";
+    EXPECT_FALSE(isRed(pixel(*straight, left.x, left.y)));
+
+    // Bend: Bone turns 90 degrees about +Z, so the top half swings to the left (x < 0).
+    scene->registry().get<TransformComponent>(bone).rotationDeg = glm::vec3(0.0f, 0.0f, 90.0f);
+    scene->updateWorldTransforms();
+    auto bent = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(bent.has_value());
+    EXPECT_FALSE(isRed(pixel(*bent, top.x, top.y))) << "the top left (0, 1.8)";
+    EXPECT_TRUE(isRed(pixel(*bent, left.x, left.y))) << "and now lies at (-0.85, 1.2)";
+}

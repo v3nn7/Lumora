@@ -75,8 +75,12 @@ bool appendPrimitive(const cgltf_primitive& prim, MeshData& out, std::vector<std
     const cgltf_accessor* normals = nullptr;
     const cgltf_accessor* uvs = nullptr;
     const cgltf_accessor* tangents = nullptr;
+    const cgltf_accessor* joints = nullptr;
+    const cgltf_accessor* weights = nullptr;
     for (cgltf_size i = 0; i < prim.attributes_count; ++i) {
         const cgltf_attribute& a = prim.attributes[i];
+        if (a.type == cgltf_attribute_type_joints && a.index == 0) joints = a.data;
+        if (a.type == cgltf_attribute_type_weights && a.index == 0) weights = a.data;
         if (a.type == cgltf_attribute_type_position) positions = a.data;
         if (a.type == cgltf_attribute_type_normal) normals = a.data;
         if (a.type == cgltf_attribute_type_texcoord && a.index == 0) uvs = a.data;
@@ -106,6 +110,27 @@ bool appendPrimitive(const cgltf_primitive& prim, MeshData& out, std::vector<std
         if (tangents != nullptr && v < tangents->count) cgltf_accessor_read_float(tangents, v, &vert.tangent.x, 4);
     }
 
+    // Skin influences: kept for every vertex once any primitive of the mesh has them.
+    const bool skinned = joints != nullptr && weights != nullptr;
+    if (skinned || !out.skin.empty()) {
+        out.skin.resize(base);  // earlier unskinned primitives follow joint 0 rigidly
+        out.skin.resize(base + count);
+        if (skinned) {
+            for (cgltf_size v = 0; v < count && v < joints->count && v < weights->count; ++v) {
+                SkinVertex& sv = out.skin[base + v];
+                cgltf_uint j[4] = {0, 0, 0, 0};
+                cgltf_accessor_read_uint(joints, v, j, 4);
+                float w[4] = {0, 0, 0, 0};
+                cgltf_accessor_read_float(weights, v, w, 4);
+                const float sum = w[0] + w[1] + w[2] + w[3];
+                for (int k = 0; k < 4; ++k) {
+                    sv.joints[k] = static_cast<std::uint16_t>(j[k]);
+                    sv.weights[k] = sum > 0.0f ? w[k] / sum : (k == 0 ? 1.0f : 0.0f);
+                }
+            }
+        }
+    }
+
     const std::size_t firstIndex = out.indices.size();
     if (prim.indices != nullptr) {
         out.indices.reserve(firstIndex + prim.indices->count);
@@ -114,6 +139,7 @@ bool appendPrimitive(const cgltf_primitive& prim, MeshData& out, std::vector<std
             if (index >= count) {
                 warnings.push_back(std::format("mesh '{}': out-of-range index dropped primitive", meshName));
                 out.vertices.resize(base);
+                if (!out.skin.empty()) out.skin.resize(base);
                 out.indices.resize(firstIndex);
                 return false;
             }
@@ -286,13 +312,33 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
             }
             if (node->has_scale) out.scale = {node->scale[0], node->scale[1], node->scale[2]};
         }
-        if (node->skin != nullptr) model.warnings.push_back(std::format("node '{}': skinning is ignored", out.name));
+        if (node->skin != nullptr) out.skin = static_cast<int>(cgltf_skin_index(&data, node->skin));
         const int index = static_cast<int>(model.nodes.size());
         nodeIndex[node] = index;
         model.nodes.push_back(std::move(out));
         for (cgltf_size c = 0; c < node->children_count; ++c) self(self, node->children[c], index);
     };
     for (const cgltf_node* root : roots) visit(visit, root, -1);
+
+    // Skins: joints as indices of the imported nodes.
+    for (cgltf_size k = 0; k < data.skins_count; ++k) {
+        const cgltf_skin& source = data.skins[k];
+        ImportedSkin skin;
+        skin.name = nameOr(source.name, std::format("Skin {}", k));
+        bool complete = true;
+        for (cgltf_size j = 0; j < source.joints_count; ++j) {
+            const auto found = nodeIndex.find(source.joints[j]);
+            if (found == nodeIndex.end()) complete = false;
+            skin.joints.push_back(found != nodeIndex.end() ? found->second : -1);
+            glm::mat4 inverseBind(1.0f);
+            if (source.inverse_bind_matrices != nullptr && j < source.inverse_bind_matrices->count) {
+                cgltf_accessor_read_float(source.inverse_bind_matrices, j, &inverseBind[0][0], 16);
+            }
+            skin.inverseBind.push_back(inverseBind);
+        }
+        if (!complete) model.warnings.push_back(std::format("skin '{}': joints outside the scene", skin.name));
+        model.skins.push_back(std::move(skin));
+    }
 
     // Animations: channels on nodes of the imported scene. Weights (morph targets) are not supported.
     for (cgltf_size a = 0; a < data.animations_count; ++a) {

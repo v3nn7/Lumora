@@ -4,6 +4,7 @@
 #include "core/Error.hpp"
 
 #include <glm/gtc/quaternion.hpp>
+#include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
@@ -40,10 +41,18 @@ struct ImportedMesh {
     int material = -1;       // material of the first primitive (single material per mesh for now)
 };
 
+/// Joints (node indices) deforming skinned meshes, with their inverse bind matrices.
+struct ImportedSkin {
+    std::string name;
+    std::vector<int> joints;
+    std::vector<glm::mat4> inverseBind;
+};
+
 struct ImportedNode {
     std::string name;
     int parent = -1;
     int mesh = -1;
+    int skin = -1;  // index into ImportedModel::skins when the node's mesh is skinned
     glm::vec3 translation{0.0f};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 scale{1.0f};
@@ -86,6 +95,7 @@ struct ImportedModel {
     std::vector<ImportedNode> nodes;  // parents precede children
     std::vector<ImportedImage> images;
     std::vector<ImportedAnimation> animations;
+    std::vector<ImportedSkin> skins;
     std::vector<std::string> warnings;
 };
 

@@ -1,8 +1,13 @@
 #include "editor/CodeEditorPanel.hpp"
 
 #include "common/Theme.hpp"
+#include "editor/ScriptApiCatalog.hpp"
 
+#include <QAbstractItemView>
+#include <QCompleter>
 #include <QDir>
+#include <QScrollBar>
+#include <QStandardItemModel>
 #include <QFile>
 #include <QFileInfo>
 #include <QFontDatabase>
@@ -31,6 +36,19 @@ QTextCharFormat textFormat(const QColor& color, bool bold = false, bool italic =
     return f;
 }
 
+constexpr int kMatchRole = Qt::UserRole + 1;   // the word the completer matches against
+constexpr int kInsertRole = Qt::UserRole + 2;  // what goes into the file
+
+const QStringList& cppKeywords() {
+    static const QStringList words = {
+        "alignas", "auto", "break", "case", "catch", "class", "const", "constexpr", "continue", "default", "delete",
+        "do", "else", "enum", "explicit", "extern", "false", "final", "for", "friend", "if", "inline", "mutable",
+        "namespace", "new", "noexcept", "nullptr", "operator", "override", "private", "protected", "public",
+        "return", "sizeof", "static", "static_cast", "struct", "switch", "template", "this", "throw", "true", "try",
+        "typename", "using", "virtual", "void", "volatile", "while", "co_await", "co_return", "concept", "requires"};
+    return words;
+}
+
 class LineNumberArea final : public QWidget {
 public:
     explicit LineNumberArea(CodeEdit* editor) : QWidget(editor), editor_(editor) {}
@@ -48,12 +66,7 @@ private:
 // ---- CppHighlighter --------------------------------------------------------------------------
 
 CppHighlighter::CppHighlighter(QTextDocument* document) : QSyntaxHighlighter(document) {
-    const QStringList keywords = {
-        "alignas", "auto", "break", "case", "catch", "class", "const", "constexpr", "continue", "default", "delete",
-        "do", "else", "enum", "explicit", "extern", "false", "final", "for", "friend", "if", "inline", "mutable",
-        "namespace", "new", "noexcept", "nullptr", "operator", "override", "private", "protected", "public",
-        "return", "sizeof", "static", "static_cast", "struct", "switch", "template", "this", "throw", "true", "try",
-        "typename", "using", "virtual", "void", "volatile", "while", "co_await", "co_return", "concept", "requires"};
+    const QStringList& keywords = cppKeywords();
     const QStringList types = {"bool", "char", "double", "float", "int", "long", "short", "unsigned", "signed",
                                "size_t", "std", "string", "vector", "uint32_t", "int32_t", "uint64_t"};
     const QStringList api = {"Behaviour", "Vec3", "Entity", "Key", "MouseButton", "RayHit", "LUMORA_BEHAVIOUR",
@@ -116,6 +129,15 @@ CodeEdit::CodeEdit(QString path, QWidget* parent) : QPlainTextEdit(parent), path
     connect(this, &QPlainTextEdit::cursorPositionChanged, this, &CodeEdit::highlightCurrentLine);
     setViewportMargins(lineNumberAreaWidth(), 0, 0, 0);
     new CppHighlighter(document());
+    completions_ = new QStandardItemModel(this);
+    completer_ = new QCompleter(completions_, this);
+    completer_->setWidget(this);
+    completer_->setCompletionMode(QCompleter::PopupCompletion);
+    completer_->setCompletionRole(kMatchRole);
+    completer_->setCaseSensitivity(Qt::CaseInsensitive);
+    completer_->setFilterMode(Qt::MatchStartsWith);
+    completer_->setMaxVisibleItems(12);
+    connect(completer_, qOverload<const QModelIndex&>(&QCompleter::activated), this, &CodeEdit::insertCompletion);
     load();
     highlightCurrentLine();
 }
@@ -201,7 +223,121 @@ bool CodeEdit::event(QEvent* e) {
     return QPlainTextEdit::event(e);
 }
 
+void CodeEdit::showCompletions(bool forced) {
+    using Scope = ScriptApiEntry::Scope;
+    const QTextCursor cursor = textCursor();
+    const QString before = cursor.block().text().left(cursor.positionInBlock());
+    static const QRegularExpression scoped(QStringLiteral("\\b(Key|MouseButton)::(\\w*)$"));
+    // After a name, a call or an index - not after a number such as "1.".
+    static const QRegularExpression member(QStringLiteral("(?:\\b[A-Za-z_]\\w*|\\)|\\])(?:\\.|->)(\\w*)$"));
+    static const QRegularExpression plain(QStringLiteral("\\b([A-Za-z_]\\w*)$"));
+    QString prefix;
+    std::vector<Scope> scopes;
+    bool documentWords = false;
+    if (const auto m = scoped.match(before); m.hasMatch()) {
+        prefix = m.captured(2);
+        scopes = {m.captured(1) == QLatin1String("Key") ? Scope::Key : Scope::MouseButton};
+    } else if (const auto m2 = member.match(before); m2.hasMatch() && !before.endsWith(QStringLiteral(".."))) {
+        prefix = m2.captured(1);
+        scopes = {Scope::Member};
+    } else if (const auto m3 = plain.match(before); m3.hasMatch() || forced) {
+        prefix = m3.hasMatch() ? m3.captured(1) : QString();
+        if (!forced && prefix.size() < 3) {
+            completer_->popup()->hide();
+            return;
+        }
+        scopes = {Scope::Behaviour, Scope::Type};
+        documentWords = true;
+    } else {
+        completer_->popup()->hide();
+        return;
+    }
+    // Inside a comment or a string there is nothing to complete.
+    const qsizetype comment = before.indexOf(QStringLiteral("//"));
+    const bool inComment = comment >= 0 && before.left(comment).count(QLatin1Char('"')) % 2 == 0;
+    if (inComment || before.count(QLatin1Char('"')) % 2 == 1) {
+        completer_->popup()->hide();
+        return;
+    }
+
+    completions_->clear();
+    QSet<QString> seen;
+    auto add = [&](const QString& match, const QString& display, const QString& insert, const QString& doc) {
+        if (seen.contains(match)) return;
+        seen.insert(match);
+        auto* item = new QStandardItem(doc.isEmpty() ? display : display + QStringLiteral("    — ") + doc);
+        item->setData(match, kMatchRole);
+        item->setData(insert, kInsertRole);
+        item->setToolTip(doc);
+        completions_->appendRow(item);
+    };
+    for (const ScriptApiEntry& entry : scriptApi()) {
+        if (std::find(scopes.begin(), scopes.end(), entry.scope) == scopes.end()) continue;
+        const QString name = QString::fromLatin1(entry.name);
+        const QString signature = QString::fromUtf8(entry.signature);
+        QString insert = name;
+        const bool function = entry.scope == Scope::Behaviour || (entry.scope == Scope::Member && signature.endsWith(QLatin1Char(')')));
+        if (function && !signature.contains(QStringLiteral("override"))) insert += QStringLiteral("()");
+        if (entry.scope == Scope::Type && name == QLatin1String("LUMORA_BEHAVIOUR")) insert += QStringLiteral("()");
+        add(name, signature, insert, QString::fromUtf8(entry.doc));
+    }
+    if (documentWords) {
+        for (const QString& word : cppKeywords()) add(word, word, word, {});
+        static const QRegularExpression identifier(QStringLiteral("\\b[A-Za-z_]\\w{2,}\\b"));
+        const QString text = toPlainText();
+        for (auto it = identifier.globalMatch(text); it.hasNext();) {
+            const QString word = it.next().captured();
+            if (word != prefix) add(word, word, word, {});
+        }
+    }
+    completions_->sort(0);
+    completionStart_ = cursor.position() - static_cast<int>(prefix.size());
+    completer_->setCompletionPrefix(prefix);
+    if (completer_->completionCount() == 0 ||
+        (completer_->completionCount() == 1 && completer_->currentCompletion() == prefix && !forced)) {
+        completer_->popup()->hide();
+        return;
+    }
+    completer_->popup()->setCurrentIndex(completer_->completionModel()->index(0, 0));
+    QRect rect = cursorRect();
+    rect.setWidth(std::min(560, completer_->popup()->sizeHintForColumn(0) +
+                                    completer_->popup()->verticalScrollBar()->sizeHint().width() + 8));
+    completer_->complete(rect);
+}
+
+void CodeEdit::insertCompletion(const QModelIndex& index) {
+    const QString insert = index.data(kInsertRole).toString();
+    if (insert.isEmpty()) return;
+    QTextCursor cursor = textCursor();
+    cursor.setPosition(completionStart_, QTextCursor::KeepAnchor);
+    cursor.insertText(insert);
+    // A function that takes arguments: the cursor goes between the parentheses.
+    const QString signature = index.data(Qt::DisplayRole).toString();
+    if (insert.endsWith(QStringLiteral("()")) && !signature.contains(QStringLiteral("()"))) {
+        cursor.movePosition(QTextCursor::Left);
+    }
+    setTextCursor(cursor);
+}
+
 void CodeEdit::keyPressEvent(QKeyEvent* e) {
+    if (completer_->popup()->isVisible()) {
+        // The list takes the keys that pick from it.
+        switch (e->key()) {
+            case Qt::Key_Enter:
+            case Qt::Key_Return:
+            case Qt::Key_Tab:
+            case Qt::Key_Backtab:
+            case Qt::Key_Escape:
+                e->ignore();
+                return;
+            default:
+                break;
+        }
+    }
+    if (e->key() == Qt::Key_Space && (e->modifiers() & Qt::ControlModifier)) {
+        showCompletions(true);
+        return;
+    }
     if (e->matches(QKeySequence::Save)) {
         if (!save()) QMessageBox::warning(this, tr("Save"), tr("Could not save %1.").arg(QFileInfo(path_).fileName()));
         return;
@@ -232,6 +368,16 @@ void CodeEdit::keyPressEvent(QKeyEvent* e) {
         }
     }
     QPlainTextEdit::keyPressEvent(e);
+    // Complete while typing a word, after "::" and after ".".
+    const QString typed = e->text();
+    const bool wordChar = !typed.isEmpty() && (typed.at(0).isLetterOrNumber() || typed.at(0) == QLatin1Char('_'));
+    const bool trigger = typed == QLatin1String(".") || typed == QLatin1String(":") || typed == QLatin1String(">");
+    if ((e->modifiers() & (Qt::ControlModifier | Qt::AltModifier)) == 0 &&
+        (wordChar || trigger || (e->key() == Qt::Key_Backspace && completer_->popup()->isVisible()))) {
+        showCompletions(false);
+    } else if (completer_->popup()->isVisible() && e->key() != Qt::Key_Shift) {
+        completer_->popup()->hide();
+    }
 }
 
 // ---- CodeEditorPanel -------------------------------------------------------------------------

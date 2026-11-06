@@ -109,7 +109,7 @@ stack it; *View → Reset Layout* restores the default. The layout is remembered
 | Hierarchy | All entities as a tree. Drag to re-parent; right-click to create, rename, duplicate or delete; filter at the top |
 | Inspector | Components of the selected entity. With nothing selected it shows the scene environment |
 | Content Browser | The whole project as folders. Double-click to open folders, scenes, models, prefabs and scripts; *New* creates folders, scenes, behaviours and prefabs; *Import* or drop files to bring them in; right-click to rename, duplicate or delete (to the trash) |
-| Code | Built-in C++ editor for scripts: syntax colouring, line numbers, <kbd>Ctrl</kbd>+<kbd>S</kbd> saves and rebuilds, double-click a compiler error to jump to it |
+| Code | Built-in C++ editor for scripts: syntax colouring, line numbers, completion of the scripting API while typing (or <kbd>Ctrl</kbd>+<kbd>Space</kbd>; the keys after `Key::`, the fields after `.`), <kbd>Ctrl</kbd>+<kbd>S</kbd> saves and rebuilds, double-click a compiler error to jump to it |
 | Console | Engine log |
 | Profiler | Frame time and GPU time per render pass |
 | Session | Live collaboration: participants, address, chat |

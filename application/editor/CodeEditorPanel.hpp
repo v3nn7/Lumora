@@ -9,7 +9,10 @@
 
 #include <vector>
 
+class QCompleter;
 class QLabel;
+class QModelIndex;
+class QStandardItemModel;
 class QListWidget;
 class QTabWidget;
 
@@ -34,7 +37,9 @@ private:
     QTextCharFormat comment_;
 };
 
-/// One open file: line numbers, current-line highlight, 4-space tabs, auto-indent, Ctrl+S.
+/// One open file: line numbers, current-line highlight, 4-space tabs, auto-indent, Ctrl+S, and
+/// completion of Lumora's scripting API (and words of the file) while typing or on Ctrl+Space:
+/// after "Key::" the keys, after "." the fields of Vec3 and RayHit.
 class LUMORA_EDITOR_API CodeEdit final : public QPlainTextEdit {
     Q_OBJECT
 public:
@@ -45,6 +50,9 @@ public:
     bool save();
     void goToLine(int line, int column = 1);
     [[nodiscard]] int lineNumberAreaWidth() const;
+    [[nodiscard]] QCompleter* completer() const noexcept { return completer_; }
+    /// Shows completions for the text before the cursor (forced: also for a short or empty word).
+    void showCompletions(bool forced);
     void paintLineNumbers(class QPaintEvent* event);
 
 signals:
@@ -57,8 +65,12 @@ protected:
 
 private:
     void highlightCurrentLine();
+    void insertCompletion(const QModelIndex& index);
     QString path_;
     QWidget* lineNumbers_ = nullptr;
+    QCompleter* completer_ = nullptr;
+    QStandardItemModel* completions_ = nullptr;
+    int completionStart_ = 0;  // where the word being completed starts (document position)
 };
 
 /// The editor's code panel: tabs of open files (Scripts/*.cpp and other text files), the script

@@ -555,3 +555,101 @@ TEST(CodeEditor, EditsSavesAndJumpsToCompilerErrors) {
     emit list->itemActivated(list->item(0));
     EXPECT_EQ(edit->textCursor().blockNumber(), 1) << "line 2";
 }
+
+#include "common/ScriptBuilder.hpp"
+#include "editor/ScriptApiCatalog.hpp"
+
+#include <QAbstractItemView>
+#include <QFile>
+#include <QCompleter>
+#include <QRegularExpression>
+
+TEST(CodeEditor, CompletionCatalogMatchesTheScriptingSdk) {
+    // Every Behaviour method in lumora/Script.hpp is offered, and everything offered exists.
+    QFile header(app::ScriptBuilder::sdkIncludeDir() + QStringLiteral("/lumora/Script.hpp"));
+    ASSERT_TRUE(header.open(QIODevice::ReadOnly)) << header.fileName().toStdString();
+    const QString sdk = QString::fromUtf8(header.readAll());
+    const qsizetype classStart = sdk.indexOf(QStringLiteral("class Behaviour {"));
+    const qsizetype privateStart = sdk.indexOf(QStringLiteral("\nprivate:"), classStart);
+    ASSERT_GT(classStart, 0);
+    const QString body = sdk.mid(classStart, privateStart - classStart);
+    QSet<QString> catalog;
+    for (const auto& entry : editor::scriptApi()) {
+        if (entry.scope == editor::ScriptApiEntry::Scope::Behaviour) catalog.insert(QString::fromLatin1(entry.name));
+        if (entry.scope != editor::ScriptApiEntry::Scope::Member) {
+            EXPECT_TRUE(sdk.contains(QRegularExpression(QStringLiteral("\\b%1\\b").arg(QString::fromLatin1(entry.name)))))
+                << entry.name << " is not in the SDK";
+        }
+    }
+    static const QRegularExpression method(QStringLiteral(R"(^ {4}(?:\[\[nodiscard\]\]\s+)?(?:virtual\s+)?[\w:<>]+\s+(\w+)\()"),
+                                           QRegularExpression::MultilineOption);
+    int methods = 0;
+    for (auto it = method.globalMatch(body); it.hasNext();) {
+        const QString name = it.next().captured(1);
+        if (name == QLatin1String("Behaviour")) continue;
+        ++methods;
+        EXPECT_TRUE(catalog.contains(name)) << name.toStdString() << " is missing from the completion catalog";
+    }
+    EXPECT_GT(methods, 30);
+}
+
+TEST(CodeEditor, CompletesTheScriptingApiWhileTyping) {
+    test::TempDir dir;
+    const auto file = dir.path() / "Game.cpp";
+    std::ofstream(file) << "void f() {\n";
+    editor::CodeEditorPanel panel;
+    panel.resize(800, 500);
+    panel.show();
+    editor::CodeEdit* edit = panel.openFile(QString::fromStdString(file.string()));
+    ASSERT_NE(edit, nullptr);
+    edit->moveCursor(QTextCursor::End);
+    auto type = [&](const QString& text) {
+        for (QChar c : text) {
+            QKeyEvent press(QEvent::KeyPress, c == QLatin1Char('\n') ? Qt::Key_Return : 0, Qt::NoModifier,
+                            QString(c));
+            QCoreApplication::sendEvent(edit, &press);
+        }
+    };
+    auto offered = [&] {
+        QStringList words;
+        QAbstractItemModel* model = edit->completer()->completionModel();
+        for (int i = 0; i < model->rowCount(); ++i) words << model->index(i, 0).data(Qt::UserRole + 1).toString();
+        return words;
+    };
+    QCompleter* completer = edit->completer();
+
+    type(QStringLiteral("setPo"));
+    ASSERT_TRUE(completer->popup()->isVisible());
+    EXPECT_TRUE(offered().contains(QStringLiteral("setPosition")));
+    EXPECT_TRUE(offered().contains(QStringLiteral("setPositionOf")));
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QCoreApplication::sendEvent(completer->popup(), &enter);
+    EXPECT_TRUE(edit->toPlainText().endsWith(QStringLiteral("setPosition()")));
+    type(QStringLiteral("x"));
+    EXPECT_TRUE(edit->toPlainText().endsWith(QStringLiteral("setPosition(x)"))) << "the cursor went between the parentheses";
+
+    edit->moveCursor(QTextCursor::End);
+    type(QStringLiteral(";\nkeyDown(Key::"));
+    ASSERT_TRUE(completer->popup()->isVisible());
+    EXPECT_TRUE(offered().contains(QStringLiteral("Space")));
+    EXPECT_FALSE(offered().contains(QStringLiteral("position"))) << "only keys after Key::";
+    type(QStringLiteral("Spa"));
+    EXPECT_EQ(offered(), QStringList{QStringLiteral("Space")});
+
+    type(QStringLiteral(");\nhit."));
+    ASSERT_TRUE(completer->popup()->isVisible());
+    EXPECT_TRUE(offered().contains(QStringLiteral("normal")));
+    EXPECT_TRUE(offered().contains(QStringLiteral("x")));
+
+    type(QStringLiteral(";\nfloat a = 1."));
+    EXPECT_FALSE(completer->popup()->isVisible()) << "no members after a number";
+    type(QStringLiteral("5f; // pos"));
+    EXPECT_FALSE(completer->popup()->isVisible()) << "nothing in comments";
+
+    QKeyEvent ctrlSpace(QEvent::KeyPress, Qt::Key_Space, Qt::ControlModifier);
+    type(QStringLiteral("\nsetPositionOf("));  // a word of the file is offered too
+    type(QStringLiteral("myVariable);\nmyV"));
+    EXPECT_TRUE(offered().contains(QStringLiteral("myVariable")));
+    QCoreApplication::sendEvent(edit, &ctrlSpace);
+    EXPECT_TRUE(completer->popup()->isVisible());
+}

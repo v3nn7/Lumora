@@ -11,7 +11,7 @@ Każdy punkt to osobny commit (lub kilka) z testami; wydania po każdej fazie.
 
 ## Faza 0: fundamenty (blokują resztę)
 
-### 0.1 Compute i zapisywalne obrazy w render graphie (M)
+### 0.1 Compute i zapisywalne obrazy w render graphie (M): zrobione
 Dziś nie ma ani jednego przebiegu compute ani obrazu do zapisu z shadera. Bez tego nie powstaną
 TAA, VSM na GPU, mgła wolumetryczna, GI, cząsteczki na GPU ani streaming tekstur.
 - **Gdzie:** `engine/renderer/RenderGraph.{hpp,cpp}`, `Gpu.hpp` (PipelineDesc, ShaderLibrary),
@@ -20,7 +20,7 @@ TAA, VSM na GPU, mgła wolumetryczna, GI, cząsteczki na GPU ani streaming tekst
   z odczytem na CPU po N klatkach), `createComputePipeline` w `RenderContext`.
 - **Sprawdzenie:** testy grafu (bariery, kolejność), test GPU: compute wypełnia obraz, render go czyta.
 
-### 0.2 Prędkości i poprzednie macierze (S)
+### 0.2 Prędkości i poprzednie macierze (S): zrobione
 - **Gdzie:** `GpuTypes.hpp` (`FrameConstants::prevViewProjection`, `jitter`; `GpuObject::prevWorld`),
   `SceneRenderer.cpp` (pamięć poprzednich macierzy per obiekt, po kluczu encji jak w VSM),
   `depth.hlsl` (drugi cel: RG16F velocity).
@@ -41,7 +41,7 @@ Warunek dla kompresji tekstur (1.7).
 
 ## Faza 1: obraz
 
-### 1.1 TAA (M), zależy od 0.1 i 0.2
+### 1.1 TAA (M): zrobione (bez upscalingu)
 - **Jak:** jitter projekcji (Halton 2,3), historia jako obraz trwały (jak pula VSM), odrzucanie
   przez przycięcie do sąsiedztwa w YCoCg, wyostrzenie; przebieg między cząsteczkami a DoF.
   FXAA zostaje jako opcja „szybka”. Później: upscaling (render 67%, TAAU).

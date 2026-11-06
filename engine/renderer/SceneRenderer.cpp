@@ -112,6 +112,21 @@ std::array<float, kShadowCascades> cascadeSplits(float nearPlane, float distance
 
 namespace {
 constexpr nvrhi::Format kAoFormat = nvrhi::Format::R8_UNORM;
+constexpr nvrhi::Format kMotionFormat = nvrhi::Format::RG16_FLOAT;
+
+/// Halton(2, 3) point i (1-based) in [-0.5, 0.5]^2: the sub-pixel jitter sequence of TAA.
+glm::vec2 halton23(std::uint64_t i) {
+    auto radical = [](std::uint64_t n, std::uint64_t base) {
+        float f = 1.0f, r = 0.0f;
+        while (n > 0) {
+            f /= static_cast<float>(base);
+            r += f * static_cast<float>(n % base);
+            n /= base;
+        }
+        return r;
+    };
+    return {radical(i, 2) - 0.5f, radical(i, 3) - 0.5f};
+}
 
 /// Joint matrices of a skinned mesh entity: inverse(mesh world) * joint world * inverse bind, for
 /// every joint of its skin, appended to `out`. The joints are the entities that mirror the skin's
@@ -263,6 +278,7 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     clear.depthFunc = nvrhi::ComparisonFunc::Always;
     clear.depthFormat = depth;
     vsmClear_ = make(clear);
+    taa_ = ctx_.createComputePipeline("taa.comp");
 
     PipelineDesc prepass;
     prepass.name = "DepthPrepass";
@@ -273,13 +289,17 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     prepass.depthWrite = true;
     prepass.depthFunc = nvrhi::ComparisonFunc::Greater;
     prepass.depthFormat = depth;
+    prepass.colorFormats = {kMotionFormat};  // motion vectors for TAA
+    prepass.pixelShader = "depth.frag";
     depthPrepass_ = make(prepass);
     prepass.name = "DepthPrepassSkinned";
     prepass.vertexShader = "depth.skinned.vert";
+    prepass.pixelShader = "depth.skinned.frag";
     prepass.input = VertexInput::MeshSkinnedPosition;
     depthPrepassSkinned_ = make(prepass);
     prepass.name = "DepthPrepassTwoSided";
     prepass.vertexShader = "depth.vert";
+    prepass.pixelShader = "depth.frag";
     prepass.input = VertexInput::MeshPosition;
     prepass.cull = nvrhi::RasterCullMode::None;
     depthPrepassTwoSided_ = make(prepass);
@@ -352,6 +372,9 @@ SceneRenderer::~SceneRenderer() {
     if (spriteAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(spriteAtlasIndex_);
     if (vsmPoolIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(vsmPoolIndex_);
     if (vsmPageTableIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(vsmPageTableIndex_);
+    for (const std::uint32_t index : taaHistoryIndex_) {
+        if (index != UINT32_MAX) ctx_.bindless().releaseTexture(index);
+    }
 }
 
 SceneRenderer::ModelSurface SceneRenderer::modelSurface(AssetLibrary& assets, const std::string& meshAsset) {
@@ -405,6 +428,31 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     fc.projection = camera.projection;
     fc.viewProjection = camera.projection * camera.view;
     fc.inverseViewProjection = glm::inverse(fc.viewProjection);
+    // Temporal anti-aliasing: a sub-pixel jitter on the projection (Halton 2,3 over 8 frames)
+    // and last frame's matrices for the motion vectors. A cut (teleport, sharp turn, resize)
+    // starts the history over.
+    const bool temporal = settings.temporalAntiAliasing && taa_ && extent.width >= 8 && extent.height >= 8;
+    const glm::mat4 unjittered = fc.viewProjection;
+    const glm::vec3 cameraForward = -glm::normalize(glm::vec3(glm::inverse(camera.view)[2]));
+    glm::vec2 jitter(0.0f);
+    if (temporal) {
+        jitter = halton23(taaFrame_ % 8 + 1) * glm::vec2(2.0f / static_cast<float>(extent.width), 2.0f / static_cast<float>(extent.height));
+        glm::mat4 projection = camera.projection;
+        projection[2][0] -= jitter.x;  // clip.x / w gains jitter.x (w = -view z)
+        projection[2][1] -= jitter.y;
+        fc.projection = projection;
+        fc.viewProjection = projection * camera.view;
+        fc.inverseViewProjection = glm::inverse(fc.viewProjection);
+        const bool cut = glm::distance(camera.position, previousCameraPosition_) > 5.0f ||
+                         glm::dot(cameraForward, previousCameraForward_) < 0.7f || extent.width != taaWidth_ ||
+                         extent.height != taaHeight_;
+        if (cut) taaHistoryValid_ = false;
+    } else {
+        taaHistoryValid_ = false;
+    }
+    fc.previousViewProjection = taaHistoryValid_ ? previousViewProjection_ : unjittered;
+    fc.jitter = glm::vec4(jitter, taaHistoryValid_ ? previousJitter_ : jitter);
+    std::unordered_map<std::uint64_t, glm::mat4> currentWorlds;  // becomes previousWorlds_ at the end
     fc.cameraPositionTime = glm::vec4(camera.position, static_cast<float>(timeSeconds));
     fc.viewportSize = glm::vec4(static_cast<float>(extent.width), static_cast<float>(extent.height),
                                 1.0f / static_cast<float>(extent.width), 1.0f / static_cast<float>(extent.height));
@@ -750,6 +798,15 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                                       textures.index(*settings.assets, mrMap, TextureColorSpace::Linear, block),
                                       textures.index(*settings.assets, emissiveMap, TextureColorSpace::Srgb, block),
                                       textures.index(*settings.assets, normalMap, TextureColorSpace::Linear, block));
+        }
+        {
+            // Last frame's transform of this object (by entity, mesh and copy) for motion vectors.
+            std::uint64_t key = (static_cast<std::uint64_t>(entt::to_integral(candidates[i].entity)) << 32) ^
+                                std::hash<const void*>{}(candidates[i].gpuMesh);
+            while (currentWorlds.contains(key)) key = key * 1099511628211ull + 1;  // copies of one mesh
+            const auto previous = previousWorlds_.find(key);
+            obj.previousWorld = previous != previousWorlds_.end() && taaHistoryValid_ ? previous->second : obj.world;
+            currentWorlds.emplace(key, obj.world);
         }
         if (candidates[i].gpuMesh->skinned()) {
             obj.flags.z = static_cast<float>(joints.size());
@@ -1104,9 +1161,11 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
 
     // ---- Depth prepass, then ambient occlusion from it ---------------------------------------
     const bool parallelPrepass = draws.size() >= settings.parallelRecordingMinDraws;
+    const RGImage motion = graph.createImage("Motion", {kMotionFormat, extent.width, extent.height});
     graph.addRasterPass(
         "DepthPrepass",
         [&](PassBuilder& b) {
+            b.writeColor(motion, LoadOp::Clear);  // no motion where nothing is drawn (TAA uses the camera)
             b.writeDepth(depth, LoadOp::Clear, 0.0f);  // reversed-Z: 0 is the far plane
             b.recordInParallel(parallelPrepass);
         },
@@ -1399,19 +1458,74 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 fullscreen(ctx.cmd, stateFor(shaftsAdd_, ctx), pc);
             });
     }
-    RGImage sceneColor = hdr;
+    // ---- Temporal anti-aliasing: the jittered frame blended into the history, which the rest
+    // of the frame then reads.
+    RGImage resolved = hdr;
+    if (temporal) {
+        if (extent.width != taaWidth_ || extent.height != taaHeight_ || !taaHistory_[0]) {
+            for (std::size_t i = 0; i < 2; ++i) {
+                if (taaHistoryIndex_[i] != UINT32_MAX) ctx_.bindless().releaseTexture(taaHistoryIndex_[i]);
+                nvrhi::TextureDesc desc;
+                desc.width = extent.width;
+                desc.height = extent.height;
+                desc.format = ctx_.hdrFormat();
+                desc.debugName = i == 0 ? "TaaHistoryA" : "TaaHistoryB";
+                desc.isUAV = true;
+                desc.initialState = nvrhi::ResourceStates::ShaderResource;
+                desc.keepInitialState = true;
+                taaHistory_[i] = gpu->createTexture(desc);
+                if (!taaHistory_[i]) throw rhi::VulkanError("could not create the TAA history", VK_ERROR_OUT_OF_DEVICE_MEMORY);
+                taaHistoryIndex_[i] = ctx_.bindless().registerTexture(taaHistory_[i]);
+            }
+            taaWidth_ = extent.width;
+            taaHeight_ = extent.height;
+            taaHistoryValid_ = false;
+        }
+        const std::size_t write = taaFrame_ % 2;
+        const RGImage previousHistory = graph.importImage("TaaHistoryPrevious", {taaHistory_[1 - write], taaHistoryIndex_[1 - write]});
+        resolved = graph.importImage("TaaHistory", {taaHistory_[write], taaHistoryIndex_[write]});
+        const bool historyValid = taaHistoryValid_;
+        nvrhi::IDescriptorTable* bindlessTable = ctx_.bindless().table();
+        graph.addComputePass(
+            "TAA",
+            [&](PassBuilder& b) {
+                b.writeStorage(resolved);
+                b.sample(hdr);
+                b.sample(depth);
+                b.sample(motion);
+                b.sample(previousHistory);
+            },
+            [this, hdr, depth, motion, previousHistory, historyValid, bindlessTable, extent](PassContext& ctx) {
+                nvrhi::ComputeState state;
+                state.pipeline = taa_;
+                state.bindings = {ctx.frameBindings(), bindlessTable, ctx.storageBindings()};
+                ctx.cmd->setComputeState(state);
+                PushConstants pc;
+                pc.index0 = ctx.bindlessIndex(hdr);
+                pc.index1 = ctx.bindlessIndex(depth);
+                pc.index2 = ctx.bindlessIndex(motion);
+                pc.param0 = std::bit_cast<float>(ctx.bindlessIndex(previousHistory));
+                pc.param1 = 0.1f;  // weight of the new frame: about the last 10 frames are averaged
+                pc.flags = historyValid ? 1u : 0u;
+                push(ctx.cmd, pc);
+                ctx.cmd->dispatch((extent.width + 7) / 8, (extent.height + 7) / 8, 1);
+            });
+        taaHistoryValid_ = true;
+        stats.temporalAntiAliasing = true;
+    }
+    RGImage sceneColor = resolved;
     if (fc.depthOfField.z > 0.5f) {
         sceneColor = graph.createImage("DepthOfField", {ctx_.hdrFormat(), extent.width, extent.height});
         graph.addRasterPass(
             "DepthOfField",
             [&](PassBuilder& b) {
                 b.writeColor(sceneColor, LoadOp::DontCare);
-                b.sample(hdr);
+                b.sample(resolved);
                 b.sample(depth);
             },
-            [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, hdr, depth, linearSampler](PassContext& ctx) {
+            [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, resolved, depth, linearSampler](PassContext& ctx) {
                 PushConstants pc;
-                pc.index0 = ctx.bindlessIndex(hdr);
+                pc.index0 = ctx.bindlessIndex(resolved);
                 pc.index1 = ctx.bindlessIndex(depth);
                 pc.index2 = linearSampler;
                 fullscreen(ctx.cmd, stateFor(depthOfField_, ctx), pc);
@@ -1470,7 +1584,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
 
     // With FXAA the tonemapper writes a gamma-encoded LDR image (luma in alpha) that FXAA then
     // resolves into the output; without, it writes the output directly.
-    const bool fxaa = settings.antiAliasing;
+    const bool fxaa = settings.antiAliasing && !temporal;
     // Half floats: the gamma-encoded image is quantised only once, when FXAA writes the output.
     constexpr nvrhi::Format kLdrFormat = nvrhi::Format::RGBA16_FLOAT;
     const RGImage ldr = fxaa ? graph.createImage("LDR", {kLdrFormat, extent.width, extent.height}) : output;
@@ -1677,6 +1791,13 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             });
         ++stats.drawCalls;
     }
+    // Last frame's state for the next frame's motion vectors.
+    previousViewProjection_ = unjittered;
+    previousJitter_ = jitter;
+    previousCameraPosition_ = camera.position;
+    previousCameraForward_ = cameraForward;
+    previousWorlds_ = std::move(currentWorlds);
+    ++taaFrame_;
     return stats;
 }
 

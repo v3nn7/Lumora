@@ -58,6 +58,8 @@ struct FrameConstants {
     glm::mat4 vsmLightView{1.0f};           // virtual shadow map: world -> light space (m)
     glm::vec4 vsmParams{0.0f};              // x levels, y half size of level 0 (m), z level reach, w pages per level
     glm::vec4 vsmDepth{0.0f};               // x depth min, y depth scale, z page texels, w pool pages per side
+    glm::mat4 previousViewProjection{1.0f}; // last frame's, without jitter (motion vectors)
+    glm::vec4 jitter{0.0f};                 // xy this frame's sub-pixel offset (NDC), zw last frame's
     GpuLight lights[kMaxLights]{};
 };
 
@@ -79,6 +81,7 @@ struct GpuObject {
     glm::vec4 flags{0.0f};
     glm::uvec4 textures{kNoTexture};  // bindless: base colour, metallic-roughness, emissive, normal
     glm::vec4 surface{0.0f, 0.0f, std::bit_cast<float>(kNoTexture), 1.0f};  // x alpha cutoff (0 = opaque), y two-sided, z occlusion map, w normal strength
+    glm::mat4 previousWorld{1.0f};    // last frame's world matrix (motion vectors)
 };
 
 struct PushConstants {
@@ -103,9 +106,11 @@ static_assert(offsetof(FrameConstants, shadowFade) == 688);
 static_assert(offsetof(FrameConstants, fogParams) == 704);
 static_assert(offsetof(FrameConstants, localShadowMatrices) == 912);
 static_assert(offsetof(FrameConstants, vsmLightView) == 912 + 64 * kLocalShadowTiles + 64);
-static_assert(offsetof(FrameConstants, lights) == 912 + 64 * kLocalShadowTiles + 64 + 96);
-static_assert(sizeof(FrameConstants) == 912 + 64 * kLocalShadowTiles + 64 + 96 + 64 * kMaxLights);
-static_assert(sizeof(GpuObject) == 208);
+static_assert(offsetof(FrameConstants, previousViewProjection) == 912 + 64 * kLocalShadowTiles + 64 + 96);
+static_assert(offsetof(FrameConstants, lights) == 912 + 64 * kLocalShadowTiles + 64 + 96 + 80);
+static_assert(sizeof(FrameConstants) == 912 + 64 * kLocalShadowTiles + 64 + 96 + 80 + 64 * kMaxLights);
+static_assert(sizeof(GpuObject) == 272);
+static_assert(offsetof(GpuObject, previousWorld) == 208);
 static_assert(offsetof(GpuObject, surface) == 192);
 static_assert(offsetof(GpuObject, textures) == 176);
 static_assert(offsetof(GpuObject, flags) == 160);

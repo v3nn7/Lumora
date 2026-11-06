@@ -144,10 +144,11 @@ RenderContext::RenderContext(const RenderContextConfig& config) {
                       nvrhi::BindingLayoutItem::PushConstants(1, sizeof(PushConstants))};  // b1: b0 is the frame CB
     frameLayout_ = gpu_->createBindingLayout(frame);
     if (!frameLayout_) throw rhi::VulkanError("could not create the frame binding layout", VK_ERROR_INITIALIZATION_FAILED);
-    // Set 2 (compute): storage images u0..u3.
+    // Compute: storage images u0..u3 in set 1 (NVRHI places the bindless table after the regular
+    // sets, so compute shaders see it in set 2; see LUMORA_COMPUTE in common.hlsli).
     nvrhi::BindingLayoutDesc storage;
     storage.visibility = nvrhi::ShaderType::Compute;
-    storage.registerSpace = 2;
+    storage.registerSpace = 1;
     storage.registerSpaceIsDescriptorSet = true;
     storage.bindingOffsets.setShaderResourceOffset(0).setSamplerOffset(0).setConstantBufferOffset(0).setUnorderedAccessViewOffset(0);
     for (std::uint32_t slot = 0; slot < RenderGraph::kStorageSlots; ++slot) {

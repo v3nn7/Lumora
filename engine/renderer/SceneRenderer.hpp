@@ -58,8 +58,12 @@ struct RenderSettings {
     bool ambientOcclusion = true;
     float aoRadius = 0.6f;     // metres
     float aoIntensity = 1.6f;  // exponent applied to the visibility
-    /// FXAA on the final image: smooths jagged edges.
+    /// FXAA on the final image: smooths jagged edges (skipped while TAA runs).
     bool antiAliasing = true;
+    /// Temporal anti-aliasing: frames are jittered and blended over time into a supersampled
+    /// image. Needs consecutive frames of one view, so viewports turn it on; single captures
+    /// (thumbnails, headless renders) leave it off.
+    bool temporalAntiAliasing = false;
     /// Levels of detail: imported meshes switch to simpler versions as they get smaller on
     /// screen. Larger values keep detail longer; 0 always draws full detail.
     float lodBias = 1.0f;
@@ -76,6 +80,7 @@ struct SceneDrawStats {
     bool parallelRecording = false;  // a pass was set up to record on several threads
     bool shadowsRendered = false;
     bool virtualShadows = false;              // the sun used the virtual shadow map
+    bool temporalAntiAliasing = false;        // TAA resolved the frame (with history when valid)
     std::uint32_t virtualPagesRequested = 0;  // pages the view needed
     std::uint32_t virtualPagesCached = 0;     // of those, kept from earlier frames
     std::uint32_t virtualPagesRendered = 0;   // drawn this frame
@@ -140,6 +145,20 @@ private:
     nvrhi::GraphicsPipelineHandle shadowSkinned_;
     nvrhi::GraphicsPipelineHandle shadowMasked_;  // alpha-tested casters (no culling, like all shadows)
     nvrhi::GraphicsPipelineHandle vsmClear_;
+    // Temporal anti-aliasing: the jitter sequence, last frame's matrices (camera and per object,
+    // by entity) and two history images that swap every frame.
+    nvrhi::ComputePipelineHandle taa_;
+    std::uint64_t taaFrame_ = 0;
+    bool taaHistoryValid_ = false;
+    glm::mat4 previousViewProjection_{1.0f};
+    glm::vec2 previousJitter_{0.0f};
+    glm::vec3 previousCameraPosition_{0.0f};
+    glm::vec3 previousCameraForward_{0.0f, 0.0f, -1.0f};
+    std::unordered_map<std::uint64_t, glm::mat4> previousWorlds_;
+    std::array<nvrhi::TextureHandle, 2> taaHistory_;
+    std::array<std::uint32_t, 2> taaHistoryIndex_{UINT32_MAX, UINT32_MAX};
+    std::uint32_t taaWidth_ = 0;
+    std::uint32_t taaHeight_ = 0;
     VirtualShadowMap vsm_;
     nvrhi::TextureHandle vsmPool_;       // physical pages (depth), kept across frames
     nvrhi::TextureHandle vsmPageTable_;  // RGBA32F, see VsmFrame::pageTable

@@ -57,7 +57,7 @@ public:
     void writeDepth(RGImage image, LoadOp load, float clearDepth = 0.0f);
     void readDepth(RGImage image);
     void sample(RGImage image);
-    /// A compute pass reads and writes it (set 2 of the compute pipeline, in the order declared).
+    /// A compute pass reads and writes it (the storage set of the compute pipeline, in the order declared).
     void writeStorage(RGImage image);
     void copyFrom(RGImage image);
     void copyTo(RGImage image);
@@ -96,7 +96,7 @@ struct GraphRuntime {
     std::uint64_t frame = 0;
     /// Set 0 of every pipeline (frame constants, objects, lights, samplers) for this frame.
     nvrhi::IBindingSet* frameBindings = nullptr;
-    /// Compute passes: the layout of their storage images (set 2) and a 1x1 image that fills
+    /// Compute passes: the layout of their storage images (set 1 in compute shaders) and a 1x1 image that fills
     /// the slots a pass leaves empty.
     nvrhi::IBindingLayout* storageLayout = nullptr;
     nvrhi::ITexture* storageFallback = nullptr;
@@ -118,7 +118,7 @@ public:
     [[nodiscard]] std::uint32_t bindlessIndex(RGImage h) const;
     /// Viewport and scissor covering the framebuffer.
     [[nodiscard]] nvrhi::ViewportState viewport() const;
-    /// Compute passes: the binding set of their storage images (set 2), in declaration order.
+    /// Compute passes: the binding set of their storage images, in declaration order.
     [[nodiscard]] nvrhi::IBindingSet* storageBindings() const noexcept { return storageSet_; }
     /// Set 0 of this frame.
     [[nodiscard]] nvrhi::IBindingSet* frameBindings() const noexcept { return runtime_.frameBindings; }
@@ -162,7 +162,7 @@ public:
     /// Compute passes dispatch outside a framebuffer; PassContext::storageBindings() holds the
     /// images they declared with writeStorage.
     void addComputePass(std::string name, const SetupFn& setup, ExecuteFn execute);
-    /// Storage image slots in a compute pass's set 2.
+    /// Storage image slots of a compute pass.
     static constexpr std::uint32_t kStorageSlots = 4;
 
     /// Records every pass, starting in `first` (open). Returns the command lists in execution

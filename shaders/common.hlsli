@@ -49,6 +49,8 @@ struct FrameData {
     column_major float4x4 vsmLightView;  // virtual shadow map: world -> light space (m)
     float4 vsmParams;           // x levels, y half size of level 0 (m), z level reach, w pages per level
     float4 vsmDepth;            // x depth min, y depth scale, z page texels, w pool pages per side
+    column_major float4x4 previousViewProjection;  // last frame's, without jitter (motion vectors)
+    float4 jitter;              // xy this frame's sub-pixel offset (NDC), zw last frame's
     GpuLight lights[MAX_LIGHTS];  // directional lights
 };
 
@@ -61,6 +63,7 @@ struct GpuObject {
     uint4 textures;             // bindless: base colour, metallic-roughness, emissive, normal (NO_TEXTURE = none)
     float4 surface;             // x alpha cutoff (0 = opaque; below it the base colour's alpha cuts a hole), y two-sided,
                                 // z occlusion map (asuint, NO_TEXTURE = none), w normal map strength
+    column_major float4x4 previousWorld;  // last frame's world matrix (motion vectors)
 };
 
 static const uint NO_TEXTURE = 0xFFFFFFFFu;
@@ -84,7 +87,13 @@ float4x4 skinMatrix(uint4 joints, float4 weights, uint first) {
            gJoints[first + joints.z].transform * weights.z + gJoints[first + joints.w].transform * weights.w;
 }
 
+// Set 1 in graphics pipelines; compute shaders define LUMORA_COMPUTE first, which moves it to set
+// 2 (NVRHI puts bindless layouts after the regular sets, and compute has its storage images in 1).
+#if defined(LUMORA_COMPUTE)
+[[vk::binding(0, 2)]] Texture2D gTextures[];
+#else
 [[vk::binding(0, 1)]] Texture2D gTextures[];
+#endif
 [[vk::binding(5, 0)]] SamplerState gSamplers[4];
 // Same descriptors viewed as comparison samplers (descriptor aliasing of VK_DESCRIPTOR_TYPE_SAMPLER).
 [[vk::binding(5, 0)]] SamplerComparisonState gShadowSamplers[4];

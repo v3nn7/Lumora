@@ -53,11 +53,12 @@ public:
     /// (t4) and 32 bytes of push constants.
     [[nodiscard]] nvrhi::IBindingLayout* frameLayout() const noexcept { return frameLayout_; }
     [[nodiscard]] nvrhi::GraphicsPipelineHandle createPipeline(const PipelineDesc& desc);
-    /// Set 2 of compute pipelines: RenderGraph::kStorageSlots storage images (u0..u3), and a
-    /// 1x1 image that fills the slots a pass does not use.
+    /// Set 1 of compute pipelines: RenderGraph::kStorageSlots storage images (u0..u3), and a
+    /// 1x1 image that fills the slots a pass does not use. (Their bindless table is set 2.)
     [[nodiscard]] nvrhi::IBindingLayout* storageLayout() const noexcept { return storageLayout_; }
     [[nodiscard]] nvrhi::ITexture* storageFallback() const noexcept { return storageFallback_; }
-    /// Compute pipeline over sets 0 (frame), 1 (bindless textures) and 2 (storage images).
+    /// Compute pipeline: set 0 frame, set 1 storage images, set 2 bindless textures (bind them as
+    /// {frame, bindless table, storage} in ComputeState).
     /// `shader` is e.g. "taa.comp".
     [[nodiscard]] nvrhi::ComputePipelineHandle createComputePipeline(const std::string& shader, const char* entry = "CSMain");
 

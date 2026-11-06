@@ -10,6 +10,7 @@
 
 #include <cstdlib>
 #include <memory>
+#include <optional>
 
 using namespace lumora;
 using namespace lumora::render;
@@ -1471,4 +1472,104 @@ TEST_F(RendererTest, ComputePassesWriteStorageImagesThatLaterPassesUse) {
         EXPECT_NEAR(c.g, 255.0f * static_cast<float>(p.y) / h, 1.5f);
         EXPECT_NEAR(c.b, 64.0f, 1.5f);
     }
+}
+
+namespace {
+/// A dark cube turned 30 degrees against the bright sky: slanted, high-contrast edges.
+std::unique_ptr<Scene> edgeScene(entt::entity* cubeOut = nullptr) {
+    auto scene = std::make_unique<Scene>("Edges");
+    scene->environment().fogDensity = 0.0f;
+    const auto cube = scene->createEntity("Cube");
+    auto& mesh = scene->registry().emplace<MeshRendererComponent>(cube);
+    mesh.baseColor = glm::vec3(0.02f);
+    mesh.roughness = 1.0f;
+    scene->registry().get<TransformComponent>(cube).rotationDeg = {0.0f, 0.0f, 30.0f};
+    scene->updateWorldTransforms();
+    if (cubeOut != nullptr) *cubeOut = cube;
+    return scene;
+}
+
+/// Anti-aliased edge pixels: between the cube's dark and the sky, right next to the cube.
+int partialPixels(const CapturedImage& image) {
+    const auto green = [&](int x, int y) {
+        x = std::clamp(x, 0, static_cast<int>(image.width) - 1);
+        y = std::clamp(y, 0, static_cast<int>(image.height) - 1);
+        return static_cast<int>(image.rgba[(static_cast<std::size_t>(y) * image.width + static_cast<std::size_t>(x)) * 4 + 1]);
+    };
+    int count = 0;
+    for (int y = 0; y < static_cast<int>(image.height); ++y) {
+        for (int x = 0; x < static_cast<int>(image.width); ++x) {
+            const int g = green(x, y);
+            if (g < 35 || g > 110) continue;
+            bool nearCube = false;
+            for (int dy = -1; dy <= 1 && !nearCube; ++dy) {
+                for (int dx = -1; dx <= 1 && !nearCube; ++dx) nearCube = green(x + dx, y + dy) < 25;
+            }
+            count += nearCube ? 1 : 0;
+        }
+    }
+    return count;
+}
+} // namespace
+
+TEST_F(RendererTest, TemporalAntiAliasingSmoothsEdgesAndSettles) {
+    auto scene = edgeScene();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.0f, 3.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const CameraView view = cam.view(1.0f);
+    RenderSettings plain;
+    plain.antiAliasing = false;
+    plain.bloom = false;
+    plain.shadows = false;
+    auto aliased = renderer_->capture(*scene, view, {96, 96}, plain);
+    ASSERT_TRUE(aliased.has_value());
+
+    RenderSettings taa = plain;
+    taa.temporalAntiAliasing = true;
+    std::optional<CapturedImage> frame;
+    for (int i = 0; i < 24; ++i) {
+        auto f = renderer_->capture(*scene, view, {96, 96}, taa);
+        ASSERT_TRUE(f.has_value());
+        frame = std::move(*f);
+    }
+    EXPECT_TRUE(renderer_->stats().scene.temporalAntiAliasing);
+    EXPECT_GT(partialPixels(*frame), partialPixels(*aliased) * 2) << "edges are blended over the jittered frames";
+
+    // Settled: more frames change the image only a little.
+    auto next = renderer_->capture(*scene, view, {96, 96}, taa);
+    ASSERT_TRUE(next.has_value());
+    int changed = 0;
+    for (std::size_t i = 0; i < next->rgba.size(); i += 4) changed += std::abs(next->rgba[i + 1] - frame->rgba[i + 1]) > 24 ? 1 : 0;
+    EXPECT_LT(changed, 20) << "no crawling once converged";
+}
+
+TEST_F(RendererTest, TemporalAntiAliasingLeavesNoTrailBehindMovingObjects) {
+    entt::entity cube = entt::null;
+    auto scene = edgeScene(&cube);
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.0f, 3.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const CameraView view = cam.view(1.0f);
+    RenderSettings taa;
+    taa.antiAliasing = false;
+    taa.bloom = false;
+    taa.shadows = false;
+    taa.temporalAntiAliasing = true;
+    for (int i = 0; i < 12; ++i) ASSERT_TRUE(renderer_->capture(*scene, view, {96, 96}, taa).has_value());
+    // The cube jumps aside; a few frames later its old place shows the sky again.
+    scene->registry().get<TransformComponent>(cube).position.x = 1.6f;
+    scene->updateWorldTransforms();
+    std::optional<CapturedImage> frame;
+    for (int i = 0; i < 4; ++i) {
+        auto f = renderer_->capture(*scene, view, {96, 96}, taa);
+        ASSERT_TRUE(f.has_value());
+        frame = std::move(*f);
+    }
+    const auto oldPlace = pixel(*frame, 48, 48);
+    const auto sky = pixel(*frame, 10, 48);
+    EXPECT_GT(oldPlace.g, sky.g - 30) << "no ghost of the cube where it was";
+    // ...and the cube is drawn where it went.
+    const glm::ivec2 now = toPixel(view, {1.6f, 0.0f, 0.0f}, {96, 96});
+    EXPECT_LT(pixel(*frame, static_cast<std::uint32_t>(std::clamp(now.x, 0, 95)), 48).g, 60);
 }

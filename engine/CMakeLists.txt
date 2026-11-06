@@ -30,6 +30,7 @@ lumora_engine_module(input
 lumora_engine_module(assets
     SOURCES
         assets/Primitives.cpp
+        assets/MeshLod.cpp
         assets/GltfImporter.cpp
         assets/CgltfImpl.cpp
         assets/AssetLibrary.cpp

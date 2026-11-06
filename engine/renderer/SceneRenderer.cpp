@@ -1,6 +1,7 @@
 #include "renderer/SceneRenderer.hpp"
 
 #include "assets/AssetLibrary.hpp"
+#include "assets/MeshLod.hpp"
 
 #include "core/JobSystem.hpp"
 #include "renderer/FrameResources.hpp"
@@ -669,7 +670,16 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             obj.flags.z = static_cast<float>(joints.size());
             obj.flags.w = appendSkinPalette(scene, candidates[i].entity, *candidates[i].mesh, settings.assets, joints) ? 1.0f : 0.0f;
         }
-        const Draw draw{candidates[i].gpuMesh, static_cast<std::uint32_t>(objects.size()), p.center, p.extent};
+        // Level of detail from the screen coverage of the bounding sphere (shadows use the same).
+        const GpuMesh* drawn = candidates[i].gpuMesh;
+        if (!drawn->lods.empty() && settings.lodBias > 0.0f) {
+            const float coverage =
+                screenCoverage(glm::length(p.extent), glm::length(p.center - camera.position), camera.fovYRadians);
+            const int level = selectLod(coverage, static_cast<int>(drawn->lods.size()), settings.lodBias);
+            drawn = &drawn->level(level);
+            if (level > 0 && p.visible) ++stats.lodObjects;
+        }
+        const Draw draw{drawn, static_cast<std::uint32_t>(objects.size()), p.center, p.extent};
         if (p.visible) draws.push_back(draw);
         if (anyShadows) casters.push_back(draw);
         objects.push_back(obj);

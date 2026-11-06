@@ -57,6 +57,17 @@ public:
     [[nodiscard]] bool characterGrounded(entt::entity entity) const;
     [[nodiscard]] std::size_t characterCount() const;
 
+    // Joints, vehicles, ragdolls.
+    [[nodiscard]] std::size_t jointCount() const;
+    [[nodiscard]] std::size_t vehicleCount() const;
+    /// Bodies of all active ragdolls.
+    [[nodiscard]] std::size_t ragdollBodyCount() const;
+    /// Driver input of a VehicleComponent: throttle -1..1 (negative = reverse), steering -1..1
+    /// (positive = right), brake and handbrake 0..1.
+    bool driveVehicle(entt::entity entity, float throttle, float steering, float brake, float handbrake);
+    /// Forward speed of a vehicle in m/s (negative when reversing).
+    [[nodiscard]] float vehicleSpeed(entt::entity entity) const;
+
     /// Pairs of entities whose bodies started touching since the last call (each pair once).
     [[nodiscard]] std::vector<std::pair<entt::entity, entt::entity>> takeContacts();
 

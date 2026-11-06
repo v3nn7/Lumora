@@ -3,8 +3,10 @@
 #include "core/Log.hpp"
 #include "scene/Scene.hpp"
 
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/euler_angles.hpp>
+#include <glm/gtx/quaternion.hpp>
 #include <glm/matrix.hpp>
 
 // Jolt must be included with its configuration macros (exported by the Jolt target).
@@ -23,11 +25,26 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/GroupFilterTable.h>
+#include <Jolt/Physics/Constraints/DistanceConstraint.h>
+#include <Jolt/Physics/Constraints/FixedConstraint.h>
+#include <Jolt/Physics/Constraints/HingeConstraint.h>
+#include <Jolt/Physics/Constraints/PointConstraint.h>
+#include <Jolt/Physics/Constraints/SliderConstraint.h>
+#include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
+#include <Jolt/Physics/Ragdoll/Ragdoll.h>
+#include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
+#include <Jolt/Physics/Vehicle/VehicleConstraint.h>
+#include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
+#include <Jolt/Skeleton/Skeleton.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
+#include <array>
+#include <cfloat>
+#include <functional>
 #include <cstdarg>
 #include <cstdio>
 #include <mutex>
@@ -141,6 +158,26 @@ Pose decompose(const glm::mat4& world) {
     return p;
 }
 
+/// A unit vector perpendicular to `v`.
+glm::vec3 perpendicular(const glm::vec3& v) {
+    const glm::vec3 other = std::abs(v.y) < 0.9f ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
+    return glm::normalize(glm::cross(v, other));
+}
+
+/// Writes a world pose into an entity's local transform (parent space). Scale is kept.
+void writeWorldPose(Scene& scene, entt::entity entity, glm::vec3 worldPos, glm::quat worldRot, const glm::mat4* parentWorld) {
+    if (parentWorld != nullptr) {
+        const Pose parentPose = decompose(*parentWorld);
+        worldPos = glm::vec3(glm::inverse(*parentWorld) * glm::vec4(worldPos, 1.0f));
+        worldRot = glm::inverse(parentPose.rotation) * worldRot;
+    }
+    auto& t = scene.registry().get<TransformComponent>(entity);
+    t.position = worldPos;
+    float y = 0.0f, x = 0.0f, z = 0.0f;
+    glm::extractEulerAngleYXZ(glm::mat4_cast(glm::normalize(worldRot)), y, x, z);
+    t.rotationDeg = glm::degrees(glm::vec3(x, y, z));
+}
+
 JPH::RefConst<JPH::Shape> makeShape(const ColliderComponent& c, const glm::vec3& scale) {
     const glm::vec3 s = glm::abs(scale);
     JPH::RefConst<JPH::Shape> shape;
@@ -232,8 +269,412 @@ struct PhysicsWorld::Impl {
         glm::vec3 lastWritten{0.0f};  // world position the physics last wrote (to notice teleports)
     };
     std::unordered_map<entt::entity, Character> characters;
+    struct Joint {
+        JPH::Ref<JPH::TwoBodyConstraint> constraint;
+        entt::entity other = entt::null;  // null = the world
+        JointType type = JointType::Fixed;
+        std::string connectedTo;
+    };
+    std::unordered_map<entt::entity, Joint> joints;
+    struct Vehicle {
+        JPH::Ref<JPH::VehicleConstraint> constraint;
+        JPH::Ref<JPH::VehicleCollisionTester> tester;
+        std::array<entt::entity, 4> wheels{entt::null, entt::null, entt::null, entt::null};
+    };
+    std::unordered_map<entt::entity, Vehicle> vehicles;
+    struct RagdollInstance {
+        JPH::Ref<JPH::Ragdoll> ragdoll;
+        std::vector<entt::entity> bones;  // in skeleton order (parents first)
+        std::vector<glm::vec3> scales;    // world scale of each bone
+    };
+    std::unordered_map<entt::entity, RagdollInstance> ragdolls;
+    JPH::CollisionGroup::GroupID nextRagdollGroup = 1;
 
     explicit Impl(Scene& s) : scene(s) {}
+
+    [[nodiscard]] entt::entity findNamed(const std::string& name) const {
+        for (auto e : scene.registry().view<TransformComponent>()) {
+            if (scene.nameOf(e) == name) return e;
+        }
+        return entt::null;
+    }
+
+    // ---- Joints ----------------------------------------------------------------------------
+
+    void removeJoint(Joint& joint) {
+        if (joint.constraint) system.RemoveConstraint(joint.constraint);
+        joint.constraint = nullptr;
+    }
+
+    /// Removes joints, vehicles and ragdolls that hold on to an entity's body (before it goes).
+    void releaseConstraintsOf(entt::entity e) {
+        for (auto it = joints.begin(); it != joints.end();) {
+            if (it->first == e || it->second.other == e) {
+                removeJoint(it->second);
+                it = joints.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        if (auto it = vehicles.find(e); it != vehicles.end()) {
+            removeVehicle(it->second);
+            vehicles.erase(it);
+        }
+    }
+
+    void createJoint(entt::entity e, const JointComponent& jc) {
+        const auto self = bodies.find(e);
+        if (self == bodies.end()) return;
+        Joint joint;
+        joint.type = jc.type;
+        joint.connectedTo = jc.connectedTo;
+        JPH::BodyID otherId;
+        if (!jc.connectedTo.empty()) {
+            joint.other = findNamed(jc.connectedTo);
+            const auto other = bodies.find(joint.other);
+            if (joint.other == e || other == bodies.end()) {
+                log::warn("Physics", "joint on '{}': no body named '{}' to connect to", scene.nameOf(e), jc.connectedTo);
+                joints.emplace(e, std::move(joint));  // remembered, so the warning shows once
+                return;
+            }
+            otherId = other->second.id;
+        }
+        const glm::mat4 world = scene.worldMatrix(e);
+        const glm::vec3 pivot(world * glm::vec4(jc.anchor, 1.0f));
+        const glm::vec3 axis = glm::length(jc.axis) > 1e-6f ? glm::normalize(glm::mat3(world) * jc.axis) : glm::vec3(0, 1, 0);
+        const glm::vec3 normal = perpendicular(axis);
+        JPH::Ref<JPH::TwoBodyConstraintSettings> settings;
+        switch (jc.type) {
+            case JointType::Fixed: {
+                auto* s = new JPH::FixedConstraintSettings;
+                s->mAutoDetectPoint = true;
+                settings = s;
+                break;
+            }
+            case JointType::Hinge: {
+                auto* s = new JPH::HingeConstraintSettings;
+                s->mPoint1 = s->mPoint2 = JPH::RVec3(toJolt(pivot));
+                s->mHingeAxis1 = s->mHingeAxis2 = toJolt(axis);
+                s->mNormalAxis1 = s->mNormalAxis2 = toJolt(normal);
+                if (jc.limits) {
+                    s->mLimitsMin = glm::radians(std::clamp(jc.minLimit, -180.0f, 0.0f));
+                    s->mLimitsMax = glm::radians(std::clamp(jc.maxLimit, 0.0f, 180.0f));
+                }
+                s->mMotorSettings.SetTorqueLimit(std::max(jc.motorForce, 0.0f));
+                settings = s;
+                break;
+            }
+            case JointType::Ball: {
+                auto* s = new JPH::PointConstraintSettings;
+                s->mPoint1 = s->mPoint2 = JPH::RVec3(toJolt(pivot));
+                settings = s;
+                break;
+            }
+            case JointType::Slider: {
+                auto* s = new JPH::SliderConstraintSettings;
+                s->mAutoDetectPoint = true;
+                s->SetSliderAxis(toJolt(axis));
+                if (jc.limits) {
+                    s->mLimitsMin = std::min(jc.minLimit, 0.0f);
+                    s->mLimitsMax = std::max(jc.maxLimit, 0.0f);
+                }
+                s->mMotorSettings.SetForceLimit(std::max(jc.motorForce, 0.0f));
+                settings = s;
+                break;
+            }
+            case JointType::Distance: {
+                // With the world: a rope from the anchor (fixed where it is now) to the entity's
+                // origin. With another body: between both origins.
+                auto* s = new JPH::DistanceConstraintSettings;
+                const glm::vec3 origin(world[3]);
+                s->mPoint1 = JPH::RVec3(toJolt(joint.other == entt::null ? pivot : glm::vec3(scene.worldMatrix(joint.other)[3])));
+                s->mPoint2 = JPH::RVec3(toJolt(origin));
+                s->mMinDistance = std::max(jc.minDistance, 0.0f);
+                s->mMaxDistance = jc.maxDistance > 0.0f ? std::max(jc.maxDistance, s->mMinDistance) : -1.0f;
+                s->mLimitsSpringSettings.mFrequency = std::max(jc.spring, 0.0f);
+                s->mLimitsSpringSettings.mDamping = 0.5f;
+                settings = s;
+                break;
+            }
+        }
+        JPH::BodyInterface& bi = system.GetBodyInterface();
+        joint.constraint = bi.CreateConstraint(settings, otherId, self->second.id);
+        if (!joint.constraint) return;
+        system.AddConstraint(joint.constraint);
+        bi.ActivateBody(self->second.id);
+        joints.emplace(e, std::move(joint));
+    }
+
+    /// Creates, rebuilds and removes joints to match the components; motors follow live.
+    void syncJoints() {
+        auto& reg = scene.registry();
+        for (auto it = joints.begin(); it != joints.end();) {
+            const auto* jc = reg.valid(it->first) ? reg.try_get<JointComponent>(it->first) : nullptr;
+            if (jc == nullptr || jc->type != it->second.type || jc->connectedTo != it->second.connectedTo) {
+                removeJoint(it->second);
+                it = joints.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto [e, jc] : reg.view<JointComponent>().each()) {
+            const auto it = joints.find(e);
+            if (it == joints.end()) {
+                createJoint(e, jc);
+                continue;
+            }
+            JPH::TwoBodyConstraint* c = it->second.constraint;
+            if (c == nullptr) continue;
+            const bool motor = jc.motorForce > 0.0f;
+            if (jc.type == JointType::Hinge) {
+                auto* hinge = static_cast<JPH::HingeConstraint*>(c);
+                hinge->GetMotorSettings().SetTorqueLimit(std::max(jc.motorForce, 0.0f));
+                hinge->SetMotorState(motor ? JPH::EMotorState::Velocity : JPH::EMotorState::Off);
+                hinge->SetTargetAngularVelocity(glm::radians(jc.motorSpeed));
+                if (jc.limits) {
+                    hinge->SetLimits(glm::radians(std::clamp(jc.minLimit, -180.0f, 0.0f)), glm::radians(std::clamp(jc.maxLimit, 0.0f, 180.0f)));
+                } else {
+                    hinge->SetLimits(-JPH::JPH_PI, JPH::JPH_PI);
+                }
+            } else if (jc.type == JointType::Slider) {
+                auto* slider = static_cast<JPH::SliderConstraint*>(c);
+                slider->GetMotorSettings().SetForceLimit(std::max(jc.motorForce, 0.0f));
+                slider->SetMotorState(motor ? JPH::EMotorState::Velocity : JPH::EMotorState::Off);
+                slider->SetTargetVelocity(jc.motorSpeed);
+                if (jc.limits) {
+                    slider->SetLimits(std::min(jc.minLimit, 0.0f), std::max(jc.maxLimit, 0.0f));
+                } else {
+                    slider->SetLimits(-FLT_MAX, FLT_MAX);
+                }
+            }
+            if (motor) system.GetBodyInterface().ActivateBody(c->GetBody2()->GetID());
+        }
+    }
+
+    // ---- Vehicles --------------------------------------------------------------------------
+
+    void removeVehicle(Vehicle& v) {
+        if (!v.constraint) return;
+        system.RemoveStepListener(v.constraint);
+        system.RemoveConstraint(v.constraint);
+        v.constraint = nullptr;
+    }
+
+    void createVehicle(entt::entity e, const VehicleComponent& vc) {
+        const auto self = bodies.find(e);
+        auto& reg = scene.registry();
+        const auto* collider = reg.try_get<ColliderComponent>(e);
+        if (self == bodies.end() || self->second.motion != BodyMotion::Dynamic || collider == nullptr) {
+            vehicles.emplace(e, Vehicle{});  // needs a dynamic body; remembered so it is not retried every step
+            log::warn("Physics", "vehicle '{}' needs a Collider and a dynamic Rigid Body", scene.nameOf(e));
+            return;
+        }
+        const Pose pose = decompose(scene.worldMatrix(e));
+        const glm::vec3 half = (collider->shape == ColliderShape::Box ? collider->size * 0.5f : glm::vec3(collider->radius)) *
+                               glm::abs(pose.scale);
+        const glm::vec3 centre = collider->offset * glm::abs(pose.scale);
+        const float radius = std::max(vc.wheelRadius, 0.05f);
+        const float width = std::max(vc.wheelWidth, 0.02f);
+        JPH::VehicleConstraintSettings settings;
+        settings.mUp = JPH::Vec3(0, 1, 0);
+        settings.mForward = JPH::Vec3(0, 0, -1);  // entities face -Z
+        settings.mMaxPitchRollAngle = JPH::DegreesToRadians(60.0f);
+        // Front left, front right, rear left, rear right.
+        const float x = std::max(half.x - width * 0.5f, 0.05f);
+        const float z = std::max(half.z - radius, 0.05f);
+        const glm::vec3 corners[4] = {{-x, 0, -z}, {x, 0, -z}, {-x, 0, z}, {x, 0, z}};
+        for (int i = 0; i < 4; ++i) {
+            auto* wheel = new JPH::WheelSettingsWV;
+            const glm::vec3 p = centre + corners[i] + glm::vec3(0.0f, -half.y * 0.5f, 0.0f);
+            wheel->mPosition = toJolt(p);
+            wheel->mWheelForward = JPH::Vec3(0, 0, -1);
+            wheel->mRadius = radius;
+            wheel->mWidth = width;
+            wheel->mSuspensionMinLength = std::max(vc.suspensionLength * 0.2f, 0.02f);
+            wheel->mSuspensionMaxLength = std::max(vc.suspensionLength, wheel->mSuspensionMinLength + 0.01f);
+            wheel->mMaxSteerAngle = i < 2 ? JPH::DegreesToRadians(std::clamp(vc.maxSteerDeg, 0.0f, 80.0f)) : 0.0f;
+            wheel->mMaxHandBrakeTorque = i < 2 ? 0.0f : 4000.0f;
+            settings.mWheels.push_back(wheel);
+        }
+        auto* controller = new JPH::WheeledVehicleControllerSettings;
+        controller->mEngine.mMaxTorque = std::max(vc.engineTorque, 0.0f);
+        controller->mDifferentials.resize(2);  // four-wheel drive
+        controller->mDifferentials[0].mLeftWheel = 0;
+        controller->mDifferentials[0].mRightWheel = 1;
+        controller->mDifferentials[0].mEngineTorqueRatio = 0.5f;
+        controller->mDifferentials[1].mLeftWheel = 2;
+        controller->mDifferentials[1].mRightWheel = 3;
+        controller->mDifferentials[1].mEngineTorqueRatio = 0.5f;
+        settings.mController = controller;
+
+        JPH::BodyLockWrite lock(system.GetBodyLockInterface(), self->second.id);
+        if (!lock.Succeeded()) return;
+        Vehicle v;
+        v.constraint = new JPH::VehicleConstraint(lock.GetBody(), settings);
+        v.tester = new JPH::VehicleCollisionTesterCastCylinder(Layers::kMoving);
+        v.constraint->SetVehicleCollisionTester(v.tester);
+        static constexpr const char* kWheelNames[4] = {"Wheel FL", "Wheel FR", "Wheel RL", "Wheel RR"};
+        for (entt::entity child : scene.childrenOf(e)) {
+            for (int i = 0; i < 4; ++i) {
+                if (scene.nameOf(child) == kWheelNames[i]) v.wheels[static_cast<std::size_t>(i)] = child;
+            }
+        }
+        system.AddConstraint(v.constraint);
+        system.AddStepListener(v.constraint);
+        vehicles.emplace(e, std::move(v));
+    }
+
+    void syncVehicles() {
+        auto& reg = scene.registry();
+        for (auto it = vehicles.begin(); it != vehicles.end();) {
+            if (!reg.valid(it->first) || !reg.all_of<VehicleComponent>(it->first)) {
+                removeVehicle(it->second);
+                it = vehicles.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto [e, vc] : reg.view<VehicleComponent>().each()) {
+            if (!vehicles.contains(e)) createVehicle(e, vc);
+        }
+    }
+
+    // ---- Ragdolls --------------------------------------------------------------------------
+
+    void removeRagdoll(RagdollInstance& r) {
+        if (r.ragdoll) r.ragdoll->RemoveFromPhysicsSystem();
+        r.ragdoll = nullptr;  // destroys its bodies and constraints
+    }
+
+    void createRagdoll(entt::entity root, const RagdollComponent& rc) {
+        auto& reg = scene.registry();
+        RagdollInstance r;
+        std::vector<int> parents;
+        std::unordered_map<entt::entity, int> index;
+        // Bones: the model's nodes that carry no mesh, parents first.
+        std::function<void(entt::entity, int)> collect = [&](entt::entity e, int parent) {
+            int self = parent;
+            if (e != root && reg.all_of<ModelNodeComponent>(e) && !reg.any_of<MeshRendererComponent, SkinComponent>(e)) {
+                self = static_cast<int>(r.bones.size());
+                index[e] = self;
+                r.bones.push_back(e);
+                parents.push_back(parent);
+            }
+            for (entt::entity child : scene.childrenOf(e)) collect(child, self);
+        };
+        collect(root, -1);
+        if (r.bones.empty()) {
+            log::warn("Physics", "ragdoll '{}' has no bones (needs an imported, skinned model)", scene.nameOf(root));
+            ragdolls.emplace(root, std::move(r));
+            return;
+        }
+        const std::size_t n = r.bones.size();
+        std::vector<Pose> poses(n);
+        for (std::size_t i = 0; i < n; ++i) poses[i] = decompose(scene.worldMatrix(r.bones[i]));
+        // Each bone's direction: toward the average of its children, else continuing its parent.
+        std::vector<glm::vec3> tips(n);
+        std::vector<int> childCount(n, 0);
+        for (std::size_t i = 0; i < n; ++i) tips[i] = glm::vec3(0.0f);
+        for (std::size_t i = 0; i < n; ++i) {
+            if (parents[i] >= 0) {
+                tips[static_cast<std::size_t>(parents[i])] += poses[i].position;
+                ++childCount[static_cast<std::size_t>(parents[i])];
+            }
+        }
+        JPH::Ref<JPH::Skeleton> skeleton = new JPH::Skeleton;
+        JPH::Ref<JPH::RagdollSettings> settings = new JPH::RagdollSettings;
+        settings->mSkeleton = skeleton;
+        settings->mParts.resize(n);
+        const float massPerBone = std::max(rc.mass, 0.1f) / static_cast<float>(n);
+        std::vector<float> lengths(n, 0.0f);
+        for (std::size_t i = 0; i < n; ++i) {
+            skeleton->AddJoint(scene.nameOf(r.bones[i]), parents[i]);
+            const glm::vec3 pos = poses[i].position;
+            glm::vec3 dir(0.0f, 1.0f, 0.0f);
+            float length = 0.0f;
+            if (childCount[i] > 0) {
+                const glm::vec3 tip = tips[i] / static_cast<float>(childCount[i]);
+                length = glm::length(tip - pos);
+                if (length > 1e-4f) dir = (tip - pos) / length;
+            } else if (parents[i] >= 0) {
+                const glm::vec3 from = poses[static_cast<std::size_t>(parents[i])].position;
+                if (glm::length(pos - from) > 1e-4f) dir = glm::normalize(pos - from);
+                length = lengths[static_cast<std::size_t>(parents[i])] * 0.5f;
+            }
+            lengths[i] = length;
+            const float radius = std::clamp(length * 0.25f, 0.02f, 0.15f);
+            // The body sits at the bone with the bone's rotation; the shape reaches toward the tip.
+            const glm::vec3 localDir = glm::inverse(poses[i].rotation) * dir;
+            JPH::RefConst<JPH::Shape> shape;
+            const float halfCylinder = 0.5f * length - radius;
+            if (halfCylinder > 1e-3f) {
+                shape = new JPH::CapsuleShape(halfCylinder, radius);
+            } else {
+                shape = new JPH::SphereShape(radius);
+            }
+            JPH::RotatedTranslatedShapeSettings placed(toJolt(localDir * (0.5f * length)),
+                                                       toJolt(glm::rotation(glm::vec3(0.0f, 1.0f, 0.0f), localDir)), shape);
+            auto placedShape = placed.Create();
+            JPH::RagdollSettings::Part& part = settings->mParts[i];
+            part.SetShape(placedShape.IsValid() ? placedShape.Get() : shape);
+            part.mPosition = JPH::RVec3(toJolt(pos));
+            part.mRotation = toJolt(poses[i].rotation);
+            part.mMotionType = JPH::EMotionType::Dynamic;
+            part.mObjectLayer = Layers::kMoving;
+            part.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+            part.mMassPropertiesOverride.mMass = massPerBone;
+            part.mLinearDamping = 0.1f;
+            part.mAngularDamping = 0.6f;
+            if (parents[i] >= 0) {
+                auto* joint = new JPH::SwingTwistConstraintSettings;
+                joint->mSpace = JPH::EConstraintSpace::WorldSpace;
+                joint->mPosition1 = joint->mPosition2 = JPH::RVec3(toJolt(pos));
+                joint->mTwistAxis1 = joint->mTwistAxis2 = toJolt(dir);
+                joint->mPlaneAxis1 = joint->mPlaneAxis2 = toJolt(perpendicular(dir));
+                joint->mNormalHalfConeAngle = JPH::DegreesToRadians(40.0f);
+                joint->mPlaneHalfConeAngle = JPH::DegreesToRadians(40.0f);
+                joint->mTwistMinAngle = JPH::DegreesToRadians(-30.0f);
+                joint->mTwistMaxAngle = JPH::DegreesToRadians(30.0f);
+                part.mToParent = joint;
+            }
+            r.scales.push_back(poses[i].scale);
+        }
+        skeleton->CalculateParentJointIndices();
+        settings->Stabilize();
+        settings->DisableParentChildCollisions();
+        settings->CalculateBodyIndexToConstraintIndex();
+        settings->CalculateConstraintIndexToBodyIdxPair();
+        r.ragdoll = settings->CreateRagdoll(nextRagdollGroup++, static_cast<JPH::uint64>(entt::to_integral(root)), &system);
+        if (!r.ragdoll) {
+            log::error("Physics", "could not create the ragdoll of '{}' (body limit reached?)", scene.nameOf(root));
+            r.bones.clear();
+            ragdolls.emplace(root, std::move(r));
+            return;
+        }
+        JPH::BodyInterface& bi = system.GetBodyInterface();
+        for (std::size_t i = 0; i < n; ++i) {
+            bi.SetUserData(r.ragdoll->GetBodyID(static_cast<int>(i)), static_cast<JPH::uint64>(entt::to_integral(r.bones[i])));
+        }
+        r.ragdoll->AddToPhysicsSystem(JPH::EActivation::Activate);
+        ragdolls.emplace(root, std::move(r));
+    }
+
+    void syncRagdolls() {
+        auto& reg = scene.registry();
+        for (auto it = ragdolls.begin(); it != ragdolls.end();) {
+            const auto* rc = reg.valid(it->first) ? reg.try_get<RagdollComponent>(it->first) : nullptr;
+            const bool bonesAlive = std::ranges::all_of(it->second.bones, [&](entt::entity b) { return reg.valid(b); });
+            if (rc == nullptr || !rc->active || !bonesAlive) {
+                removeRagdoll(it->second);
+                it = ragdolls.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto [e, rc] : reg.view<RagdollComponent>().each()) {
+            if (rc.active && !ragdolls.contains(e)) createRagdoll(e, rc);
+        }
+    }
 
     void createCharacter(entt::entity e) {
         const auto& cc = scene.registry().get<CharacterControllerComponent>(e);
@@ -317,6 +758,7 @@ struct PhysicsWorld::Impl {
         auto& reg = scene.registry();
         for (auto it = bodies.begin(); it != bodies.end();) {
             if (!reg.valid(it->first) || !reg.all_of<ColliderComponent>(it->first)) {
+                releaseConstraintsOf(it->first);
                 removeBody(it->second);
                 it = bodies.erase(it);
             } else {
@@ -331,6 +773,9 @@ struct PhysicsWorld::Impl {
             }
         }
         if (added) system.OptimizeBroadPhase();
+        syncJoints();
+        syncVehicles();
+        syncRagdolls();
     }
 };
 
@@ -356,6 +801,12 @@ PhysicsWorld::PhysicsWorld(Scene& scene) : impl_(std::make_unique<Impl>(scene)) 
 
 PhysicsWorld::~PhysicsWorld() {
     impl_->characters.clear();
+    for (auto& [entity, joint] : impl_->joints) impl_->removeJoint(joint);
+    impl_->joints.clear();
+    for (auto& [entity, vehicle] : impl_->vehicles) impl_->removeVehicle(vehicle);
+    impl_->vehicles.clear();
+    for (auto& [entity, ragdoll] : impl_->ragdolls) impl_->removeRagdoll(ragdoll);
+    impl_->ragdolls.clear();
     for (const auto& [entity, body] : impl_->bodies) impl_->removeBody(body);
     impl_->bodies.clear();
     impl_.reset();
@@ -390,6 +841,38 @@ bool PhysicsWorld::characterGrounded(entt::entity entity) const {
 std::size_t PhysicsWorld::characterCount() const { return impl_->characters.size(); }
 
 std::size_t PhysicsWorld::bodyCount() const { return impl_->bodies.size(); }
+
+std::size_t PhysicsWorld::jointCount() const {
+    return static_cast<std::size_t>(std::ranges::count_if(impl_->joints, [](const auto& j) { return j.second.constraint != nullptr; }));
+}
+
+std::size_t PhysicsWorld::vehicleCount() const {
+    return static_cast<std::size_t>(std::ranges::count_if(impl_->vehicles, [](const auto& v) { return v.second.constraint != nullptr; }));
+}
+
+std::size_t PhysicsWorld::ragdollBodyCount() const {
+    std::size_t count = 0;
+    for (const auto& [entity, r] : impl_->ragdolls) count += r.ragdoll ? r.ragdoll->GetBodyCount() : 0;
+    return count;
+}
+
+bool PhysicsWorld::driveVehicle(entt::entity entity, float throttle, float steering, float brake, float handbrake) {
+    const auto it = impl_->vehicles.find(entity);
+    if (it == impl_->vehicles.end() || !it->second.constraint) return false;
+    auto* controller = static_cast<JPH::WheeledVehicleController*>(it->second.constraint->GetController());
+    controller->SetDriverInput(std::clamp(throttle, -1.0f, 1.0f), std::clamp(steering, -1.0f, 1.0f),
+                               std::clamp(brake, 0.0f, 1.0f), std::clamp(handbrake, 0.0f, 1.0f));
+    if (throttle != 0.0f || steering != 0.0f) impl_->system.GetBodyInterface().ActivateBody(impl_->bodies.at(entity).id);
+    return true;
+}
+
+float PhysicsWorld::vehicleSpeed(entt::entity entity) const {
+    const auto it = impl_->vehicles.find(entity);
+    if (it == impl_->vehicles.end() || !it->second.constraint) return 0.0f;
+    const JPH::Body* body = it->second.constraint->GetVehicleBody();
+    const JPH::Vec3 forward = body->GetRotation() * it->second.constraint->GetLocalForward();
+    return body->GetLinearVelocity().Dot(forward);
+}
 
 void PhysicsWorld::setGravity(const glm::vec3& gravity) { impl_->system.SetGravity(toJolt(gravity)); }
 
@@ -505,20 +988,51 @@ void PhysicsWorld::step(float dt) {
         JPH::RVec3 position;
         JPH::Quat rotation;
         bi.GetPositionAndRotation(body.id, position, rotation);
-        glm::vec3 worldPos = fromJolt(JPH::Vec3(position));
-        glm::quat worldRot = fromJolt(rotation);
         const entt::entity parent = scene.parentOf(entity);
-        if (parent != entt::null) {
-            const glm::mat4 parentWorld = scene.worldMatrix(parent);
-            const Pose parentPose = decompose(parentWorld);
-            worldPos = glm::vec3(glm::inverse(parentWorld) * glm::vec4(worldPos, 1.0f));
-            worldRot = glm::inverse(parentPose.rotation) * worldRot;
+        const glm::mat4 parentWorld = parent != entt::null ? scene.worldMatrix(parent) : glm::mat4(1.0f);
+        writeWorldPose(scene, entity, fromJolt(JPH::Vec3(position)), fromJolt(rotation),
+                       parent != entt::null ? &parentWorld : nullptr);
+    }
+
+    // Wheels named "Wheel FL/FR/RL/RR" under a vehicle follow its wheels (cylinders stand on Y,
+    // so the wheel's axle is the model's Y axis).
+    for (const auto& [entity, v] : impl_->vehicles) {
+        if (!v.constraint) continue;
+        const glm::mat4 parentWorld = [&] {
+            JPH::RVec3 position;
+            JPH::Quat rotation;
+            bi.GetPositionAndRotation(v.constraint->GetVehicleBody()->GetID(), position, rotation);
+            const glm::vec3 scale = decompose(scene.worldMatrix(entity)).scale;
+            return glm::translate(glm::mat4(1.0f), fromJolt(JPH::Vec3(position))) * glm::mat4_cast(fromJolt(rotation)) *
+                   glm::scale(glm::mat4(1.0f), scale);
+        }();
+        for (std::uint32_t i = 0; i < 4; ++i) {
+            const entt::entity wheel = v.wheels[i];
+            if (wheel == entt::null || !reg.valid(wheel)) continue;
+            const JPH::RMat44 m = v.constraint->GetWheelWorldTransform(i, JPH::Vec3::sAxisY(), JPH::Vec3::sAxisX());
+            writeWorldPose(scene, wheel, fromJolt(JPH::Vec3(m.GetTranslation())), fromJolt(m.GetQuaternion()), &parentWorld);
         }
-        auto& t = reg.get<TransformComponent>(entity);
-        t.position = worldPos;
-        float y = 0.0f, x = 0.0f, z = 0.0f;
-        glm::extractEulerAngleYXZ(glm::mat4_cast(glm::normalize(worldRot)), y, x, z);
-        t.rotationDeg = glm::degrees(glm::vec3(x, y, z));
+    }
+
+    // Ragdoll bones: their bodies' poses, parents first (children use the parent's new pose).
+    for (const auto& [root, r] : impl_->ragdolls) {
+        if (!r.ragdoll) continue;
+        std::unordered_map<entt::entity, glm::mat4> updated;
+        for (std::size_t i = 0; i < r.bones.size(); ++i) {
+            JPH::RVec3 position;
+            JPH::Quat rotation;
+            bi.GetPositionAndRotation(r.ragdoll->GetBodyID(static_cast<int>(i)), position, rotation);
+            const glm::vec3 pos = fromJolt(JPH::Vec3(position));
+            const glm::quat rot = fromJolt(rotation);
+            const entt::entity parent = scene.parentOf(r.bones[i]);
+            glm::mat4 parentWorld(1.0f);
+            if (parent != entt::null) {
+                const auto found = updated.find(parent);
+                parentWorld = found != updated.end() ? found->second : scene.worldMatrix(parent);
+            }
+            writeWorldPose(scene, r.bones[i], pos, rot, parent != entt::null ? &parentWorld : nullptr);
+            updated[r.bones[i]] = glm::translate(glm::mat4(1.0f), pos) * glm::mat4_cast(rot) * glm::scale(glm::mat4(1.0f), r.scales[i]);
+        }
     }
 }
 

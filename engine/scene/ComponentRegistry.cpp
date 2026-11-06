@@ -176,6 +176,45 @@ ComponentRegistry makeBuiltin() {
         reg.add(std::move(d));
     }
     {
+        auto d = R::describe<JointComponent>("Joint", "Joint");
+        using J = JointComponent;
+        d.fields = {
+            enumerated(R::field(&J::type, "type", "Type", FieldKind::Enum), {"Fixed", "Hinge", "Ball", "Slider", "Distance"}),
+            R::field(&J::connectedTo, "connectedTo", "Connected To", FieldKind::String),
+            R::field(&J::anchor, "anchor", "Anchor", FieldKind::Vec3),
+            R::field(&J::axis, "axis", "Axis", FieldKind::Vec3),
+            R::field(&J::limits, "limits", "Limits", FieldKind::Bool),
+            ranged(R::field(&J::minLimit, "minLimit", "Min Limit", FieldKind::Float), -180.0f, 180.0f, 0.5f),
+            ranged(R::field(&J::maxLimit, "maxLimit", "Max Limit", FieldKind::Float), -180.0f, 180.0f, 0.5f),
+            ranged(R::field(&J::minDistance, "minDistance", "Min Distance", FieldKind::Float), 0.0f, 1000.0f, 0.05f),
+            ranged(R::field(&J::maxDistance, "maxDistance", "Max Distance", FieldKind::Float), 0.0f, 1000.0f, 0.05f),
+            ranged(R::field(&J::spring, "spring", "Spring (Hz)", FieldKind::Float), 0.0f, 100.0f, 0.1f),
+            ranged(R::field(&J::motorSpeed, "motorSpeed", "Motor Speed", FieldKind::Float), -10000.0f, 10000.0f, 1.0f),
+            ranged(R::field(&J::motorForce, "motorForce", "Motor Force", FieldKind::Float), 0.0f, 1e7f, 1.0f),
+        };
+        reg.add(std::move(d));
+    }
+    {
+        auto d = R::describe<RagdollComponent>("Ragdoll", "Ragdoll");
+        d.fields = {
+            R::field(&RagdollComponent::active, "active", "Active", FieldKind::Bool),
+            ranged(R::field(&RagdollComponent::mass, "mass", "Mass (kg)", FieldKind::Float), 0.1f, 10000.0f, 0.5f),
+        };
+        reg.add(std::move(d));
+    }
+    {
+        auto d = R::describe<VehicleComponent>("Vehicle", "Vehicle");
+        using V = VehicleComponent;
+        d.fields = {
+            ranged(R::field(&V::wheelRadius, "wheelRadius", "Wheel Radius", FieldKind::Float), 0.05f, 5.0f, 0.01f),
+            ranged(R::field(&V::wheelWidth, "wheelWidth", "Wheel Width", FieldKind::Float), 0.02f, 3.0f, 0.01f),
+            ranged(R::field(&V::suspensionLength, "suspensionLength", "Suspension", FieldKind::Float), 0.0f, 3.0f, 0.01f),
+            ranged(R::field(&V::engineTorque, "engineTorque", "Engine Torque", FieldKind::Float), 0.0f, 100000.0f, 10.0f),
+            ranged(R::field(&V::maxSteerDeg, "maxSteer", "Max Steer", FieldKind::Float), 0.0f, 80.0f, 0.5f),
+        };
+        reg.add(std::move(d));
+    }
+    {
         auto d = R::describe<NavAgentComponent>("NavAgent", "Nav Agent");
         d.fields = {
             ranged(R::field(&NavAgentComponent::speed, "speed", "Speed", FieldKind::Float), 0.0f, 100.0f, 0.1f),

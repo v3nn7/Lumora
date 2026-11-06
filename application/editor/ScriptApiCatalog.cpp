@@ -76,6 +76,11 @@ constexpr ScriptApiEntry kApi[] = {
     {S::Behaviour, "moveTo", "bool moveTo(Vec3 target)", "Nav Agent: walk there"},
     {S::Behaviour, "stopMoving", "void stopMoving()", "Nav Agent: stop"},
     {S::Behaviour, "isMoving", "bool isMoving()", "Nav Agent: still on its way"},
+    // Vehicles and ragdolls
+    {S::Behaviour, "drive", "void drive(float throttle, float steering, float brake = 0, float handbrake = 0)", "Vehicle: driver input"},
+    {S::Behaviour, "vehicleSpeed", "float vehicleSpeed()", "Vehicle: forward speed (m/s)"},
+    {S::Behaviour, "setRagdoll", "void setRagdoll(bool active)", "Ragdoll on/off"},
+    {S::Behaviour, "isRagdoll", "bool isRagdoll()", "Ragdoll active"},
     // Particles
     {S::Behaviour, "emitParticles", "void emitParticles(int count)", "Particle Emitter: a burst now"},
     {S::Behaviour, "setParticlesPlaying", "void setParticlesPlaying(bool playing)", "Start or stop emitting"},

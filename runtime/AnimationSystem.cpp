@@ -158,6 +158,7 @@ void AnimationSystem::update(float dt) {
             }
         }
         if (!state.playing) continue;
+        if (const auto* ragdoll = reg.try_get<RagdollComponent>(e); ragdoll != nullptr && ragdoll->active) continue;  // physics owns the bones
         if (state.previous != nullptr) {
             state.blendElapsed += dt;
             const float duration = state.previous->duration;

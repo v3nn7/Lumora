@@ -276,3 +276,151 @@ TEST(Character, RidesAMovingPlatform) {
     EXPECT_NEAR(p.y, 0.0f, 0.1f) << "still standing on top";
     EXPECT_TRUE(sim.physics()->characterGrounded(player));
 }
+
+TEST(Joints, HingeHoldsADoorThatSwingsAndAMotorTurnsIt) {
+    Scene scene;
+    auto& reg = scene.registry();
+    const entt::entity door = scene.createEntity("Door");
+    reg.emplace<ColliderComponent>(door).size = {1.0f, 2.0f, 0.1f};
+    reg.emplace<RigidBodyComponent>(door);
+    reg.get<TransformComponent>(door).position = {0.5f, 1.0f, 0.0f};
+    auto& joint = reg.emplace<JointComponent>(door);  // hinge on the left edge, vertical axis, to the world
+    joint.type = JointType::Hinge;
+    joint.anchor = {-0.5f, 0.0f, 0.0f};
+    joint.axis = {0.0f, 1.0f, 0.0f};
+    Simulation sim(scene);
+    ASSERT_NE(sim.physics(), nullptr);
+    for (int i = 0; i < 60; ++i) sim.step();
+    EXPECT_EQ(sim.physics()->jointCount(), 1u);
+    EXPECT_NEAR(reg.get<TransformComponent>(door).position.y, 1.0f, 0.02f) << "the hinge holds it up";
+
+    joint.motorForce = 500.0f;
+    joint.motorSpeed = 90.0f;  // deg/s
+    for (int i = 0; i < 60; ++i) sim.step();  // 1 s
+    const glm::vec3 p = reg.get<TransformComponent>(door).position;
+    EXPECT_NEAR(glm::length(glm::vec2(p.x, p.z)), 0.5f, 0.03f) << "turns around the hinge";
+    EXPECT_GT(std::abs(reg.get<TransformComponent>(door).rotationDeg.y), 45.0f);
+}
+
+TEST(Joints, BallJointMakesAPendulumAndConnectsBodies) {
+    Scene scene;
+    auto& reg = scene.registry();
+    const entt::entity bob = addBall(scene, {1.0f, 3.0f, 0.0f}, 0.2f);
+    auto& joint = reg.emplace<JointComponent>(bob);
+    joint.type = JointType::Ball;
+    joint.anchor = {-1.0f, 0.0f, 0.0f};  // pivot 1 m to the left, fixed to the world
+    const entt::entity second = addBall(scene, {2.0f, 3.0f, 0.0f}, 0.2f);
+    scene.rename(bob, "Bob");
+    auto& link = reg.emplace<JointComponent>(second);
+    link.type = JointType::Distance;
+    link.connectedTo = "Bob";
+    Simulation sim(scene);
+    for (int i = 0; i < 120; ++i) {
+        sim.step();
+        const glm::vec3 p = reg.get<TransformComponent>(bob).position;
+        ASSERT_NEAR(glm::length(p - glm::vec3(0.0f, 3.0f, 0.0f)), 1.0f, 0.05f) << "stays on the pendulum's circle";
+    }
+    EXPECT_EQ(sim.physics()->jointCount(), 2u);
+    EXPECT_LT(reg.get<TransformComponent>(bob).position.y, 2.5f) << "swings down";
+    const float rope = glm::length(reg.get<TransformComponent>(second).position - reg.get<TransformComponent>(bob).position);
+    EXPECT_NEAR(rope, 1.0f, 0.05f) << "the distance joint keeps the second ball at its starting distance";
+
+    reg.remove<JointComponent>(bob);
+    sim.step();
+    EXPECT_EQ(sim.physics()->jointCount(), 1u);
+    reg.remove<ColliderComponent>(bob);  // the body goes: so does the joint on it
+    sim.step();
+    EXPECT_EQ(sim.physics()->jointCount(), 0u);
+}
+
+TEST(Vehicle, DrivesForwardAndSteers) {
+    Scene scene;
+    auto& reg = scene.registry();
+    addGround(scene);
+    const entt::entity car = scene.createEntity("Car");
+    reg.emplace<ColliderComponent>(car).size = {1.8f, 0.6f, 4.0f};
+    reg.emplace<RigidBodyComponent>(car).mass = 1200.0f;
+    reg.get<TransformComponent>(car).position = {0.0f, 1.2f, 0.0f};
+    reg.emplace<VehicleComponent>(car);
+    const entt::entity wheel = scene.createEntity("Wheel FL", Uuid::generate(), car);
+    Simulation sim(scene);
+    ASSERT_NE(sim.physics(), nullptr);
+    for (int i = 0; i < 90; ++i) sim.step();  // settle on the suspension
+    EXPECT_EQ(sim.physics()->vehicleCount(), 1u);
+    const glm::vec3 start = reg.get<TransformComponent>(car).position;
+    EXPECT_GT(start.y, 0.4f) << "stands on its wheels";
+
+    for (int i = 0; i < 180; ++i) {
+        ASSERT_TRUE(sim.physics()->driveVehicle(car, 1.0f, 0.0f, 0.0f, 0.0f));
+        sim.step();
+    }
+    const glm::vec3 driven = reg.get<TransformComponent>(car).position;
+    EXPECT_LT(driven.z, start.z - 5.0f) << "drives forward (-Z)";
+    EXPECT_GT(sim.physics()->vehicleSpeed(car), 2.0f);
+    EXPECT_NEAR(driven.x, start.x, 0.5f) << "straight";
+    const glm::vec3 wheelPos = reg.get<TransformComponent>(wheel).position;
+    EXPECT_LT(wheelPos.x, 0.0f) << "the front-left wheel entity follows its wheel";
+    EXPECT_LT(wheelPos.z, 0.0f);
+
+    for (int i = 0; i < 120; ++i) {
+        sim.physics()->driveVehicle(car, 0.5f, 1.0f, 0.0f, 0.0f);
+        sim.step();
+    }
+    EXPECT_GT(reg.get<TransformComponent>(car).position.x, driven.x + 1.0f) << "steering right turns right";
+}
+
+TEST(Ragdoll, BonesFallAsBodiesWhenActivated) {
+    Scene scene;
+    auto& reg = scene.registry();
+    addGround(scene);
+    const entt::entity root = scene.createEntity("Model");
+    reg.get<TransformComponent>(root).position = {0.0f, 1.0f, 0.0f};
+    // A three-bone chain standing upright: hips -> spine -> head.
+    entt::entity parent = root;
+    std::vector<entt::entity> bones;
+    for (int i = 0; i < 3; ++i) {
+        const entt::entity bone = scene.createEntity("Bone" + std::to_string(i), Uuid::generate(), parent);
+        reg.emplace<ModelNodeComponent>(bone).node = i;
+        if (i > 0) reg.get<TransformComponent>(bone).position.y = 0.4f;
+        bones.push_back(bone);
+        parent = bone;
+    }
+    auto& ragdoll = reg.emplace<RagdollComponent>(root);
+    (void)addBall(scene, {5.0f, 0.5f, 5.0f});
+    Simulation sim(scene);
+    ASSERT_NE(sim.physics(), nullptr);
+    sim.step();
+    EXPECT_EQ(sim.physics()->ragdollBodyCount(), 0u) << "inactive until switched on";
+
+    ragdoll.active = true;
+    for (int i = 0; i < 240; ++i) sim.step();
+    EXPECT_EQ(sim.physics()->ragdollBodyCount(), 3u);
+    scene.updateWorldTransforms();
+    const float headY = scene.worldMatrix(bones[2])[3].y;
+    EXPECT_LT(headY, 1.4f) << "the chain collapsed";
+    EXPECT_GT(headY, -0.05f) << "onto the ground, not through it";
+
+    ragdoll.active = false;
+    sim.step();
+    EXPECT_EQ(sim.physics()->ragdollBodyCount(), 0u);
+}
+
+TEST(Physics, JointVehicleRagdollComponentsSerialize) {
+    Scene scene;
+    const entt::entity e = scene.createEntity("E");
+    auto& j = scene.registry().emplace<JointComponent>(e);
+    j.type = JointType::Slider;
+    j.connectedTo = "Frame";
+    j.motorSpeed = 2.5f;
+    scene.registry().emplace<VehicleComponent>(e).engineTorque = 900.0f;
+    scene.registry().emplace<RagdollComponent>(e).active = true;
+    auto cloned = SceneSerializer::clone(scene);
+    ASSERT_TRUE(cloned.has_value());
+    Scene& copy = **cloned;
+    const entt::entity c = copy.findByUuid(scene.uuidOf(e));
+    EXPECT_EQ(copy.registry().get<JointComponent>(c).type, JointType::Slider);
+    EXPECT_EQ(copy.registry().get<JointComponent>(c).connectedTo, "Frame");
+    EXPECT_FLOAT_EQ(copy.registry().get<JointComponent>(c).motorSpeed, 2.5f);
+    EXPECT_FLOAT_EQ(copy.registry().get<VehicleComponent>(c).engineTorque, 900.0f);
+    EXPECT_TRUE(copy.registry().get<RagdollComponent>(c).active);
+}

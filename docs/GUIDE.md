@@ -327,6 +327,29 @@ zones. Characters report what they touch the same way.
 (**Offset**, **Period**, **Phase**). Give it a Collider and a kinematic Rigid Body and it is a
 platform: dynamic bodies and characters standing on it ride along.
 
+**Joints.** A **Joint** ties an entity's body to another body (**Connected To**: its name) or,
+left empty, to the world. **Hinge** for doors and wheels (pivot **Anchor**, **Axis**, angle
+limits in degrees, a **Motor** with speed in °/s and torque), **Ball** for pendulums and chains,
+**Slider** for drawers and pistons (limits in metres, motor in m/s and N), **Distance** for ropes
+and springs (**Min/Max Distance**, **Spring** in Hz), **Fixed** to weld two bodies. Motor and
+limits can be changed while playing.
+
+**Vehicles.** A box Collider, a dynamic Rigid Body (a car weighs about 1200 kg) and a
+**Vehicle** component make a four-wheel-drive car with suspension, engine and steering; it faces
+−Z. Children named `Wheel FL`, `Wheel FR`, `Wheel RL`, `Wheel RR` (for example cylinders lying on
+their side) follow the wheels. A script drives it:
+
+```cpp
+void update(float dt) override {
+    drive(axis("MoveY"), axis("MoveX"), keyDown(Key::S) ? 1.0f : 0.0f, keyDown(Key::Space) ? 1.0f : 0.0f);
+    drawText("Speed: " + std::to_string(int(vehicleSpeed() * 3.6f)) + " km/h", 20, 20);
+}
+```
+
+**Ragdolls.** Add a **Ragdoll** to an imported, skinned model and switch it on (**Active**, or
+`setRagdoll(true)` from a script, for example when a character dies): every bone becomes a body
+joined to its parent, the animation stops and the model falls with gravity and collisions.
+
 Physics runs only in play mode. *Create → Physics* has ready-made objects to start from,
 including a moving platform and a trigger volume.
 
@@ -389,6 +412,8 @@ What a behaviour can do:
 | `after(2.0f, [this] { ... })`, `every(0.5f, [this] { ... })`, `cancelTimer(id)` | Run code later or repeatedly, in game time |
 | `debugLine(a, b)`, `debugBox(center, half)`, `debugSphere(center, r)` | Debug shapes on top of the scene for this step (editor while playing; player after <kbd>F3</kbd>) |
 | `moveTo(target)`, `isMoving()`, `stopMoving()`, `findPath(from, to)` | Navigation (see Navigation) |
+| `drive(throttle, steering, brake, handbrake)`, `vehicleSpeed()` | A Vehicle |
+| `setRagdoll(on)`, `isRagdoll()` | A Ragdoll |
 | `crossfadeAnimation("Run", 0.25f)` | Blend from the current clip into another (no pop) |
 | `emitParticles(n)`, `setParticlesPlaying(on)`, `particleCount()` | The entity's Particle Emitter |
 | `setMaterial("Content/Materials/Glow.lmat")`, `setMaterialOf(e, path)`, `setColor(v)` | Change how a Mesh Renderer looks |

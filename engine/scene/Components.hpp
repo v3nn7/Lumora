@@ -152,6 +152,45 @@ struct ParticleStateComponent {
     std::int32_t requested = 0;  // extra particles asked for (scripts)
 };
 
+enum class JointType : std::int32_t { Fixed = 0, Hinge = 1, Ball = 2, Slider = 3, Distance = 4 };
+
+/// Ties this entity's rigid body to another entity's (by name) or to the world: doors (hinge),
+/// chains and pendulums (ball), drawers and pistons (slider), ropes and springs (distance),
+/// welded parts (fixed). Needs a Collider and a Rigid Body on this entity.
+struct JointComponent {
+    JointType type = JointType::Hinge;
+    std::string connectedTo;          // entity name; empty = fixed to the world
+    glm::vec3 anchor{0.0f};           // pivot in this entity's local space
+    glm::vec3 axis{0.0f, 1.0f, 0.0f}; // hinge / slider axis in local space
+    bool limits = false;
+    float minLimit = -45.0f;          // hinge: degrees, slider: metres
+    float maxLimit = 45.0f;
+    float minDistance = 0.0f;         // distance joint
+    float maxDistance = 1.0f;
+    float spring = 0.0f;              // distance limits: frequency in Hz (0 = rigid)
+    float motorSpeed = 0.0f;          // hinge: degrees/s, slider: m/s
+    float motorForce = 0.0f;          // torque (N m) / force (N); 0 = no motor
+};
+
+/// Turns an imported, skinned model into a ragdoll: every bone of its skeleton becomes a body
+/// (a capsule to its child bones) linked to its parent by a swing-twist joint. Off until
+/// activated (here or by a script: setRagdoll(true)); the animation stops when it activates.
+struct RagdollComponent {
+    bool active = false;
+    float mass = 70.0f;  // kg, shared by the bones
+};
+
+/// A car on its rigid body: four wheels at the corners of its box collider with suspension, an
+/// engine, gears and steering. Scripts drive it with drive(throttle, steering, brake). Child
+/// entities named "Wheel FL", "Wheel FR", "Wheel RL", "Wheel RR" follow the wheels.
+struct VehicleComponent {
+    float wheelRadius = 0.35f;
+    float wheelWidth = 0.25f;
+    float suspensionLength = 0.3f;
+    float engineTorque = 500.0f;  // N m
+    float maxSteerDeg = 30.0f;
+};
+
 /// An agent that walks on the scene's navigation mesh (built from the static colliders): scripts
 /// send it somewhere with moveTo() and it finds the way around obstacles and other agents. With
 /// a Character Controller it walks through the physics; without, it is moved directly.

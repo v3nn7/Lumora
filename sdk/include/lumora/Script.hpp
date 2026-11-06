@@ -139,6 +139,10 @@ struct EngineApi {
     // 4 has, 5 delete, 6 delete all
     int (*save)(void* context, int command, const char* key, const char* text, double number, char* out, int capacity,
                 double* outNumber);
+    // command: 0 drive (input = throttle, steering, brake, handbrake), 1 speed (out[0], m/s)
+    int (*vehicle)(void* context, Entity entity, int command, const float* input, float* out);
+    // command: 0 off, 1 on, 2 query (the entity's Ragdoll component)
+    int (*ragdoll)(void* context, Entity entity, int command);
 };
 
 class Behaviour;
@@ -439,6 +443,23 @@ protected:
     }
     void stopMoving() const { api_->navigation(api_->context, entity_, 2, nullptr, nullptr, nullptr, 0); }
     [[nodiscard]] bool isMoving() const { return api_->navigation(api_->context, entity_, 3, nullptr, nullptr, nullptr, 0) != 0; }
+
+    // Vehicles (the entity's Vehicle component) and ragdolls.
+    /// throttle -1..1 (negative = reverse), steering -1..1 (positive = right), brakes 0..1.
+    /// Call every update: the input holds until changed.
+    void drive(float throttle, float steering, float brake = 0.0f, float handbrake = 0.0f) const {
+        const float input[4] = {throttle, steering, brake, handbrake};
+        api_->vehicle(api_->context, entity_, 0, input, nullptr);
+    }
+    /// Forward speed in m/s (negative when reversing).
+    [[nodiscard]] float vehicleSpeed() const {
+        float speed = 0.0f;
+        api_->vehicle(api_->context, entity_, 1, nullptr, &speed);
+        return speed;
+    }
+    /// Turns the model into a ragdoll (animation stops) or back.
+    void setRagdoll(bool active) const { api_->ragdoll(api_->context, entity_, active ? 1 : 0); }
+    [[nodiscard]] bool isRagdoll() const { return api_->ragdoll(api_->context, entity_, 2) != 0; }
 
     // Particles (the entity's Particle Emitter).
     /// Emits `count` particles at once (an explosion, a hit).

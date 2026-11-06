@@ -310,6 +310,24 @@ int apiNavigation(void* c, script::Entity entity, int command, const float* a, c
     }
 }
 
+int apiVehicle(void* c, script::Entity entity, int command, const float* input, float* out) {
+    PhysicsWorld* physics = context(c).physics;
+    const entt::entity e = liveEntity(c, entity);
+    if (physics == nullptr || e == entt::null) return 0;
+    if (command == 0) return input != nullptr && physics->driveVehicle(e, input[0], input[1], input[2], input[3]) ? 1 : 0;
+    if (out != nullptr) out[0] = physics->vehicleSpeed(e);
+    return 1;
+}
+
+int apiRagdoll(void* c, script::Entity entity, int command) {
+    const entt::entity e = liveEntity(c, entity);
+    if (e == entt::null) return 0;
+    auto* ragdoll = context(c).scene->registry().try_get<RagdollComponent>(e);
+    if (ragdoll == nullptr) return 0;
+    if (command == 0 || command == 1) ragdoll->active = command == 1;
+    return ragdoll->active ? 1 : 0;
+}
+
 int apiCharacter(void* c, script::Entity entity, int command, const float* xyz) {
     PhysicsWorld* physics = context(c).physics;
     const entt::entity e = liveEntity(c, entity);
@@ -668,6 +686,8 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.navigation = apiNavigation;
     api_.input = apiInput;
     api_.save = apiSave;
+    api_.vehicle = apiVehicle;
+    api_.ragdoll = apiRagdoll;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }

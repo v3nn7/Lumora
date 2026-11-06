@@ -89,6 +89,7 @@ render::RenderSettings PlayerWindow::viewportSettings() const {
     render::RenderSettings s;
     s.assets = &assets_;
     s.hud = &simulation_->hud();
+    s.debug = showDebug_ ? &simulation_->debugDraw() : nullptr;
     return s;
 }
 
@@ -101,6 +102,9 @@ bool PlayerWindow::viewportKeyPressed(int key, Qt::KeyboardModifiers) {
             return true;
         case Qt::Key_F11:
             window_->setWindowStates(window_->windowStates() ^ Qt::WindowFullScreen);
+            return true;
+        case Qt::Key_F3:
+            showDebug_ = !showDebug_;  // the behaviours' debug shapes
             return true;
         case Qt::Key_F8:
             freeCam_ = !freeCam_ || scene_->primaryCamera() == entt::null;

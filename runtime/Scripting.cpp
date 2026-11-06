@@ -6,6 +6,7 @@
 #include "runtime/AudioWorld.hpp"
 #include "runtime/PhysicsWorld.hpp"
 #include "assets/Material.hpp"
+#include "scene/DebugDraw.hpp"
 #include "scene/Hud.hpp"
 #include "scene/Particles.hpp"
 #include "scene/Prefab.hpp"
@@ -32,7 +33,9 @@ namespace lumora {
 
 static_assert(static_cast<int>(Key::W) == static_cast<int>(script::Key::W) &&
                   static_cast<int>(Key::Escape) == static_cast<int>(script::Key::Escape) &&
-                  static_cast<int>(Key::Count) == static_cast<int>(script::Key::Escape) + 1,
+                  static_cast<int>(Key::Enter) == static_cast<int>(script::Key::Enter) &&
+                  static_cast<int>(Key::Z) == static_cast<int>(script::Key::Z) &&
+                  static_cast<int>(Key::Count) == static_cast<int>(script::Key::Num9) + 1,
               "lumora::script::Key must list the engine's keys in the same order");
 
 namespace {
@@ -423,6 +426,27 @@ int apiParticles(void* c, script::Entity entity, int command, int count) {
     }
 }
 
+void apiDebugDraw(void* c, int kind, const float* a, const float* b, const float* rgba) {
+    DebugDraw* debug = context(c).debug;
+    if (debug == nullptr || a == nullptr || b == nullptr || rgba == nullptr) return;
+    const glm::vec3 p(a[0], a[1], a[2]);
+    const glm::vec4 color(rgba[0], rgba[1], rgba[2], rgba[3]);
+    constexpr std::size_t kMax = 20000;  // a runaway loop must not eat the memory
+    switch (kind) {
+        case 0:
+            if (debug->lines.size() < kMax) debug->lines.push_back({p, {b[0], b[1], b[2]}, color});
+            break;
+        case 1:
+            if (debug->boxes.size() < kMax) debug->boxes.push_back({p, glm::abs(glm::vec3(b[0], b[1], b[2])), color});
+            break;
+        case 2:
+            if (debug->spheres.size() < kMax) debug->spheres.push_back({p, std::abs(b[0]), color});
+            break;
+        default:
+            break;
+    }
+}
+
 /// "speed=4, jump = 6.5; name=2" -> the number for `key`, or `fallback`.
 double apiParameter(void* c, script::Entity entity, const char* key, double fallback) {
     const entt::entity e = liveEntity(c, entity);
@@ -557,6 +581,7 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.uiStyle = apiUiStyle;
     api_.drawTextAligned = apiDrawTextAligned;
     api_.particles = apiParticles;
+    api_.debugDraw = apiDebugDraw;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }

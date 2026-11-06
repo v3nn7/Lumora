@@ -4,6 +4,7 @@
 #include <filesystem>
 
 #include "core/Error.hpp"
+#include "scene/DebugDraw.hpp"
 #include "scene/Hud.hpp"
 #include <cstdint>
 #include <memory>
@@ -68,6 +69,8 @@ public:
     [[nodiscard]] AnimationSystem* animation() noexcept { return animation_.get(); }
     /// The game's HUD as the behaviours drew it in the latest step (cleared at every step).
     [[nodiscard]] HudCanvas& hud() noexcept { return hud_; }
+    /// Debug shapes the behaviours drew in the latest step (cleared at every step).
+    [[nodiscard]] DebugDraw& debugDraw() noexcept { return debug_; }
     /// Behaviour instances currently running (0 before the first step).
     [[nodiscard]] std::size_t scriptInstances() const noexcept;
 
@@ -86,6 +89,7 @@ private:
     std::unique_ptr<AnimationSystem> animation_;
     std::filesystem::path projectRoot_;
     HudCanvas hud_;
+    DebugDraw debug_;
     std::unique_ptr<ScriptRunner> scripts_;  // last: behaviours may still reference physics and audio
 };
 

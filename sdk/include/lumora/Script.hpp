@@ -32,6 +32,7 @@
 #pragma once
 
 #include <algorithm>
+#include <functional>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -60,6 +61,9 @@ enum class Key : int {
     W, A, S, D, Q, E, F,
     Up, Down, Left, Right,
     Space, LeftShift, LeftCtrl, LeftAlt, Escape,
+    Enter, Tab, Backspace,
+    B, C, G, H, I, J, K, L, M, N, O, P, R, T, U, V, X, Y, Z,
+    Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9,
 };
 
 using Entity = std::uint64_t;
@@ -116,6 +120,7 @@ struct EngineApi {
     void (*uiStyle)(void* context, const float* accentRgb, float fontSize);
     void (*drawTextAligned)(void* context, const char* utf8, const float* xyWidthSize, int align, const float* rgba);
     int (*particles)(void* context, Entity entity, int command, int count);  // 0 stop, 1 play, 2 burst, 3 alive
+    void (*debugDraw)(void* context, int kind, const float* a, const float* b, const float* rgba);  // 0 line, 1 box, 2 sphere
 };
 
 class Behaviour;
@@ -327,6 +332,31 @@ protected:
         return api_->setColor(api_->context, entity_, c) != 0;
     }
 
+    // Debug drawing: shapes on top of the scene for this step (draw them in every update()).
+    // Shown in the editor while playing, and in the player after F3.
+    void debugLine(Vec3 from, Vec3 to, Vec3 color = Vec3{1.0f, 0.85f, 0.2f}) const { debug(0, from, to, color); }
+    void debugBox(Vec3 center, Vec3 halfSize, Vec3 color = Vec3{0.3f, 0.9f, 0.4f}) const {
+        debug(1, center, halfSize, color);
+    }
+    void debugSphere(Vec3 center, float radius, Vec3 color = Vec3{0.4f, 0.7f, 1.0f}) const {
+        debug(2, center, Vec3{radius, 0.0f, 0.0f}, color);
+    }
+
+    // Timers: run code later or repeatedly (in game time, before update()). They belong to this
+    // behaviour and stop with it.
+    using TimerId = int;
+    /// Calls `fn` once, `seconds` from now.
+    TimerId after(float seconds, std::function<void()> fn) { return addTimer(seconds, 0.0f, std::move(fn)); }
+    /// Calls `fn` every `seconds` (the first time `seconds` from now).
+    TimerId every(float seconds, std::function<void()> fn) {
+        return addTimer(seconds, seconds > 0.0f ? seconds : 1e-3f, std::move(fn));
+    }
+    void cancelTimer(TimerId id) {
+        for (Timer& t : timers_) {
+            if (t.id == id) t.id = 0;
+        }
+    }
+
     // Particles (the entity's Particle Emitter).
     /// Emits `count` particles at once (an explosion, a hit).
     void emitParticles(int count) const { api_->particles(api_->context, entity_, 2, count); }
@@ -370,6 +400,45 @@ private:
         const float xyz[3] = {f.x, f.y, f.z};
         api_->addForce(api_->context, entity_, xyz, impulse);
     }
+    struct Timer {
+        TimerId id;
+        double due;
+        float interval;  // 0 = once
+        std::function<void()> fn;
+    };
+    TimerId addTimer(float seconds, float interval, std::function<void()> fn) {
+        const TimerId id = nextTimer_++;
+        timers_.push_back({id, clock_ + static_cast<double>(seconds > 0.0f ? seconds : 0.0f), interval, std::move(fn)});
+        return id;
+    }
+    /// Advances this behaviour's timers by dt and runs the ones due (in due order).
+    void tickTimers(float dt) {
+        clock_ += static_cast<double>(dt);
+        for (;;) {
+            std::size_t next = timers_.size();
+            for (std::size_t i = 0; i < timers_.size(); ++i) {
+                if (timers_[i].id != 0 && timers_[i].due <= clock_ && (next == timers_.size() || timers_[i].due < timers_[next].due)) {
+                    next = i;
+                }
+            }
+            if (next == timers_.size()) break;
+            std::function<void()> fn = timers_[next].fn;  // the callback may add or cancel timers
+            if (timers_[next].interval > 0.0f) {
+                timers_[next].due += static_cast<double>(timers_[next].interval);
+            } else {
+                timers_[next].id = 0;
+            }
+            fn();
+        }
+        timers_.erase(std::remove_if(timers_.begin(), timers_.end(), [](const Timer& t) { return t.id == 0; }),
+                      timers_.end());
+    }
+    void debug(int kind, Vec3 a, Vec3 b, Vec3 color) const {
+        const float pa[3] = {a.x, a.y, a.z};
+        const float pb[3] = {b.x, b.y, b.z};
+        const float c[4] = {color.x, color.y, color.z, 1.0f};
+        api_->debugDraw(api_->context, kind, pa, pb, c);
+    }
     void drawAligned(std::string_view text, float x, float y, float w, float size, int align, Vec3 color,
                      float alpha) const {
         const float box[4] = {x, y, w, size};
@@ -383,6 +452,9 @@ private:
 
     const EngineApi* api_ = nullptr;
     Entity entity_ = kNoEntity;
+    std::vector<Timer> timers_;
+    TimerId nextTimer_ = 1;
+    double clock_ = 0.0;
 };
 
 namespace detail {
@@ -391,6 +463,7 @@ struct Access {
         b.api_ = api;
         b.entity_ = e;
     }
+    static void tick(Behaviour& b, float dt) { b.tickTimers(dt); }
 };
 } // namespace detail
 

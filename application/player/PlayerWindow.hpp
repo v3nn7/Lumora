@@ -50,6 +50,7 @@ private:
     std::unique_ptr<VulkanViewport> window_;
     FlyCameraController freeCamera_;
     bool freeCam_ = false;
+    bool showDebug_ = false;
 };
 
 } // namespace lumora::app

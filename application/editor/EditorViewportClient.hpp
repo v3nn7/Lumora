@@ -46,6 +46,7 @@ public:
     bool showGrid = true;
     AssetLibrary* assets = nullptr;  // project asset library (meshes for rendering and picking)
     const HudCanvas* hud = nullptr;  // the game's HUD while playing
+    const DebugDraw* debug = nullptr;  // behaviours' debug shapes (play mode)
     bool pilotSceneCamera = true;  // in play mode, look through the scene's primary camera
 
     void viewportTick(float dt, const InputState& input, bool hasFocus) override;

@@ -495,3 +495,58 @@ LUMORA_BEHAVIOUR(Menu);
     sim.step();
     EXPECT_TRUE(sim.hud().empty()) << "Resume closed it";
 }
+
+TEST_F(ScriptTest, TimersDebugShapesAndMoreKeys) {
+    const std::filesystem::path project = dir.path();
+    writeScript(project, "Tools.cpp", R"cpp(#include <lumora/Script.hpp>
+using namespace lumora::script;
+class Tools : public Behaviour {
+public:
+    void start() override {
+        after(0.5f, [this] { setScale(Vec3{2.0f, 2.0f, 2.0f}); });
+        ticker_ = every(0.25f, [this] { ++ticks_; if (ticks_ == 3) cancelTimer(ticker_); });
+        const TimerId never = after(0.1f, [this] { setScale(Vec3{9.0f, 9.0f, 9.0f}); });
+        cancelTimer(never);
+    }
+    void update(float) override {
+        setPosition(Vec3{static_cast<float>(ticks_), static_cast<float>(enters_), 0.0f});
+        if (keyPressed(Key::Enter)) ++enters_;
+        debugLine(Vec3{0, 0, 0}, Vec3{1, 0, 0});
+        debugBox(Vec3{0, 1, 0}, Vec3{0.5f, 0.5f, 0.5f});
+        debugSphere(Vec3{0, 2, 0}, 0.5f);
+    }
+private:
+    TimerId ticker_ = 0;
+    int ticks_ = 0;
+    int enters_ = 0;
+};
+LUMORA_BEHAVIOUR(Tools);
+)cpp");
+    app::ScriptBuilder builder(QString::fromStdString(project.string()));
+    QString log;
+    ASSERT_TRUE(builder.buildBlocking(&log)) << log.toStdString();
+    auto module = ScriptModule::load(builder.libraryPath().toStdString(), builder.loadDir().toStdString());
+    ASSERT_TRUE(module.has_value()) << module.error().message;
+
+    Scene scene("Tools");
+    const entt::entity e = scene.createEntity("Tools");
+    scene.registry().emplace<ScriptComponent>(e).behaviour = "Tools";
+    InputState input;
+    Simulation sim(scene, 0.05);  // 20 steps per second
+    sim.setScripts(*module, &input);
+    auto& t = scene.registry().get<TransformComponent>(e);
+    for (int i = 0; i < 4; ++i) sim.step();  // 0.2 s
+    EXPECT_EQ(t.scale, glm::vec3(1.0f)) << "the cancelled 0.1 s timer never ran";
+    EXPECT_EQ(sim.debugDraw().lines.size(), 1u);
+    EXPECT_EQ(sim.debugDraw().boxes.size(), 1u);
+    EXPECT_EQ(sim.debugDraw().spheres.size(), 1u) << "redrawn each step, not piling up";
+    for (int i = 0; i < 7; ++i) sim.step();  // 0.55 s
+    EXPECT_EQ(t.scale, glm::vec3(2.0f)) << "after(0.5)";
+    for (int i = 0; i < 30; ++i) sim.step();  // 2.05 s
+    EXPECT_FLOAT_EQ(t.position.x, 3.0f) << "every(0.25) ran three times, then cancelled itself";
+    input.setKey(Key::Enter, true);
+    sim.step();
+    input.setKey(Key::Enter, false);
+    sim.step();
+    EXPECT_FLOAT_EQ(t.position.y, 1.0f) << "Enter, a key added to the API";
+}

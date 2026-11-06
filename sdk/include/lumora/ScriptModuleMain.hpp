@@ -66,7 +66,11 @@ LUMORA_SCRIPT_EXPORT int lumora_script_start(void* instance) {
 }
 
 LUMORA_SCRIPT_EXPORT int lumora_script_update(void* instance, float dt) {
-    return lumora::script::detail::guarded([&] { static_cast<lumora::script::Behaviour*>(instance)->update(dt); });
+    return lumora::script::detail::guarded([&] {
+        auto* behaviour = static_cast<lumora::script::Behaviour*>(instance);
+        lumora::script::detail::Access::tick(*behaviour, dt);  // timers first, then update()
+        behaviour->update(dt);
+    });
 }
 
 LUMORA_SCRIPT_EXPORT int lumora_script_collision(void* instance, lumora::script::Entity other) {

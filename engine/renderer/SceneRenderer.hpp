@@ -1,6 +1,7 @@
 #pragma once
 
 #include "renderer/HudRenderer.hpp"
+#include "scene/DebugDraw.hpp"
 
 #include "renderer/GpuTypes.hpp"
 #include "renderer/Overlay.hpp"
@@ -38,6 +39,7 @@ struct RenderSettings {
     entt::entity selected = entt::null;
     const OverlayGeometry* overlay = nullptr;  // drawn on top after tone mapping (gizmos)
     const HudCanvas* hud = nullptr;            // the game's 2D overlay (text, rectangles), drawn last
+    const DebugDraw* debug = nullptr;          // behaviours' debug shapes, drawn on top like the overlay
     AssetLibrary* assets = nullptr;            // resolves MeshRenderer::meshAsset; null = primitives only
     /// Wait for assets instead of skipping/untexturing them while they load (captures, headless).
     bool blockOnAssets = false;

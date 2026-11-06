@@ -82,6 +82,7 @@ void Simulation::setScripts(std::shared_ptr<ScriptModule> module, const InputSta
     } else if (module) {
         scripts_ = std::make_unique<ScriptRunner>(scene_, std::move(module), input);
         scripts_->setHud(&hud_);
+        scripts_->setDebugDraw(&debug_);
         scripts_->setPhysics(physics_.get());
         scripts_->setAudio(audio_.get());
         scripts_->setProjectRoot(projectRoot_);
@@ -112,6 +113,7 @@ void Simulation::step() {
     // HUD every step.
     if (scripts_) {
         hud_.clear();
+        debug_.clear();
         scripts_->update(dt, simulatedSeconds());
     }
     runRotatorSystem(scene_, dt);
@@ -153,6 +155,7 @@ Result<> Simulation::loadScene(const std::filesystem::path& relativePath) {
     audio_.reset();
     oscillatorOrigins_.clear();
     hud_.clear();
+    debug_.clear();
     if (auto replaced = SceneSerializer::loadInto(scene_, SceneSerializer::toJson(**loaded)); !replaced) {
         return makeError("loadScene {}: {}", relative.generic_string(), replaced.error().message);
     }

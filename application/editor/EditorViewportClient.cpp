@@ -167,6 +167,7 @@ render::RenderSettings EditorViewportClient::viewportSettings() const {
     s.overlay = overlay_.empty() ? nullptr : &overlay_;
     s.assets = assets;
     s.hud = ctx_.isPlaying() ? hud : nullptr;
+    s.debug = ctx_.isPlaying() ? debug : nullptr;
     return s;
 }
 

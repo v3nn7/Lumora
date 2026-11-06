@@ -1041,8 +1041,35 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     }
 
     // ---- Overlay (gizmos): unlit, alpha blended, on top of the final image.
-    if (settings.overlay != nullptr && !settings.overlay->empty()) {
-        const auto& vertices = settings.overlay->vertices;
+    // Debug shapes from behaviours join the overlay: thin solids, about 2 px wide on screen.
+    OverlayGeometry debugGeometry;
+    if (settings.debug != nullptr && !settings.debug->empty()) {
+        const glm::vec3 forward(-camera.view[0][2], -camera.view[1][2], -camera.view[2][2]);
+        OverlayBuilder builder(debugGeometry, forward);
+        const float pixel = 2.0f * std::tan(camera.fovYRadians * 0.5f) / std::max(1.0f, static_cast<float>(extent.height));
+        auto width = [&](const glm::vec3& at) { return std::max(0.002f, glm::length(at - camera.position) * pixel); };
+        for (const DebugDraw::Line& l : settings.debug->lines) {
+            if (glm::length(l.to - l.from) > 1e-5f) builder.cylinder(l.from, l.to, width((l.from + l.to) * 0.5f), l.color, 6);
+        }
+        for (const DebugDraw::Box& b : settings.debug->boxes) {
+            const glm::vec3 axes[3] = {{b.halfExtent.x, 0, 0}, {0, b.halfExtent.y, 0}, {0, 0, b.halfExtent.z}};
+            builder.wireBox(b.center, axes, width(b.center), b.color);
+        }
+        for (const DebugDraw::Sphere& s : settings.debug->spheres) {
+            for (const glm::vec3 axis : {glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), glm::vec3(0, 0, 1)}) {
+                builder.torus(s.center, axis, s.radius, width(s.center), s.color, 40, 4);
+            }
+        }
+    }
+    std::vector<OverlayVertex> combinedOverlay;
+    if (!debugGeometry.empty()) {
+        if (settings.overlay != nullptr) combinedOverlay = settings.overlay->vertices;
+        combinedOverlay.insert(combinedOverlay.end(), debugGeometry.vertices.begin(), debugGeometry.vertices.end());
+    }
+    const std::vector<OverlayVertex>* overlayVertices =
+        !combinedOverlay.empty() ? &combinedOverlay : settings.overlay != nullptr ? &settings.overlay->vertices : nullptr;
+    if (overlayVertices != nullptr && !overlayVertices->empty()) {
+        const auto& vertices = *overlayVertices;
         const VkDeviceSize bytes = vertices.size() * sizeof(OverlayVertex);
         if (frame.overlayVertices.size() < bytes) {
             VkDeviceSize capacity = std::max<VkDeviceSize>(64 * 1024, frame.overlayVertices.size());

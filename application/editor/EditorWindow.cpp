@@ -1088,6 +1088,7 @@ void EditorWindow::play() {
     }
     if (gameModule_) simulation_->setScripts(gameModule_, &viewport_->input());
     client_->hud = &simulation_->hud();
+    client_->debug = &simulation_->debugDraw();
     paused_ = false;
     ctx_.setScene(playScene_.get(), true);
     updatePlayState();
@@ -1105,6 +1106,7 @@ void EditorWindow::stop() {
     if (!simulation_) return;
     log::info("Editor", "play mode stopped after {:.2f} s simulated", simulation_->simulatedSeconds());
     client_->hud = nullptr;
+    client_->debug = nullptr;
     simulation_.reset();
     ctx_.setScene(editScene_.get(), false);
     playScene_.reset();

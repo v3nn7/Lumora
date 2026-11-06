@@ -12,6 +12,10 @@ enum class Key : std::uint8_t {
     W, A, S, D, Q, E, F,
     Up, Down, Left, Right,
     Space, LeftShift, LeftCtrl, LeftAlt, Escape,
+    // Appended later (the order is part of the scripting ABI):
+    Enter, Tab, Backspace,
+    B, C, G, H, I, J, K, L, M, N, O, P, R, T, U, V, X, Y, Z,
+    Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9,
     Count
 };
 

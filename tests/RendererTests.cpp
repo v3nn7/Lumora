@@ -825,6 +825,34 @@ TEST_F(RendererTest, ParticlesGlowBlendAndHideBehindGeometry) {
     EXPECT_LT(luminance(hidden), 20.0f) << "behind the wall";
 }
 
+TEST_F(RendererTest, DebugShapesDrawOnTop) {
+    auto scene = sceneWithSun();
+    const auto wall = scene->createEntity("Wall");
+    scene->registry().emplace<MeshRendererComponent>(wall).baseColor = glm::vec3(0.2f);
+    scene->registry().get<TransformComponent>(wall).scale = {6.0f, 6.0f, 0.2f};
+    scene->updateWorldTransforms();
+    DebugDraw debug;
+    debug.lines.push_back({{-2.0f, 0.0f, -1.0f}, {2.0f, 0.0f, -1.0f}, {1.0f, 0.0f, 1.0f, 1.0f}});  // behind the wall
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.0f, 5.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const glm::uvec2 size(128, 64);
+    const CameraView view = cam.view(2.0f);
+    RenderSettings settings;
+    settings.bloom = false;
+    settings.debug = &debug;
+    auto image = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+    ASSERT_TRUE(image.has_value());
+    int magenta = 0;
+    for (std::uint32_t x = 0; x < size.x; ++x) {
+        for (std::uint32_t y = 26; y < 38; ++y) {
+            const auto c = pixel(*image, x, y);
+            if (c.r > 150 && c.b > 150 && c.g < 90) ++magenta;
+        }
+    }
+    EXPECT_GT(magenta, 40) << "the line shows through the wall, a couple of pixels thick";
+}
+
 // ---- HUD ------------------------------------------------------------------------------------
 
 #include "renderer/HudRenderer.hpp"

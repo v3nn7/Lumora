@@ -331,7 +331,7 @@ What a behaviour can do:
 | `start()`, `update(dt)` | Override: once when play begins (or after a reload), every fixed step (1/60 s) |
 | `position()`, `rotation()`, `scale()` and `set…` | Read and change the entity's transform (metres, Euler degrees) |
 | `find("Name")`, `findAll("Name")`, `positionOf(e)`, `setPositionOf(e, v)`, `name(e)` | Other entities, by name |
-| `keyDown(Key::W)` | Keyboard state: WASD, QE, F, arrows, Space, Shift, Ctrl, Alt, Esc |
+| `keyDown(Key::W)` | Keyboard state: letters A–Z, digits `Num0`–`Num9`, arrows, Space, Enter, Tab, Backspace, Shift, Ctrl, Alt, Esc |
 | `time()` | Simulated seconds since play started |
 | `mouseDown(MouseButton::Left)`, `mouseDelta()` | Mouse buttons and movement this frame |
 | `addForce(v)`, `addImpulse(v)`, `velocity()`, `setVelocity(v)` | Physics of a dynamic Rigid Body (newtons, newton-seconds, m/s) |
@@ -341,6 +341,8 @@ What a behaviour can do:
 | `button(text, x, y, w, h)`, `checkbox(text, value, x, y)`, `slider(text, value, min, max, x, y)`, `panel(x, y, w, h)`, `uiStyle(accent)` | Game UI: menus and settings drawn over the game; a button returns true when clicked |
 | `mousePosition()`, `mousePressed(b)`, `mouseReleased(b)`, `keyPressed(key)` | Mouse in HUD pixels; presses since the last step (once each) |
 | `drawTextCentered(text, x, y)`, `drawTextRight(text, x, y)` | Aligned HUD text |
+| `after(2.0f, [this] { ... })`, `every(0.5f, [this] { ... })`, `cancelTimer(id)` | Run code later or repeatedly, in game time |
+| `debugLine(a, b)`, `debugBox(center, half)`, `debugSphere(center, r)` | Debug shapes on top of the scene for this step (editor while playing; player after <kbd>F3</kbd>) |
 | `emitParticles(n)`, `setParticlesPlaying(on)`, `particleCount()` | The entity's Particle Emitter |
 | `setMaterial("Content/Materials/Glow.lmat")`, `setMaterialOf(e, path)`, `setColor(v)` | Change how a Mesh Renderer looks |
 | `loadScene("Content/Scenes/Level2.lscene")` | Switch to another scene at the end of the step (menus, levels); `time()` starts again from 0. In the editor, Stop returns to the scene you were editing |
@@ -402,7 +404,7 @@ To run a project on its own, without the editor UI:
 lumora-editor --project ~/LumoraProjects/MyGame --play
 ```
 
-<kbd>Esc</kbd> quits (a game with behaviours gets <kbd>Esc</kbd> for its own menus; close the window to quit), <kbd>F11</kbd> toggles fullscreen, <kbd>F8</kbd> toggles a free camera.
+<kbd>Esc</kbd> quits (a game with behaviours gets <kbd>Esc</kbd> for its own menus; close the window to quit), <kbd>F11</kbd> toggles fullscreen, <kbd>F8</kbd> toggles a free camera, <kbd>F3</kbd> shows the behaviours' debug shapes.
 
 ### Export the game
 

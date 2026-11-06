@@ -52,6 +52,39 @@ std::optional<Key> mapKey(int qtKey) {
         case Qt::Key_Control: return Key::LeftCtrl;
         case Qt::Key_Alt: return Key::LeftAlt;
         case Qt::Key_Escape: return Key::Escape;
+        case Qt::Key_B: return Key::B;
+        case Qt::Key_C: return Key::C;
+        case Qt::Key_G: return Key::G;
+        case Qt::Key_H: return Key::H;
+        case Qt::Key_I: return Key::I;
+        case Qt::Key_J: return Key::J;
+        case Qt::Key_K: return Key::K;
+        case Qt::Key_L: return Key::L;
+        case Qt::Key_M: return Key::M;
+        case Qt::Key_N: return Key::N;
+        case Qt::Key_O: return Key::O;
+        case Qt::Key_P: return Key::P;
+        case Qt::Key_R: return Key::R;
+        case Qt::Key_T: return Key::T;
+        case Qt::Key_U: return Key::U;
+        case Qt::Key_V: return Key::V;
+        case Qt::Key_X: return Key::X;
+        case Qt::Key_Y: return Key::Y;
+        case Qt::Key_Z: return Key::Z;
+        case Qt::Key_Return:
+        case Qt::Key_Enter: return Key::Enter;
+        case Qt::Key_Tab: return Key::Tab;
+        case Qt::Key_Backspace: return Key::Backspace;
+        case Qt::Key_0: return Key::Num0;
+        case Qt::Key_1: return Key::Num1;
+        case Qt::Key_2: return Key::Num2;
+        case Qt::Key_3: return Key::Num3;
+        case Qt::Key_4: return Key::Num4;
+        case Qt::Key_5: return Key::Num5;
+        case Qt::Key_6: return Key::Num6;
+        case Qt::Key_7: return Key::Num7;
+        case Qt::Key_8: return Key::Num8;
+        case Qt::Key_9: return Key::Num9;
         default: return std::nullopt;
     }
 }

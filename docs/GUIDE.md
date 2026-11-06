@@ -103,6 +103,10 @@ the folder to version control as a whole. Scenes are plain JSON and diff well.
 The editor is a set of docking panels around the viewport. Drag a panel by its title to move or
 stack it; *View → Reset Layout* restores the default. The layout is remembered.
 
+Any panel can also go into the **main area**, as a tab next to the scene: click the screen
+button in its title bar or tick it under *View → Main Area*. The tab's close button (or
+right-click → *Back to Dock*) returns it; <kbd>Ctrl</kbd>+<kbd>1</kbd> shows the scene again.
+
 | Panel | Use |
 |---|---|
 | Viewport | The scene as the engine renders it; selection, gizmos, camera |

@@ -80,6 +80,12 @@ public:
     bool attachScript(Uuid entity, const QString& scriptPath);
     /// Opens Config/Input.json in the code editor (written with the defaults first).
     void openInputSettings();
+    /// Any panel can sit in the middle of the window, as a tab next to the scene, instead of in
+    /// its dock (the title bar's button, View > Main Area, or the tab's close button to go back).
+    void setDockInMainArea(QDockWidget* dock, bool inMainArea);
+    [[nodiscard]] bool dockInMainArea(const QDockWidget* dock) const;
+    /// Brings a panel to the front, wherever it is.
+    void revealDock(QDockWidget* dock);
     /// The code editor in the middle of the window (a tab next to the scene) or in its dock.
     void setCodeInMainArea(bool inMainArea);
     void openCode(const QString& path, int line = 0);
@@ -232,6 +238,9 @@ private:
     class InspectorPanel* inspector_ = nullptr;
     QTabWidget* centerTabs_ = nullptr;
     QAction* codeInMainAreaAction_ = nullptr;
+    QHash<QDockWidget*, QWidget*> mainAreaPanels_;    ///< docks whose panel is a centre tab
+    QHash<QDockWidget*, QAction*> mainAreaActions_;   ///< View > Main Area checkboxes
+    void saveMainArea() const;
     class ThumbnailCache* thumbnails_ = nullptr;
     QFileSystemWatcher* contentWatcher_ = nullptr;
     QHash<QString, qint64> fileStamps_;

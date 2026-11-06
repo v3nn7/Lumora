@@ -953,7 +953,53 @@ TEST_F(EditorUiTest, CodeEditorMovesIntoTheMainArea) {
     auto* dock = qobject_cast<QDockWidget*>(code->parentWidget() ? code->parentWidget()->parentWidget() : nullptr);
     EXPECT_TRUE(dock != nullptr || code->window() == editor) << "back in its dock";
     EXPECT_EQ(code->window(), editor);
-    QSettings().setValue(QStringLiteral("editor/codeInMainArea"), false);
+    QSettings().remove(QStringLiteral("editor/mainArea"));
+}
+
+#include "editor/GraphEditorPanel.hpp"
+
+TEST_F(EditorUiTest, AnyPanelMovesIntoTheMainAreaAndStaysThere) {
+    QSettings().remove(QStringLiteral("editor/mainArea"));
+    editor::EditorWindow* editor = openEditor();
+    ASSERT_NE(editor, nullptr);
+    auto* center = qobject_cast<QTabWidget*>(editor->centralWidget());
+    ASSERT_NE(center, nullptr);
+    auto* graphDock = editor->findChild<QDockWidget*>(QStringLiteral("dock.graph"));
+    auto* hierarchyDock = editor->findChild<QDockWidget*>(QStringLiteral("dock.hierarchy"));
+    ASSERT_NE(graphDock, nullptr);
+    ASSERT_NE(hierarchyDock, nullptr);
+    auto* graph = editor->findChild<editor::GraphEditorPanel*>();
+    ASSERT_NE(graph, nullptr);
+
+    editor->setDockInMainArea(graphDock, true);
+    editor->setDockInMainArea(hierarchyDock, true);
+    EXPECT_EQ(center->count(), 3);
+    EXPECT_EQ(center->tabText(1), QStringLiteral("Visual Script"));
+    EXPECT_EQ(center->widget(1), graph);
+    EXPECT_FALSE(graphDock->isVisible()) << "no empty dock left behind";
+    EXPECT_FALSE(graphDock->toggleViewAction()->isEnabled());
+    editor->showScene();
+    editor->revealDock(graphDock);
+    EXPECT_EQ(center->currentWidget(), graph) << "opening a graph shows its tab";
+
+    // The placement survives a restart.
+    application_->closeEditor();
+    processEvents();
+    editor = openEditor();
+    ASSERT_NE(editor, nullptr);
+    center = qobject_cast<QTabWidget*>(editor->centralWidget());
+    ASSERT_EQ(center->count(), 3);
+    EXPECT_EQ(center->tabText(1), QStringLiteral("Visual Script"));
+    EXPECT_EQ(center->currentIndex(), 0) << "starts on the scene";
+
+    // The tab's close button puts the panel back in its dock.
+    graphDock = editor->findChild<QDockWidget*>(QStringLiteral("dock.graph"));
+    emit center->tabCloseRequested(1);
+    EXPECT_EQ(center->count(), 2);
+    EXPECT_FALSE(editor->dockInMainArea(graphDock));
+    EXPECT_EQ(graphDock->widget(), editor->findChild<editor::GraphEditorPanel*>());
+    EXPECT_TRUE(graphDock->toggleViewAction()->isEnabled());
+    QSettings().remove(QStringLiteral("editor/mainArea"));
 }
 
 TEST_F(EditorUiTest, ContentBrowserSnapshot) {

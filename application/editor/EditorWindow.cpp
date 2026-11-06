@@ -113,8 +113,8 @@ QStringList behavioursIn(const QString& file) {
     return names;
 }
 
-/// Compact dock title bar: panel icon + title, float/close buttons on the right.
-QWidget* makeDockTitleBar(QDockWidget* dock, const QString& iconName) {
+/// Compact dock title bar: panel icon + title, main-area/float/close buttons on the right.
+QWidget* makeDockTitleBar(EditorWindow* window, QDockWidget* dock, const QString& iconName) {
     auto* bar = new QWidget;
     bar->setObjectName(QStringLiteral("dockTitle"));
     bar->setAttribute(Qt::WA_StyledBackground);
@@ -133,6 +133,12 @@ QWidget* makeDockTitleBar(QDockWidget* dock, const QString& iconName) {
     layout->addWidget(icon);
     layout->addWidget(title);
     layout->addStretch();
+    auto* toMain = new QToolButton;
+    toMain->setIcon(app::theme::icon(QStringLiteral("scene")));
+    toMain->setIconSize(QSize(12, 12));
+    toMain->setToolTip(QObject::tr("Move to the main area (a tab next to the scene)"));
+    layout->addWidget(toMain);
+    QObject::connect(toMain, &QToolButton::clicked, window, [window, dock] { window->setDockInMainArea(dock, true); });
     for (const auto& [iconId, tip, isClose] : {std::tuple{"open", "Float / dock", false}, std::tuple{"close", "Close panel", true}}) {
         auto* button = new QToolButton;
         button->setIcon(app::theme::icon(QString::fromLatin1(iconId)));
@@ -148,14 +154,15 @@ QWidget* makeDockTitleBar(QDockWidget* dock, const QString& iconName) {
     return bar;
 }
 
-QDockWidget* makeDock(QMainWindow* window, const QString& title, const QString& objectName, const QString& iconName,
+QDockWidget* makeDock(EditorWindow* window, const QString& title, const QString& objectName, const QString& iconName,
                       QWidget* content) {
     auto* dock = new QDockWidget(title, window);
     dock->setObjectName(objectName);
+    dock->setProperty("panelIcon", iconName);  // the tab's icon in the main area
     dock->setWidget(content);
     dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |
                       QDockWidget::DockWidgetClosable);
-    dock->setTitleBarWidget(makeDockTitleBar(dock, iconName));
+    dock->setTitleBarWidget(makeDockTitleBar(window, dock, iconName));
     return dock;
 }
 
@@ -414,8 +421,26 @@ void EditorWindow::buildCentral() {
     centerTabs_->setTabsClosable(true);
     centerTabs_->addTab(viewportFrame_, app::theme::icon(QStringLiteral("scene")), tr("Scene"));
     centerTabs_->tabBar()->setTabButton(0, QTabBar::RightSide, nullptr);  // the scene stays
-    connect(centerTabs_, &QTabWidget::tabCloseRequested, this, [this](int index) {
-        if (centerTabs_->widget(index) == code_) setCodeInMainArea(false);
+    const auto dockOfTab = [this](int index) -> QDockWidget* {
+        QWidget* panel = centerTabs_->widget(index);
+        for (auto it = mainAreaPanels_.cbegin(); it != mainAreaPanels_.cend(); ++it) {
+            if (it.value() == panel) return it.key();
+        }
+        return nullptr;
+    };
+    connect(centerTabs_, &QTabWidget::tabCloseRequested, this,
+            [this, dockOfTab](int index) { setDockInMainArea(dockOfTab(index), false); });  // back to its dock
+    centerTabs_->tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(centerTabs_->tabBar(), &QWidget::customContextMenuRequested, this, [this, dockOfTab](const QPoint& at) {
+        QDockWidget* dock = dockOfTab(centerTabs_->tabBar()->tabAt(at));
+        if (dock == nullptr) return;
+        QMenu menu;
+        menu.addAction(tr("Back to Dock"), this, [this, dock] { setDockInMainArea(dock, false); });
+        menu.addAction(tr("Float"), this, [this, dock] {
+            setDockInMainArea(dock, false);
+            dock->setFloating(true);
+        });
+        menu.exec(centerTabs_->tabBar()->mapToGlobal(at));
     });
     setCentralWidget(centerTabs_);
     container->setFocus();  // now inside this window, so it becomes the initial focus widget
@@ -525,10 +550,7 @@ void EditorWindow::buildDocks() {
                                         QMessageBox::Yes) {
             timeline_->save();
         }
-        if (timeline_->open(path)) {
-            timelineDock_->show();
-            timelineDock_->raise();
-        }
+        if (timeline_->open(path)) revealDock(timelineDock_);
     });
     connect(content, &ContentBrowserPanel::openGraphRequested, this, [this](const QString& path) {
         if (graph_->isDirty() && QMessageBox::question(this, tr("Visual Script"),
@@ -536,10 +558,7 @@ void EditorWindow::buildDocks() {
                                      QMessageBox::Yes) {
             graph_->save();
         }
-        if (graph_->open(path)) {
-            graphDock_->show();
-            graphDock_->raise();
-        }
+        if (graph_->open(path)) revealDock(graphDock_);
     });
     connect(content, &ContentBrowserPanel::assetSelected, inspector_, &InspectorPanel::showAsset);
     connect(content, &ContentBrowserPanel::applyMaterialRequested, this, [this](const QString& path) {
@@ -589,10 +608,16 @@ void EditorWindow::buildMenus() {
     view->addSeparator();
     view->addActions({grid_, vsync_});
     view->addSeparator();
-    codeInMainAreaAction_ = view->addAction(tr("Code in Main Area"));
-    codeInMainAreaAction_->setCheckable(true);
+    QMenu* mainArea = view->addMenu(app::theme::icon(QStringLiteral("scene")), tr("Main Area"));
+    for (QDockWidget* dock : findChildren<QDockWidget*>()) {
+        QAction* action = mainArea->addAction(dock->windowTitle());
+        action->setCheckable(true);
+        action->setChecked(dockInMainArea(dock));
+        connect(action, &QAction::toggled, this, [this, dock](bool on) { setDockInMainArea(dock, on); });
+        mainAreaActions_.insert(dock, action);
+    }
+    codeInMainAreaAction_ = mainAreaActions_.value(codeDock_);
     codeInMainAreaAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
-    connect(codeInMainAreaAction_, &QAction::toggled, this, &EditorWindow::setCodeInMainArea);
     view->addAction(tr("Show Scene"), QKeySequence(Qt::CTRL | Qt::Key_1), this, &EditorWindow::showScene);
     view->addSeparator();
     view->addAction(resetLayout_);
@@ -739,7 +764,25 @@ void EditorWindow::restoreLayout() {
     QSettings settings;
     restoreGeometry(settings.value(QStringLiteral("editor/geometry")).toByteArray());
     restoreState(settings.value(QStringLiteral("editor/state")).toByteArray());
-    if (settings.value(QStringLiteral("editor/codeInMainArea"), false).toBool()) setCodeInMainArea(true);
+    QStringList inMainArea = settings.value(QStringLiteral("editor/mainArea")).toStringList();
+    if (!settings.contains(QStringLiteral("editor/mainArea")) &&
+        settings.value(QStringLiteral("editor/codeInMainArea"), false).toBool()) {
+        inMainArea << codeDock_->objectName();  // the setting before every panel could move
+    }
+    for (const QString& name : inMainArea) {
+        if (auto* dock = findChild<QDockWidget*>(name)) setDockInMainArea(dock, true);
+    }
+    if (centerTabs_->count() > 0) centerTabs_->setCurrentIndex(0);  // start on the scene
+}
+
+void EditorWindow::saveMainArea() const {
+    QStringList names;
+    for (int i = 0; i < centerTabs_->count(); ++i) {  // in tab order
+        for (auto it = mainAreaPanels_.cbegin(); it != mainAreaPanels_.cend(); ++it) {
+            if (it.value() == centerTabs_->widget(i)) names << it.key()->objectName();
+        }
+    }
+    QSettings().setValue(QStringLiteral("editor/mainArea"), names);
 }
 
 void EditorWindow::saveLayout() {
@@ -749,7 +792,7 @@ void EditorWindow::saveLayout() {
 }
 
 void EditorWindow::resetLayout() {
-    setCodeInMainArea(false);
+    for (QDockWidget* dock : mainAreaPanels_.keys()) setDockInMainArea(dock, false);
     restoreState(defaultLayout_);
     for (QDockWidget* dock : findChildren<QDockWidget*>()) dock->show();
 }
@@ -872,37 +915,52 @@ void EditorWindow::createSceneFile(const QString& path) {
 
 void EditorWindow::openCode(const QString& path, int line) {
     code_->openFile(path, line);
-    if (codeInMainArea()) {
-        centerTabs_->setCurrentWidget(code_);
-        return;
-    }
-    codeDock_->show();
-    codeDock_->raise();
+    revealDock(codeDock_);
 }
 
-bool EditorWindow::codeInMainArea() const { return centerTabs_ != nullptr && centerTabs_->indexOf(code_) >= 0; }
+bool EditorWindow::codeInMainArea() const { return dockInMainArea(codeDock_); }
 
-void EditorWindow::setCodeInMainArea(bool inMainArea) {
-    if (inMainArea == codeInMainArea()) return;
+void EditorWindow::setCodeInMainArea(bool inMainArea) { setDockInMainArea(codeDock_, inMainArea); }
+
+bool EditorWindow::dockInMainArea(const QDockWidget* dock) const {
+    return mainAreaPanels_.contains(const_cast<QDockWidget*>(dock));
+}
+
+void EditorWindow::setDockInMainArea(QDockWidget* dock, bool inMainArea) {
+    if (dock == nullptr || centerTabs_ == nullptr || inMainArea == dockInMainArea(dock)) return;
     if (inMainArea) {
-        codeDock_->setWidget(new QWidget);  // takes the panel out of the dock
-        codeDock_->hide();
-        centerTabs_->addTab(code_, app::theme::icon(QStringLiteral("console")), tr("Code"));
-        centerTabs_->setCurrentWidget(code_);
+        QWidget* panel = dock->widget();
+        dock->setWidget(new QWidget);  // takes the panel out of the dock
+        dock->hide();
+        mainAreaPanels_.insert(dock, panel);
+        const int index = centerTabs_->addTab(panel, app::theme::icon(dock->property("panelIcon").toString()), dock->windowTitle());
+        centerTabs_->setCurrentIndex(index);
     } else {
-        centerTabs_->removeTab(centerTabs_->indexOf(code_));
-        delete codeDock_->widget();
-        codeDock_->setWidget(code_);
-        codeDock_->show();
-        codeDock_->raise();
+        QWidget* panel = mainAreaPanels_.take(dock);
+        centerTabs_->removeTab(centerTabs_->indexOf(panel));
+        delete dock->widget();
+        dock->setWidget(panel);
+        dock->show();
+        dock->raise();
         centerTabs_->setCurrentIndex(0);
     }
-    code_->setInMainArea(inMainArea);
-    if (codeInMainAreaAction_ != nullptr) {
-        const QSignalBlocker block(codeInMainAreaAction_);
-        codeInMainAreaAction_->setChecked(inMainArea);
+    // Hidden while its panel is a tab: showing the dock then would show an empty frame.
+    dock->toggleViewAction()->setEnabled(!inMainArea);
+    if (dock == codeDock_) code_->setInMainArea(inMainArea);
+    if (QAction* action = mainAreaActions_.value(dock)) {
+        const QSignalBlocker block(action);
+        action->setChecked(inMainArea);
     }
-    QSettings().setValue(QStringLiteral("editor/codeInMainArea"), inMainArea);
+    saveMainArea();
+}
+
+void EditorWindow::revealDock(QDockWidget* dock) {
+    if (dockInMainArea(dock)) {
+        centerTabs_->setCurrentWidget(mainAreaPanels_.value(dock));
+        return;
+    }
+    dock->show();
+    dock->raise();
 }
 
 void EditorWindow::showScene() { centerTabs_->setCurrentIndex(0); }
@@ -1736,8 +1794,7 @@ void EditorWindow::beginSession(bool hosting, const QString& publicAddress, cons
     std::optional<collab::CollabPanel::HostInfo> host;
     if (hosting && collabServer_) host = collab::CollabPanel::HostInfo{collabServer_->port(), publicAddress, collabServer_->fingerprint()};
     collabPanel_->attach(client, host);
-    collabDock_->show();
-    collabDock_->raise();
+    revealDock(collabDock_);
     updateSessionUi();
     updateTitle();
     statusBar()->showMessage(hosting ? tr("Hosting a live session.") : tr("Joined the live session."), 4000);

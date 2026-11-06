@@ -659,6 +659,7 @@ TEST(CodeEditor, CompletesTheScriptingApiWhileTyping) {
 #include <QDir>
 #include "editor/ContentBrowserPanel.hpp"
 #include "editor/EditorViewportClient.hpp"
+#include "editor/AddComponentMenu.hpp"
 #include "editor/InspectorPanel.hpp"
 #include "editor/MaterialEditor.hpp"
 #include "editor/SceneHierarchyPanel.hpp"
@@ -723,6 +724,77 @@ TEST_F(EditorUiTest, MaterialsAreCreatedEditedAndDroppedOnObjects) {
     ASSERT_NE(hierarchy, nullptr);
     emit hierarchy->tree()->filesDropped(scene.uuidOf(other), {paint});
     EXPECT_EQ(scene.registry().get<MeshRendererComponent>(other).material, "Content/Materials/Paint.lmat");
+}
+
+TEST_F(EditorUiTest, ScriptsAreAddedFromTheInspectorAndDroppedOnObjects) {
+    editor::EditorWindow* editor = openEditor();
+    ASSERT_NE(editor, nullptr);
+    editor->resize(1600, 960);
+    Scene& scene = *editor->editScene();
+    entt::entity cube = entt::null;
+    for (auto [e, rot] : scene.registry().view<RotatorComponent>().each()) cube = e;
+    ASSERT_TRUE(cube != entt::null);
+    const Uuid cubeId = scene.uuidOf(cube);
+    editor->context().select(cubeId);
+    processEvents();
+
+    // Add Component > Scripting > Script: the Inspector rebuilds (deleting the menu) - no crash.
+    auto* inspector = editor->findChild<editor::InspectorPanel*>();
+    ASSERT_NE(inspector, nullptr);
+    QAction* scriptAction = nullptr;
+    for (auto* menu : inspector->findChildren<editor::AddComponentMenu*>()) {
+        for (QAction* a : menu->actions()) {
+            if (a->menu() == nullptr || a->text() != QStringLiteral("Scripting")) continue;
+            for (QAction* item : a->menu()->actions()) {
+                if (item->text() == QStringLiteral("Script")) scriptAction = item;
+            }
+        }
+    }
+    ASSERT_NE(scriptAction, nullptr);
+    scriptAction->trigger();
+    processEvents();
+    entt::entity e = scene.findByUuid(cubeId);
+    ASSERT_TRUE(scene.registry().all_of<ScriptComponent>(e));
+    EXPECT_FALSE(inspector->findChildren<editor::AddComponentMenu*>().isEmpty()) << "rebuilt";
+
+    // A script file dropped on the object: the class it registers (named like the file first).
+    const QString dir = app::toQString(editor->project().contentDir());
+    QDir().mkpath(dir);
+    const QString spinner = dir + QStringLiteral("/Spinner.cpp");
+    {
+        QFile f(spinner);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write("// LUMORA_BEHAVIOUR(Commented);\n"
+                "struct Helper : lumora::Behaviour {};\nLUMORA_BEHAVIOUR(Helper);\n"
+                "struct Spinner : lumora::Behaviour {};\nLUMORA_BEHAVIOUR( Spinner );\n");
+    }
+    auto* hierarchy = editor->findChild<editor::SceneHierarchyPanel*>();
+    ASSERT_NE(hierarchy, nullptr);
+    scene.registry().get<ScriptComponent>(e).parameters = "speed=3";
+    emit hierarchy->tree()->filesDropped(cubeId, {spinner});
+    processEvents();
+    e = scene.findByUuid(cubeId);
+    EXPECT_EQ(scene.registry().get<ScriptComponent>(e).behaviour, "Spinner");
+    EXPECT_EQ(scene.registry().get<ScriptComponent>(e).parameters, "") << "another class's parameters dropped";
+    editor->context().undoStack().undo();
+    e = scene.findByUuid(cubeId);
+    EXPECT_EQ(scene.registry().get<ScriptComponent>(e).behaviour, "");
+
+    // On the object under the cursor in the viewport; a file without a behaviour changes nothing.
+    editor->viewportClient().camera().setPosition(glm::vec3(scene.worldMatrix(e)[3]) + glm::vec3(0.0f, 1.0f, 4.0f));
+    editor->viewportClient().camera().lookAt(glm::vec3(scene.worldMatrix(e)[3]));
+    editor->dropOnViewport({spinner}, glm::vec2(0.0f));
+    processEvents();
+    e = scene.findByUuid(cubeId);
+    EXPECT_EQ(scene.registry().get<ScriptComponent>(e).behaviour, "Spinner");
+    const QString plain = dir + QStringLiteral("/Util.hpp");
+    {
+        QFile f(plain);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write("inline int twice(int x) { return 2 * x; }\n");
+    }
+    EXPECT_FALSE(editor->attachScript(cubeId, plain));
+    EXPECT_EQ(scene.registry().get<ScriptComponent>(scene.findByUuid(cubeId)).behaviour, "Spinner");
 }
 
 #include "common/Gamepad.hpp"
@@ -957,6 +1029,7 @@ TEST(AddComponent, GroupsComponentsIntoCategoriesAndSearches) {
     ASSERT_NE(first, nullptr);
     EXPECT_TRUE(first->text().startsWith(QStringLiteral("Rigid Body")));
     emit menu.searchField()->returnPressed();
+    processEvents();  // the choice is reported once the click is over
     EXPECT_EQ(chosen, QStringLiteral("RigidBody")) << "Enter adds the best match";
     EXPECT_GE(menu.filter(QStringLiteral("phys")), 5) << "a category name lists its components";
     EXPECT_EQ(menu.filter(QStringLiteral("zzzzqx")), 0);

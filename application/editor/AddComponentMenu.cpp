@@ -93,8 +93,10 @@ int AddComponentMenu::filter(const QString& text) {
     auto add = [this](QMenu* into, const Entry& e, const QString& label) {
         QAction* action = into->addAction(categoryIcon(e.category), label);
         connect(action, &QAction::triggered, this, [this, id = e.id] {
-            emit chosen(id);
+            // Adding a component rebuilds the Inspector, which deletes this menu (and the action
+            // being triggered): close first, and report the choice once the click is over.
             close();
+            QMetaObject::invokeMethod(this, [this, id] { emit chosen(id); }, Qt::QueuedConnection);
         });
         return action;
     };

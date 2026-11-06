@@ -76,6 +76,8 @@ public:
     entt::entity addModelToScene(const QString& absolutePath, std::optional<glm::vec3> where = std::nullopt);
     /// Gives an entity (and its children's Mesh Renderers) a material asset; one undo step.
     bool assignMaterial(Uuid entity, const QString& materialPath);
+    /// Gives an entity the behaviour a script file registers (LUMORA_BEHAVIOUR); one undo step.
+    bool attachScript(Uuid entity, const QString& scriptPath);
     /// Opens Config/Input.json in the code editor (written with the defaults first).
     void openInputSettings();
     /// The code editor in the middle of the window (a tab next to the scene) or in its dock.
@@ -91,7 +93,7 @@ public:
     int reloadChangedIn(const QString& dir);
     [[nodiscard]] class ThumbnailCache& thumbnails() noexcept { return *thumbnails_; }
     /// What dropping files at a viewport position does: materials go on the object under the
-    /// cursor, models and prefabs are placed there, HDR images become the sky.
+    /// cursor, scripts go on it as its behaviour, models and prefabs are placed there.
     void dropOnViewport(const QStringList& files, glm::vec2 ndc);
     /// Copies external model files into the project and adds them to the scene.
     void importModels(const QStringList& files, const QString& targetDir);

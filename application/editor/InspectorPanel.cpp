@@ -107,7 +107,10 @@ void InspectorPanel::clearContent() {
     contentLayout_ = new QVBoxLayout(content_);
     contentLayout_->setContentsMargins(8, 8, 8, 8);
     contentLayout_->setSpacing(6);
-    scroll_->setWidget(content_);  // deletes the previous content widget
+    // The old content goes later: a rebuild often starts from one of its own buttons or menus,
+    // which are still handling the click.
+    if (QWidget* old = scroll_->takeWidget()) old->deleteLater();
+    scroll_->setWidget(content_);
 }
 
 void InspectorPanel::setProject(AssetLibrary* assets, QString projectRoot) {

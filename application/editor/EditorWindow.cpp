@@ -61,6 +61,7 @@
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QImage>
@@ -83,6 +84,26 @@
 namespace lumora::editor {
 
 namespace {
+
+bool isScriptFile(const QString& file) {
+    const QString suffix = QFileInfo(file).suffix().toLower();
+    return suffix == QLatin1String("cpp") || suffix == QLatin1String("cc") || suffix == QLatin1String("cxx") ||
+           suffix == QLatin1String("hpp") || suffix == QLatin1String("h");
+}
+
+/// Classes a script file registers with LUMORA_BEHAVIOUR(Name), in order (comments skipped).
+QStringList behavioursIn(const QString& file) {
+    QFile f(file);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
+    QString text = QString::fromUtf8(f.readAll());
+    static const QRegularExpression comments(QStringLiteral(R"(//[^\n]*|/\*.*?\*/)"),
+                                             QRegularExpression::DotMatchesEverythingOption);
+    text.remove(comments);
+    static const QRegularExpression macro(QStringLiteral(R"(\bLUMORA_BEHAVIOUR\s*\(\s*([A-Za-z_]\w*)\s*\))"));
+    QStringList names;
+    for (auto it = macro.globalMatch(text); it.hasNext();) names << it.next().captured(1);
+    return names;
+}
 
 /// Compact dock title bar: panel icon + title, float/close buttons on the right.
 QWidget* makeDockTitleBar(QDockWidget* dock, const QString& iconName) {
@@ -172,7 +193,7 @@ EditorWindow::EditorWindow(app::AppContext& app, Project project, QWidget* paren
             const QString suffix = QFileInfo(url.toLocalFile()).suffix().toLower();
             return url.isLocalFile() && (suffix == QLatin1String("lmat") || suffix == QLatin1String("glb") ||
                                          suffix == QLatin1String("gltf") || suffix == QLatin1String("lprefab") ||
-                                         suffix == QLatin1String("hdr"));
+                                         suffix == QLatin1String("hdr") || isScriptFile(url.toLocalFile()));
         });
     };
     client_->onDrop = [this](const QList<QUrl>& urls, glm::vec2 ndc) {
@@ -411,6 +432,9 @@ void EditorWindow::buildDocks() {
         for (const QString& file : files) {
             if (file.endsWith(QString::fromLatin1(kMaterialExtension))) {
                 if (target.isValid()) assignMaterial(target, file);
+            } else if (isScriptFile(file)) {
+                if (target.isValid()) attachScript(target, file);
+                else statusBar()->showMessage(tr("Drop the script onto an object"), 4000);
             } else if (project_.relativePath(std::filesystem::absolute(app::toPath(file))).starts_with("..")) {
                 others << file;
             } else if (isModelFile(app::toPath(file)) || isPrefabFile(app::toPath(file))) {
@@ -1173,6 +1197,35 @@ bool EditorWindow::assignMaterial(Uuid id, const QString& materialPath) {
     return true;
 }
 
+bool EditorWindow::attachScript(Uuid id, const QString& scriptPath) {
+    Scene* scene = ctx_.scene();
+    const entt::entity target = scene != nullptr ? scene->findByUuid(id) : entt::entity{entt::null};
+    if (target == entt::null) return false;
+    const QStringList behaviours = behavioursIn(scriptPath);
+    if (behaviours.isEmpty()) {
+        statusBar()->showMessage(tr("%1 registers no behaviour (LUMORA_BEHAVIOUR)").arg(QFileInfo(scriptPath).fileName()), 6000);
+        return false;
+    }
+    // The class named like the file, else the first one it registers.
+    const QString stem = QFileInfo(scriptPath).completeBaseName();
+    const std::string behaviour = (behaviours.contains(stem) ? stem : behaviours.front()).toStdString();
+    const auto* existing = scene->registry().try_get<ScriptComponent>(target);
+    if (existing != nullptr && existing->behaviour == behaviour) return true;
+    ctx_.edit(tr("Attach Script"), [&](Scene& s) {
+        const entt::entity e = s.findByUuid(id);
+        if (e == entt::null) return;
+        auto& script = s.registry().get_or_emplace<ScriptComponent>(e);
+        if (script.behaviour != behaviour) script.parameters.clear();  // another class's parameters
+        script.behaviour = behaviour;
+    });
+    if (gameModule_ != nullptr && std::ranges::find(gameModule_->behaviours(), behaviour) == gameModule_->behaviours().end()) {
+        statusBar()->showMessage(tr("%1 is attached; build the scripts (Ctrl+B) to run it").arg(QString::fromStdString(behaviour)), 6000);
+    } else {
+        statusBar()->showMessage(tr("%1 now runs %2").arg(QString::fromStdString(scene->nameOf(target)), QString::fromStdString(behaviour)), 4000);
+    }
+    return true;
+}
+
 void EditorWindow::dropOnViewport(const QStringList& files, glm::vec2 ndc) {
     Scene* scene = ctx_.scene();
     if (scene == nullptr) return;
@@ -1187,6 +1240,13 @@ void EditorWindow::dropOnViewport(const QStringList& files, glm::vec2 ndc) {
                 statusBar()->showMessage(tr("Drop the material onto an object"), 4000);
             } else if (inProject) {
                 assignMaterial(scene->uuidOf(hit), file);
+            }
+        } else if (isScriptFile(file)) {
+            const entt::entity hit = pickEntity(*scene, ray, &assets_);
+            if (hit == entt::null) {
+                statusBar()->showMessage(tr("Drop the script onto an object"), 4000);
+            } else {
+                attachScript(scene->uuidOf(hit), file);
             }
         } else if (inProject && (isModelFile(path) || isPrefabFile(path)) && !ctx_.isPlaying()) {
             // On the ground under the cursor, or a few metres along the ray.

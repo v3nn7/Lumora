@@ -385,7 +385,8 @@ game library and reloads it whenever you save a script, also while the game is p
    in the Content Browser does the same; *Edit in Code Editor* opens any script or text file).
 2. Edit and save. The editor rebuilds in the background; the status bar and the Console show the
    result and any compiler errors.
-3. Select an entity, *Add Component → Script*, and set **Behaviour** to `Bobber`.
+3. Drag `Bobber.cpp` from the Content Browser onto the entity in the viewport or the Hierarchy
+   (one undo step), or select it, *Add Component → Script* and set **Behaviour** to `Bobber`.
 4. Press <kbd>F5</kbd>. Change the code and save while playing: the behaviours are recreated from
    the new code and `start()` runs again, while the scene keeps its current state.
 

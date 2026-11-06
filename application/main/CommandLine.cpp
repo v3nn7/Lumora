@@ -111,6 +111,8 @@ Result<AppOptions> parseCommandLine(const std::vector<std::string>& args) {
             o.sessionPassword = *v;
         } else if (a == "--validate") {
             o.validateProject = true;
+        } else if (a == "--build-scripts") {
+            o.buildScripts = true;
         } else if (a == "--simulate") {
             LUMORA_TRY_VALUE(v);
             auto n = parseNumber<double>(a, *v);
@@ -136,11 +138,13 @@ Result<AppOptions> parseCommandLine(const std::vector<std::string>& args) {
     if (headless) {
         o.mode = AppMode::Headless;
         const bool hasAction = o.printInfo || !o.createDirectory.empty() || !o.renderOutput.empty() ||
-                               o.validateProject || o.simulateSeconds > 0.0 || !o.importFiles.empty();
+                               o.validateProject || o.simulateSeconds > 0.0 || !o.importFiles.empty() ||
+                               o.buildScripts;
         if (!hasAction) o.printInfo = true;
-        if ((!o.renderOutput.empty() || o.validateProject || o.simulateSeconds > 0.0 || !o.importFiles.empty()) &&
+        if ((!o.renderOutput.empty() || o.validateProject || o.simulateSeconds > 0.0 || !o.importFiles.empty() ||
+             o.buildScripts) &&
             o.projectPath.empty()) {
-            return makeError("--render/--validate/--simulate/--import require --project <path>");
+            return makeError("--render/--validate/--simulate/--import/--build-scripts require --project <path>");
         }
         if (o.renderWidth == 0 || o.renderHeight == 0 || o.renderWidth > 16384 || o.renderHeight > 16384) {
             return makeError("--width/--height must be between 1 and 16384");
@@ -177,7 +181,9 @@ Headless actions:
   --project <p> --validate                 Load the project and its default scene
   --project <p> --render <out.png>         Render the default scene offscreen
         [--width W] [--height H]
-  --project <p> --simulate <seconds>       Run the fixed-step simulation and save nothing
+  --project <p> --build-scripts            Compile the project's Scripts/*.cpp into its game library
+  --project <p> --simulate <seconds>       Run the fixed-step simulation (with the built game
+                                           library's behaviours) and save nothing
 
 Options:
   --gpu <index>                            Select the physical device

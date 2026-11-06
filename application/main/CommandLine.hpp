@@ -45,6 +45,7 @@ struct AppOptions {
     std::uint32_t renderHeight = 720;
     bool validateProject = false;
     double simulateSeconds = 0.0;
+    bool buildScripts = false;  // compile the project's Scripts/ (headless)
     std::vector<std::string> importFiles;  // --import <model> (repeatable): copy + add to default scene
 };
 

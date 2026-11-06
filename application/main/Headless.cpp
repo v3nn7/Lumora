@@ -2,6 +2,8 @@
 
 #include "assets/AssetImport.hpp"
 #include "assets/AssetLibrary.hpp"
+#include "common/ProjectUi.hpp"
+#include "common/ScriptBuilder.hpp"
 #include "scene/ModelInstance.hpp"
 #include "core/Log.hpp"
 #include "core/Timer.hpp"
@@ -9,6 +11,7 @@
 #include "project/Project.hpp"
 #include "renderer/RenderContext.hpp"
 #include "renderer/Renderer.hpp"
+#include "runtime/Scripting.hpp"
 #include "runtime/Simulation.hpp"
 #include "scene/SceneSerializer.hpp"
 
@@ -147,8 +150,27 @@ int runHeadless(const AppOptions& o) {
     if (o.validateProject) {
         out("Project '{}' OK: scene '{}', {} entities\n", project->name(), (*scene)->name(), (*scene)->entityCount());
     }
+    app::ScriptBuilder scripts(app::toQString(project->rootDir()));
+    if (o.buildScripts) {
+        QString buildLog;
+        const bool built = scripts.buildBlocking(&buildLog);
+        out("{}", buildLog.toStdString());
+        if (!built) {
+            log::error("Headless", "script build failed");
+            return 1;
+        }
+        out("Scripts built: {}\n", scripts.libraryPath().toStdString());
+    }
     if (o.simulateSeconds > 0.0) {
         Simulation sim(**scene);
+        if (std::filesystem::exists(app::toPath(scripts.libraryPath()))) {
+            auto module = ScriptModule::load(app::toPath(scripts.libraryPath()), app::toPath(scripts.loadDir()));
+            if (!module) {
+                log::error("Headless", "{}", module.error().message);
+                return 1;
+            }
+            sim.setScripts(*module, nullptr);
+        }
         const auto steps = static_cast<std::uint64_t>(std::ceil(o.simulateSeconds / sim.fixedStep()));
         Stopwatch timer;
         for (std::uint64_t i = 0; i < steps; ++i) sim.step();

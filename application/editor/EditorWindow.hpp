@@ -19,11 +19,13 @@ class QStackedWidget;
 
 namespace lumora {
 class Scene;
+class ScriptModule;
 class Simulation;
 }
 
 namespace lumora::app {
 class AppContext;
+class ScriptBuilder;
 class VulkanViewport;
 }
 
@@ -123,6 +125,9 @@ private:
     void updateRemoteMarkers();
     void showControls();
     void onRenderFailed(const QString& message);
+    void setUpScripts();
+    void onScriptsBuilt(bool ok, const QString& output);
+    void newBehaviour();
 
     app::AppContext& app_;
     Project project_;
@@ -130,6 +135,9 @@ private:
     std::unique_ptr<Scene> editScene_;
     std::unique_ptr<Scene> playScene_;
     std::unique_ptr<Simulation> simulation_;
+    // Gameplay scripts: Scripts/*.cpp built into the game library, reloaded when they change.
+    std::unique_ptr<app::ScriptBuilder> scripts_;
+    std::shared_ptr<ScriptModule> gameModule_;
     bool paused_ = false;
     QString scenePath_;
     EditorContext ctx_;
@@ -174,6 +182,9 @@ private:
     QLabel* statusGpu_ = nullptr;
     QLabel* statusCollab_ = nullptr;
 
+    QAction* newBehaviour_ = nullptr;
+    QAction* buildScripts_ = nullptr;
+    QAction* openScripts_ = nullptr;
     QAction* hostSession_ = nullptr;
     QAction* joinSession_ = nullptr;
     QAction* leaveSession_ = nullptr;

@@ -2,6 +2,7 @@
 
 #include "common/AppContext.hpp"
 #include "common/ProjectUi.hpp"
+#include "common/ScriptBuilder.hpp"
 #include "common/Snapshot.hpp"
 #include "common/Theme.hpp"
 #include "common/VulkanViewport.hpp"
@@ -17,6 +18,7 @@
 #include "project/ProjectTemplates.hpp"
 #include "renderer/RenderContext.hpp"
 #include "renderer/Renderer.hpp"
+#include "runtime/Scripting.hpp"
 #include "runtime/Simulation.hpp"
 #include "assets/AssetImport.hpp"
 #include "collab/CollabClient.hpp"
@@ -33,6 +35,7 @@
 
 #include <QActionGroup>
 #include <QApplication>
+#include <QDesktopServices>
 #include <QCloseEvent>
 #include <QDockWidget>
 #include <QFileDialog>
@@ -48,6 +51,7 @@
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QTimer>
+#include <QUrl>
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -138,6 +142,7 @@ EditorWindow::EditorWindow(app::AppContext& app, Project project, QWidget* paren
     buildStatusBar();
     defaultLayout_ = saveState();
     restoreLayout();
+    setUpScripts();
 
     connect(&ctx_, &EditorContext::dirtyChanged, this, &EditorWindow::updateTitle);
 
@@ -221,6 +226,17 @@ void EditorWindow::buildActions() {
     vsync_->setCheckable(true);
     vsync_->setChecked(app_.options().vsync.value_or(true));
     resetLayout_ = make(tr("Reset Layout"), QString());
+    newBehaviour_ = make(tr("New Behaviour…"), QStringLiteral("plus"));
+    buildScripts_ = make(tr("Build Scripts"), QString(), QKeySequence(Qt::CTRL | Qt::Key_B));
+    openScripts_ = make(tr("Open Scripts Folder"), QStringLiteral("folder"));
+    connect(newBehaviour_, &QAction::triggered, this, &EditorWindow::newBehaviour);
+    connect(buildScripts_, &QAction::triggered, this, [this] {
+        if (scripts_) scripts_->build();
+    });
+    connect(openScripts_, &QAction::triggered, this, [this] {
+        QDir().mkpath(scripts_->scriptsDir());
+        QDesktopServices::openUrl(QUrl::fromLocalFile(scripts_->scriptsDir()));
+    });
     // Gizmo tools. 1/2/3 are handled while the viewport has the keyboard (handleShortcut), so
     // they never collide with typing; WASDQE fly the camera.
     auto* tools = new QActionGroup(this);
@@ -389,6 +405,11 @@ void EditorWindow::buildMenus() {
     playMenu->addActions({play_, pause_, stop_});
     playMenu->addSeparator();
     playMenu->addAction(pilot_);
+
+    QMenu* scriptsMenu = menuBar()->addMenu(tr("&Scripts"));
+    scriptsMenu->addActions({newBehaviour_, buildScripts_});
+    scriptsMenu->addSeparator();
+    scriptsMenu->addAction(openScripts_);
 
     QMenu* collaborate = menuBar()->addMenu(tr("&Collaborate"));
     collaborate->addActions({hostSession_, joinSession_});
@@ -786,6 +807,7 @@ void EditorWindow::play() {
     }
     playScene_ = std::move(*copy);
     simulation_ = std::make_unique<Simulation>(*playScene_);
+    if (gameModule_) simulation_->setScripts(gameModule_, &viewport_->input());
     paused_ = false;
     ctx_.setScene(playScene_.get(), true);
     updatePlayState();
@@ -1063,6 +1085,66 @@ void EditorWindow::updateRemoteMarkers() {
         if (auto uuid = Uuid::parse(p.selection.toStdString())) marker.selection = *uuid;
         client_->remoteMarkers.push_back(marker);
     }
+}
+
+// ---- Gameplay scripts ------------------------------------------------------------------------
+
+void EditorWindow::setUpScripts() {
+    scripts_ = std::make_unique<app::ScriptBuilder>(app::toQString(project_.rootDir()), this);
+    connect(scripts_.get(), &app::ScriptBuilder::buildStarted, this,
+            [this] { statusBar()->showMessage(tr("Building scripts…")); });
+    connect(scripts_.get(), &app::ScriptBuilder::buildFinished, this, &EditorWindow::onScriptsBuilt);
+    scripts_->setWatching(true);  // saving a script rebuilds and reloads the game
+    if (!scripts_->hasScripts()) return;
+    // Load the last build right away; rebuild in the background in case scripts changed since.
+    if (QFileInfo::exists(scripts_->libraryPath())) {
+        auto module = ScriptModule::load(app::toPath(scripts_->libraryPath()), app::toPath(scripts_->loadDir()));
+        if (module) {
+            gameModule_ = std::move(*module);
+        } else {
+            log::warn("Script", "{}", module.error().message);
+        }
+    }
+    scripts_->build();
+}
+
+void EditorWindow::onScriptsBuilt(bool ok, const QString& output) {
+    if (!ok) {
+        statusBar()->showMessage(tr("Script build failed - see the Console"), 8000);
+        const QString summary = output.trimmed().right(1500);
+        log::error("Script", "build failed:\n{}", summary.toStdString());
+        return;
+    }
+    auto module = ScriptModule::load(app::toPath(scripts_->libraryPath()), app::toPath(scripts_->loadDir()));
+    if (!module) {
+        statusBar()->showMessage(tr("Scripts built but could not be loaded - see the Console"), 8000);
+        log::error("Script", "{}", module.error().message);
+        return;
+    }
+    gameModule_ = std::move(*module);
+    if (simulation_) {
+        simulation_->setScripts(gameModule_, &viewport_->input());  // hot reload while playing
+        statusBar()->showMessage(tr("Scripts reloaded (%1 behaviours running)").arg(simulation_->scriptInstances()), 4000);
+    } else {
+        statusBar()->showMessage(tr("Scripts built: %1 behaviours").arg(gameModule_->behaviours().size()), 4000);
+    }
+}
+
+void EditorWindow::newBehaviour() {
+    bool accepted = false;
+    const QString name = QInputDialog::getText(this, tr("New Behaviour"), tr("Class name (C++ identifier):"),
+                                               QLineEdit::Normal, QStringLiteral("MyBehaviour"), &accepted)
+                             .trimmed();
+    if (!accepted || name.isEmpty()) return;
+    QString error;
+    if (!scripts_->createBehaviour(name, &error)) {
+        QMessageBox::warning(this, tr("New Behaviour"), error);
+        return;
+    }
+    const QString file = QDir(scripts_->scriptsDir()).filePath(name + QStringLiteral(".cpp"));
+    log::info("Script", "created {}", file.toStdString());
+    QDesktopServices::openUrl(QUrl::fromLocalFile(file));  // the user's code editor
+    scripts_->build();
 }
 
 } // namespace lumora::editor

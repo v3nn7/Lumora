@@ -1,6 +1,7 @@
 #include "runtime/Simulation.hpp"
 
 #include "runtime/PhysicsWorld.hpp"
+#include "runtime/Scripting.hpp"
 #include "scene/Scene.hpp"
 
 #include <glm/geometric.hpp>
@@ -52,8 +53,20 @@ int Simulation::advance(double frameSeconds) {
     return executed;
 }
 
+void Simulation::setScripts(std::shared_ptr<ScriptModule> module, const InputState* input) {
+    if (scripts_) {
+        scripts_->reload(std::move(module));
+    } else if (module) {
+        scripts_ = std::make_unique<ScriptRunner>(scene_, std::move(module), input);
+    }
+}
+
+std::size_t Simulation::scriptInstances() const noexcept { return scripts_ ? scripts_->instanceCount() : 0; }
+
 void Simulation::step() {
     const auto dt = static_cast<float>(fixedStep_);
+    // Behaviours first, so physics and rendering see what they did this step.
+    if (scripts_) scripts_->update(dt, simulatedSeconds());
     runRotatorSystem(scene_, dt);
     scene_.updateWorldTransforms();
     if (physics_) {

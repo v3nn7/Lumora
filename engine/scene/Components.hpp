@@ -79,6 +79,11 @@ struct CameraComponent {
     bool primary = true;
 };
 
+/// Runs a C++ behaviour from the project's game library (Scripts/) while the simulation runs.
+struct ScriptComponent {
+    std::string behaviour;  // class name registered with LUMORA_BEHAVIOUR
+};
+
 /// Built-in gameplay behaviour: spins the entity while the simulation runs.
 struct RotatorComponent {
     glm::vec3 axis{0.0f, 1.0f, 0.0f};

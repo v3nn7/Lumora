@@ -26,8 +26,11 @@ lumora_qt_module(appcommon
         common/Snapshot.cpp
         common/Preferences.cpp
         common/WaylandPointerLock.cpp
+        common/ScriptBuilder.cpp
         common/resources.qrc
     DEPS lumora_project lumora_renderer lumora_runtime lumora_cli Qt6::Widgets Qt6::Svg)
+# Development builds find the scripting SDK headers in the source tree; packages ship them in include/.
+target_compile_definitions(lumora_appcommon PRIVATE LUMORA_SDK_INCLUDE_DIR="${CMAKE_SOURCE_DIR}/sdk/include")
 if(LUMORA_WAYLAND_POINTER_LOCK)
     target_link_libraries(lumora_appcommon PRIVATE lumora_wayland_protocols)
     target_compile_definitions(lumora_appcommon PRIVATE LUMORA_HAS_WAYLAND_POINTER_LOCK=1)
@@ -142,6 +145,8 @@ install(TARGETS lumora-editor RUNTIME DESTINATION bin COMPONENT editor)
 foreach(component editor hub)
     install(FILES ${CMAKE_SOURCE_DIR}/LICENSE ${CMAKE_SOURCE_DIR}/THIRD_PARTY.md DESTINATION . COMPONENT ${component})
 endforeach()
+# Gameplay scripting SDK: the headers game libraries are compiled against.
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/sdk/include/ DESTINATION include COMPONENT editor)
 install(TARGETS lumora-hub RUNTIME DESTINATION bin COMPONENT hub)
 # Qt's libraries and plugins (platform integrations, image formats, TLS for downloads, ...) go
 # into the package. On Linux a deterministic script bundles only Qt and its ICU, never system

@@ -1,12 +1,16 @@
 #include "player/PlayerWindow.hpp"
 
 #include "common/AppContext.hpp"
+#include "common/ProjectUi.hpp"
+#include "common/ScriptBuilder.hpp"
 #include "common/Theme.hpp"
 #include "core/Log.hpp"
+#include "runtime/Scripting.hpp"
 #include "runtime/Simulation.hpp"
 #include "scene/Scene.hpp"
 
 #include <QEvent>
+#include <QFileInfo>
 #include <QMessageBox>
 
 namespace lumora::app {
@@ -24,6 +28,16 @@ PlayerWindow::PlayerWindow(AppContext& app, Project project, std::unique_ptr<Sce
     window_->setIcon(theme::icon(QStringLiteral("logo")));
     window_->resize(1280, 720);
     window_->installEventFilter(this);
+    // The game's behaviours, as last built by the editor (the player does not compile).
+    const ScriptBuilder scripts(toQString(project_.rootDir()));
+    if (QFileInfo::exists(scripts.libraryPath())) {
+        auto module = ScriptModule::load(toPath(scripts.libraryPath()), toPath(scripts.loadDir()));
+        if (module) {
+            simulation_->setScripts(*module, &window_->input());
+        } else {
+            log::error("Player", "{}", module.error().message);
+        }
+    }
     connect(window_.get(), &VulkanViewport::renderFailed, this, [this](const QString& message) {
         QMessageBox::critical(nullptr, tr("Lumora Player"), message);
         window_->close();

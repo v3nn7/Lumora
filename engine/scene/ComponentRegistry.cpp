@@ -113,6 +113,13 @@ ComponentRegistry makeBuiltin() {
         reg.add(std::move(d));
     }
     {
+        auto d = R::describe<ScriptComponent>("Script", "Script");
+        d.fields = {
+            R::field(&ScriptComponent::behaviour, "behaviour", "Behaviour", FieldKind::String),
+        };
+        reg.add(std::move(d));
+    }
+    {
         auto d = R::describe<RotatorComponent>("Rotator", "Rotator");
         d.fields = {
             R::field(&RotatorComponent::axis, "axis", "Axis", FieldKind::Vec3),

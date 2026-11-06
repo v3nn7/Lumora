@@ -22,12 +22,25 @@ std::string formatValue(float v) {
 
 } // namespace
 
-void GameUi::beginStep(const InputState* input, HudCanvas* hud) {
+void GameUi::beginStep(const InputState* input, HudCanvas* hud, Navigation navigation) {
     hud_ = hud;
     input_ = input;
+    nav_ = navigation;
+    lastWidgets_ = widgets_;
+    widgets_ = 0;
+    if (lastWidgets_ == 0) {
+        focus_ = -1;
+    } else if (nav_.down) {
+        focus_ = (focus_ + 1) % lastWidgets_;
+    } else if (nav_.up) {
+        focus_ = focus_ <= 0 ? lastWidgets_ - 1 : focus_ - 1;
+    } else if (focus_ >= lastWidgets_) {
+        focus_ = lastWidgets_ - 1;
+    }
     pressed_.fill(false);
     released_.fill(false);
     keyPressed_.fill(false);
+    padPressed_.fill(false);
     if (input == nullptr) {
         mouse_ = glm::vec2(-1.0f);
         active_ = 0;
@@ -49,12 +62,23 @@ void GameUi::beginStep(const InputState* input, HudCanvas* hud) {
         if (primed_) keyPressed_[k] = input->pressCount(key) != seenKeys_[k];
         seenKeys_[k] = input->pressCount(key);
     }
+    for (std::size_t b = 0; b < padPressed_.size(); ++b) {
+        const auto button = static_cast<GamepadButton>(b);
+        if (primed_) padPressed_[b] = input->pressCount(button) != seenPad_[b];
+        seenPad_[b] = input->pressCount(button);
+    }
+    if (primed_ && mouse_ != lastMouse_ && lastMouse_.x >= 0.0f) focus_ = -1;  // the mouse moved: it leads
+    lastMouse_ = mouse_;
     primed_ = true;
     // The button is up and was not pressed since: nothing is being held.
     if (!pressed(MouseButton::Left) && !input->isDown(MouseButton::Left)) {
         if (!released(MouseButton::Left)) active_ = 0;
     }
 }
+
+void GameUi::beginStep(const InputState* input, HudCanvas* hud) { beginStep(input, hud, Navigation{}); }
+
+bool GameUi::takeFocusSlot() { return widgets_++ == focus_; }
 
 bool GameUi::hovered(glm::vec4 r) const noexcept {
     return mouse_.x >= r.x && mouse_.y >= r.y && mouse_.x < r.x + r.z && mouse_.y < r.y + r.w;
@@ -85,11 +109,12 @@ void GameUi::label(std::string_view s, glm::vec4 rect, HudCanvas::Align align, g
 
 bool GameUi::button(std::string_view label, glm::vec4 rect) {
     const std::uint64_t id = idOf(label, rect);
-    const bool over = hovered(rect);
-    if (over && pressed(MouseButton::Left)) active_ = id;
-    bool clicked = false;
+    const bool focused = takeFocusSlot();
+    const bool over = hovered(rect) || focused;
+    if (hovered(rect) && pressed(MouseButton::Left)) active_ = id;
+    bool clicked = focused && nav_.submit;
     if (released(MouseButton::Left) && active_ == id) {
-        clicked = over;
+        clicked = clicked || hovered(rect);
         active_ = 0;
     }
     const bool held = active_ == id && input_ != nullptr && input_->isDown(MouseButton::Left);
@@ -104,11 +129,12 @@ bool GameUi::button(std::string_view label, glm::vec4 rect) {
 
 bool GameUi::checkbox(std::string_view label, bool value, glm::vec4 rect) {
     const std::uint64_t id = idOf(label, rect);
-    const bool over = hovered(rect);
-    if (over && pressed(MouseButton::Left)) active_ = id;
-    bool clicked = false;
+    const bool focused = takeFocusSlot();
+    const bool over = hovered(rect) || focused;
+    if (hovered(rect) && pressed(MouseButton::Left)) active_ = id;
+    bool clicked = focused && nav_.submit;
     if (released(MouseButton::Left) && active_ == id) {
-        clicked = over;
+        clicked = clicked || hovered(rect);
         active_ = 0;
     }
     if (hud_ != nullptr) {
@@ -126,10 +152,16 @@ bool GameUi::checkbox(std::string_view label, bool value, glm::vec4 rect) {
 bool GameUi::slider(std::string_view label, float& value, float min, float max, glm::vec4 rect) {
     if (max < min) std::swap(min, max);
     const std::uint64_t id = idOf(label, rect);
-    const bool over = hovered(rect);
-    if (over && pressed(MouseButton::Left)) active_ = id;
+    const bool focused = takeFocusSlot();
+    const bool over = hovered(rect) || focused;
+    if (hovered(rect) && pressed(MouseButton::Left)) active_ = id;
     const bool held = active_ == id && input_ != nullptr && (input_->isDown(MouseButton::Left) || pressed(MouseButton::Left));
     bool changed = false;
+    if (focused && (nav_.left || nav_.right) && max > min) {
+        const float before = value;
+        value = std::clamp(value + (nav_.right ? 1.0f : -1.0f) * (max - min) * 0.05f, min, max);
+        changed = value != before;
+    }
     if (held && rect.z > 0.0f && max > min) {
         const float t = std::clamp((mouse_.x - rect.x) / rect.z, 0.0f, 1.0f);
         const float next = min + t * (max - min);

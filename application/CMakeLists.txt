@@ -22,6 +22,7 @@ lumora_qt_module(appcommon
         common/QtLogSink.cpp
         common/Theme.cpp
         common/VulkanViewport.cpp
+        common/Gamepad.cpp
         common/ProjectUi.cpp
         common/Snapshot.cpp
         common/Preferences.cpp

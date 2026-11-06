@@ -13,6 +13,7 @@
 #include <QEvent>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QStandardPaths>
 
 namespace lumora::app {
 
@@ -21,6 +22,10 @@ PlayerWindow::PlayerWindow(AppContext& app, Project project, std::unique_ptr<Sce
     scene_->updateWorldTransforms();
     simulation_ = std::make_unique<Simulation>(*scene_);
     simulation_->setProjectRoot(project_.rootDir());
+    // Saves go to the user's data folder: an installed game's own folder may be read-only.
+    const QString saves = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
+                          QStringLiteral("/LumoraGames/") + QString::fromStdString(project_.name());
+    simulation_->setSaveFile(toPath(saves) / "save.json");
     const CameraView initial = sceneCameraView(*scene_, 16.0f / 9.0f);
     freeCamera_.setPosition(initial.position);
     freeCam_ = scene_->primaryCamera() == entt::null;

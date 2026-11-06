@@ -18,6 +18,24 @@ void InputState::setMouseButton(MouseButton button, bool down) noexcept {
 
 void InputState::setMousePosition(glm::vec2 position) noexcept { mousePosition_ = position; }
 
+void InputState::setGamepadConnected(bool connected) noexcept {
+    gamepadConnected_ = connected;
+    if (!connected) {
+        padButtons_.fill(false);
+        padAxes_.fill(0.0f);
+    }
+}
+
+void InputState::setGamepadButton(GamepadButton button, bool down) noexcept {
+    if (button == GamepadButton::Count) return;
+    if (down && !padButtons_[index(button)]) ++padPresses_[index(button)];
+    padButtons_[index(button)] = down;
+}
+
+void InputState::setGamepadAxis(GamepadAxis axis, float value) noexcept {
+    if (axis != GamepadAxis::Count) padAxes_[index(axis)] = value;
+}
+
 void InputState::addMouseDelta(glm::vec2 delta) noexcept { mouseDelta_ += delta; }
 
 void InputState::addScroll(float steps) noexcept { scroll_ += steps; }

@@ -16,6 +16,8 @@
 #include "editor/EntityFactory.hpp"
 #include "editor/InspectorPanel.hpp"
 #include "assets/Material.hpp"
+#include "core/FileSystem.hpp"
+#include "runtime/InputActions.hpp"
 #include "scene/Particles.hpp"
 #include "scene/Picking.hpp"
 #include "editor/ProfilerPanel.hpp"
@@ -493,6 +495,14 @@ void EditorWindow::buildMenus() {
     playMenu->addActions({play_, pause_, stop_});
     playMenu->addSeparator();
     playMenu->addAction(pilot_);
+    playMenu->addSeparator();
+    playMenu->addAction(tr("Input Settings…"), this, &EditorWindow::openInputSettings);
+    playMenu->addAction(tr("Clear Saved Game Data"), this, [this] {
+        const auto file = project_.rootDir() / "Saved" / "GameSave.json";
+        std::error_code ec;
+        std::filesystem::remove(file, ec);
+        statusBar()->showMessage(tr("Saved game data cleared"), 4000);
+    });
 
     QMenu* scriptsMenu = menuBar()->addMenu(tr("&Scripts"));
     scriptsMenu->addActions({newBehaviour_, buildScripts_});
@@ -850,6 +860,20 @@ std::optional<std::string> EditorWindow::pickMaterialAsset(QWidget* parent) {
     return project_.relativePath(path);
 }
 
+void EditorWindow::openInputSettings() {
+    // The project's Config/Input.json, started from the built-in actions and axes.
+    const auto file = project_.rootDir() / "Config" / "Input.json";
+    std::error_code ec;
+    if (!std::filesystem::exists(file, ec)) {
+        std::filesystem::create_directories(file.parent_path(), ec);
+        if (auto written = fs::writeTextFileAtomic(file, InputActions::defaults().toJson().dump(2) + "\n"); !written) {
+            QMessageBox::critical(this, tr("Input Settings"), QString::fromStdString(written.error().message));
+            return;
+        }
+    }
+    openCode(app::toQString(file));
+}
+
 bool EditorWindow::assignMaterial(Uuid id, const QString& materialPath) {
     Scene* scene = ctx_.scene();
     const entt::entity target = scene != nullptr ? scene->findByUuid(id) : entt::entity{entt::null};
@@ -1078,6 +1102,7 @@ void EditorWindow::play() {
     playScene_ = std::move(*copy);
     simulation_ = std::make_unique<Simulation>(*playScene_);
     simulation_->setProjectRoot(project_.rootDir());
+    simulation_->setSaveFile(project_.rootDir() / "Saved" / "GameSave.json");  // kept between plays
     if (AudioWorld::sceneHasAudio(*playScene_)) {
         auto audio = AudioWorld::create(*playScene_, {project_.rootDir(), true});
         if (audio) {

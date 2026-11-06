@@ -724,3 +724,25 @@ TEST_F(EditorUiTest, MaterialsAreCreatedEditedAndDroppedOnObjects) {
     emit hierarchy->tree()->filesDropped(scene.uuidOf(other), {paint});
     EXPECT_EQ(scene.registry().get<MeshRendererComponent>(other).material, "Content/Materials/Paint.lmat");
 }
+
+#include "common/Gamepad.hpp"
+
+TEST(Gamepad, DeadZoneIsRadialAndRescaled) {
+    float x = 0.1f, y = 0.05f;
+    app::GamepadReader::applyDeadZone(x, y, 0.15f);
+    EXPECT_EQ(x, 0.0f);
+    EXPECT_EQ(y, 0.0f);
+    x = 1.0f;
+    y = 0.0f;
+    app::GamepadReader::applyDeadZone(x, y, 0.15f);
+    EXPECT_FLOAT_EQ(x, 1.0f) << "still reaches the edge";
+    x = 0.0f;
+    y = -0.575f;  // half way between the dead zone and the edge
+    app::GamepadReader::applyDeadZone(x, y, 0.15f);
+    EXPECT_NEAR(y, -0.5f, 1e-5f);
+    app::GamepadReader reader;  // no controller in CI: polling must be harmless
+    InputState input;
+    reader.poll(input);
+    reader.poll(input);
+    SUCCEED();
+}

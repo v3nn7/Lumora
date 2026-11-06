@@ -72,6 +72,8 @@ public:
     entt::entity addModelToScene(const QString& absolutePath, std::optional<glm::vec3> where = std::nullopt);
     /// Gives an entity (and its children's Mesh Renderers) a material asset; one undo step.
     bool assignMaterial(Uuid entity, const QString& materialPath);
+    /// Opens Config/Input.json in the code editor (written with the defaults first).
+    void openInputSettings();
     /// What dropping files at a viewport position does: materials go on the object under the
     /// cursor, models and prefabs are placed there, HDR images become the sky.
     void dropOnViewport(const QStringList& files, glm::vec2 ndc);

@@ -24,8 +24,23 @@ public:
         float fontSize = 22.0f;
     };
 
-    /// Samples the input for this step; `input` may be null (no clicks).
+    /// Menu navigation without a mouse (keyboard arrows, gamepad d-pad), pressed this step.
+    struct Navigation {
+        bool up = false;
+        bool down = false;
+        bool left = false;
+        bool right = false;
+        bool submit = false;
+    };
+
+    /// Samples the input for this step; `input` may be null (no clicks). Up/Down move the focus
+    /// through the widgets of the previous step in call order, Submit clicks the focused one,
+    /// Left/Right move a focused slider; moving the mouse hands control back to it.
+    void beginStep(const InputState* input, HudCanvas* hud, Navigation navigation);
     void beginStep(const InputState* input, HudCanvas* hud);
+    /// Index (call order) of the focused widget, -1 when the mouse is in charge.
+    [[nodiscard]] int focus() const noexcept { return focus_; }
+    [[nodiscard]] bool padPressed(GamepadButton b) const noexcept { return padPressed_[static_cast<std::size_t>(b)]; }
 
     /// Mouse position in HUD pixels.
     [[nodiscard]] glm::vec2 mouse() const noexcept { return mouse_; }
@@ -47,6 +62,8 @@ public:
 
 private:
     [[nodiscard]] bool hovered(glm::vec4 rect) const noexcept;
+    /// Registers a focusable widget; true if it has the keyboard/gamepad focus.
+    bool takeFocusSlot();
     [[nodiscard]] static std::uint64_t idOf(std::string_view label, glm::vec4 rect) noexcept;
     void text(std::string_view text, glm::vec4 rect, HudCanvas::Align align, float size, glm::vec4 color);
 
@@ -60,6 +77,13 @@ private:
     std::array<std::uint32_t, static_cast<std::size_t>(MouseButton::Count)> seenPresses_{};
     std::array<std::uint32_t, static_cast<std::size_t>(MouseButton::Count)> seenReleases_{};
     std::array<std::uint32_t, static_cast<std::size_t>(Key::Count)> seenKeys_{};
+    std::array<bool, static_cast<std::size_t>(GamepadButton::Count)> padPressed_{};
+    std::array<std::uint32_t, static_cast<std::size_t>(GamepadButton::Count)> seenPad_{};
+    Navigation nav_;
+    int focus_ = -1;
+    int widgets_ = 0;      // focusable widgets drawn so far this step
+    int lastWidgets_ = 0;  // ... in the previous step
+    glm::vec2 lastMouse_{-1.0f};
     bool primed_ = false;     // counts captured once (presses before play do not count)
     std::uint64_t active_ = 0;  // widget the left button went down on
 };

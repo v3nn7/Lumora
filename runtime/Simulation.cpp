@@ -3,6 +3,7 @@
 #include "runtime/AnimationSystem.hpp"
 #include "runtime/AudioWorld.hpp"
 #include "runtime/PhysicsWorld.hpp"
+#include "runtime/SaveData.hpp"
 #include "runtime/Scripting.hpp"
 #include "core/Log.hpp"
 #include "scene/Scene.hpp"
@@ -87,7 +88,13 @@ void Simulation::setScripts(std::shared_ptr<ScriptModule> module, const InputSta
         scripts_->setAudio(audio_.get());
         scripts_->setProjectRoot(projectRoot_);
         scripts_->setAnimation(animation_.get());
+        scripts_->setSaveData(save_.get());
     }
+}
+
+void Simulation::setSaveFile(std::filesystem::path file) {
+    save_ = std::make_unique<SaveData>(std::move(file));
+    if (scripts_) scripts_->setSaveData(save_.get());
 }
 
 void Simulation::setProjectRoot(std::filesystem::path root) {
@@ -130,6 +137,7 @@ void Simulation::step() {
         scene_.updateWorldTransforms();
         if (scripts_) scripts_->dispatchCollisions(physics_->takeContacts());
     }
+    if (save_) save_->flushIfDue();
     updateParticles(scene_, dt);  // after physics: emitters on moving bodies emit from where they are
     if (audio_) audio_->update();
     ++steps_;

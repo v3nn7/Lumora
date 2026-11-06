@@ -22,6 +22,7 @@ class Scene;
 class PhysicsWorld;
 class ScriptModule;
 class ScriptRunner;
+class SaveData;
 
 /// Drives gameplay systems at a fixed timestep, decoupled from the render frame rate.
 /// Given the same sequence of step counts the result is deterministic.
@@ -62,6 +63,10 @@ public:
     [[nodiscard]] std::uint64_t sceneLoads() const noexcept { return sceneLoads_; }
     /// The scene file last loaded with loadScene() (project-relative), empty before any.
     [[nodiscard]] const std::filesystem::path& loadedScene() const noexcept { return loadedScene_; }
+    /// Where the game's saved values live (behaviours' saveNumber/loadText); read now, written
+    /// while playing and when the simulation ends.
+    void setSaveFile(std::filesystem::path file);
+    [[nodiscard]] SaveData* saveData() noexcept { return save_.get(); }
     /// Plays the scene's Audio Sources (positions follow the entities every step).
     void setAudio(std::unique_ptr<AudioWorld> audio);
     [[nodiscard]] AudioWorld* audio() noexcept { return audio_.get(); }
@@ -84,6 +89,7 @@ private:
     std::uint64_t sceneLoads_ = 0;
     std::filesystem::path loadedScene_;
     bool audioDevice_ = true;  // whether sound for a loaded scene goes to the audio device
+    std::unique_ptr<SaveData> save_;
     std::unique_ptr<PhysicsWorld> physics_;
     std::unique_ptr<AudioWorld> audio_;
     std::unique_ptr<AnimationSystem> animation_;

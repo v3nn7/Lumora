@@ -239,6 +239,22 @@ reflections, ambient light and fog all take their colour from it. Free, high-qua
 - **Ambient** (Sky and Ambient) still scales the environment's ambient light: 1 is physically
   correct.
 
+### Input, controllers and saved games
+
+Behaviours can ask for **actions** instead of keys, so a game works with keyboard and mouse or a
+gamepad without extra code: `action("Jump")` (held), `actionPressed("Jump")` (once per press) and
+`axis("MoveX")` (-1..1). Built in are Jump, Fire, Aim, Interact, Sprint, Crouch, Pause, Submit,
+Cancel, Up, Down, Left, Right and the axes MoveX, MoveY (forward is +), LookX and LookY (up is
++). *Play → Input Settings…* opens the project's `Config/Input.json`, where actions and axes are
+changed or added with names such as `"Space"`, `"Mouse.Left"`, `"Gamepad.A"`,
+`"Gamepad.RightTrigger"` or `"Gamepad.LeftX-"`. Game UI menus follow Up/Down/Left/Right and
+Submit too, so they work with the arrow keys and a controller's d-pad.
+
+Controllers: the first one found is used (Linux joystick devices, XInput on Windows), in the Xbox
+button layout. Saved values (`saveNumber`, `saveText`) live in `Saved/GameSave.json` while
+playing in the editor (*Play → Clear Saved Game Data* resets them) and in the player's data
+folder in exported games.
+
 ### Particle effects
 
 *Create → Effects* adds ready-made **Smoke**, **Sparks** and **Fire**; any entity can get a
@@ -341,6 +357,9 @@ What a behaviour can do:
 | `button(text, x, y, w, h)`, `checkbox(text, value, x, y)`, `slider(text, value, min, max, x, y)`, `panel(x, y, w, h)`, `uiStyle(accent)` | Game UI: menus and settings drawn over the game; a button returns true when clicked |
 | `mousePosition()`, `mousePressed(b)`, `mouseReleased(b)`, `keyPressed(key)` | Mouse in HUD pixels; presses since the last step (once each) |
 | `drawTextCentered(text, x, y)`, `drawTextRight(text, x, y)` | Aligned HUD text |
+| `action("Jump")`, `actionPressed("Interact")`, `axis("MoveX")` | Input actions: keyboard, mouse and gamepad together (see below) |
+| `gamepadConnected()`, `gamepadButton(b)`, `gamepadPressed(b)`, `gamepadAxis(a)` | A game controller directly (Xbox layout) |
+| `saveNumber(key, v)`, `loadNumber(key, fallback)`, `saveText`, `loadText`, `hasSave`, `deleteSave` | Saved game data, kept between runs |
 | `after(2.0f, [this] { ... })`, `every(0.5f, [this] { ... })`, `cancelTimer(id)` | Run code later or repeatedly, in game time |
 | `debugLine(a, b)`, `debugBox(center, half)`, `debugSphere(center, r)` | Debug shapes on top of the scene for this step (editor while playing; player after <kbd>F3</kbd>) |
 | `emitParticles(n)`, `setParticlesPlaying(on)`, `particleCount()` | The entity's Particle Emitter |

@@ -550,3 +550,75 @@ LUMORA_BEHAVIOUR(Tools);
     sim.step();
     EXPECT_FLOAT_EQ(t.position.y, 1.0f) << "Enter, a key added to the API";
 }
+
+TEST_F(ScriptTest, ActionsGamepadAndSavedData) {
+    const std::filesystem::path project = dir.path();
+    writeScript(project, "Player.cpp", R"cpp(#include <lumora/Script.hpp>
+using namespace lumora::script;
+class Runner : public Behaviour {
+public:
+    void start() override { best_ = loadNumber("best", 0.0); runs_ = static_cast<int>(loadNumber("runs")) + 1; saveNumber("runs", runs_); }
+    void update(float dt) override {
+        Vec3 p = position();
+        p.x += axis("MoveX") * dt;
+        p.z -= axis("MoveY") * dt;
+        if (actionPressed("Jump")) ++jumps_;
+        if (gamepadPressed(GamepadButton::Start)) saveText("note", "paused with " + std::to_string(jumps_) + " jumps");
+        p.y = static_cast<float>(jumps_);
+        setPosition(p);
+        if (p.x > best_) { best_ = p.x; saveNumber("best", best_); }
+        setScale(Vec3{static_cast<float>(runs_), gamepadConnected() ? 1.0f : 0.0f, gamepadAxis(GamepadAxis::RightTrigger)});
+    }
+private:
+    double best_ = 0.0;
+    int runs_ = 0;
+    int jumps_ = 0;
+};
+LUMORA_BEHAVIOUR(Runner);
+)cpp");
+    app::ScriptBuilder builder(QString::fromStdString(project.string()));
+    QString log;
+    ASSERT_TRUE(builder.buildBlocking(&log)) << log.toStdString();
+    auto module = ScriptModule::load(builder.libraryPath().toStdString(), builder.loadDir().toStdString());
+    ASSERT_TRUE(module.has_value()) << module.error().message;
+    const auto saveFile = project / "Saved" / "GameSave.json";
+
+    auto play = [&](const std::function<void(Simulation&, InputState&, TransformComponent&)>& body) {
+        Scene scene("Run");
+        const entt::entity e = scene.createEntity("Runner");
+        scene.registry().emplace<ScriptComponent>(e).behaviour = "Runner";
+        InputState input;
+        Simulation sim(scene, 0.1);
+        sim.setProjectRoot(project);
+        sim.setSaveFile(saveFile);
+        sim.setScripts(*module, &input);
+        body(sim, input, scene.registry().get<TransformComponent>(e));
+    };
+    play([](Simulation& sim, InputState& input, TransformComponent& t) {
+        input.setKey(Key::D, true);  // MoveX from the keyboard
+        for (int i = 0; i < 10; ++i) sim.step();
+        EXPECT_NEAR(t.position.x, 1.0f, 1e-4f);
+        input.setKey(Key::D, false);
+        input.setGamepadConnected(true);
+        input.setGamepadAxis(GamepadAxis::LeftY, -1.0f);  // stick forward: MoveY = 1
+        input.setGamepadAxis(GamepadAxis::RightTrigger, 0.25f);
+        input.setGamepadButton(GamepadButton::A, true);   // Jump
+        input.setGamepadButton(GamepadButton::A, false);  // a tap between steps
+        for (int i = 0; i < 5; ++i) sim.step();
+        EXPECT_NEAR(t.position.z, -0.5f, 1e-4f);
+        EXPECT_FLOAT_EQ(t.position.y, 1.0f) << "one jump from the tap";
+        EXPECT_FLOAT_EQ(t.scale.y, 1.0f) << "gamepadConnected";
+        EXPECT_FLOAT_EQ(t.scale.z, 0.25f) << "gamepadAxis";
+        input.setGamepadButton(GamepadButton::Start, true);
+        sim.step();
+        EXPECT_FLOAT_EQ(t.scale.x, 1.0f) << "first run";
+    });
+    ASSERT_TRUE(std::filesystem::exists(saveFile)) << "written when play ended";
+    play([](Simulation& sim, InputState&, TransformComponent& t) {
+        sim.step();
+        EXPECT_FLOAT_EQ(t.scale.x, 2.0f) << "the run counter survived";
+        ASSERT_NE(sim.saveData(), nullptr);
+        EXPECT_NEAR(*sim.saveData()->number("best"), 1.0, 1e-4);
+        EXPECT_EQ(sim.saveData()->text("note"), std::string("paused with 1 jumps"));
+    });
+}

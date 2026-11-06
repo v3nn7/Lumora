@@ -48,6 +48,22 @@ constexpr ScriptApiEntry kApi[] = {
     {S::Behaviour, "setMaterial", "bool setMaterial(path)", "Use a .lmat material (\"\" = own settings)"},
     {S::Behaviour, "setMaterialOf", "bool setMaterialOf(Entity e, path)", "Another entity's material"},
     {S::Behaviour, "setColor", "bool setColor(Vec3 rgb)", "Mesh Renderer base colour (0..1)"},
+    // Input actions and gamepad
+    {S::Behaviour, "action", "bool action(name)", "Input action held (Jump, Fire, Interact, ...)"},
+    {S::Behaviour, "actionPressed", "bool actionPressed(name)", "Input action pressed this step"},
+    {S::Behaviour, "axis", "float axis(name)", "Input axis -1..1 (MoveX, MoveY, LookX, LookY)"},
+    {S::Behaviour, "gamepadConnected", "bool gamepadConnected()", "A controller is plugged in"},
+    {S::Behaviour, "gamepadButton", "bool gamepadButton(GamepadButton b)", "Controller button held"},
+    {S::Behaviour, "gamepadPressed", "bool gamepadPressed(GamepadButton b)", "Controller button pressed this step"},
+    {S::Behaviour, "gamepadAxis", "float gamepadAxis(GamepadAxis a)", "Stick -1..1, trigger 0..1"},
+    // Saved data
+    {S::Behaviour, "saveNumber", "void saveNumber(key, double value)", "Keep a number between runs"},
+    {S::Behaviour, "loadNumber", "double loadNumber(key, double fallback = 0)", "A saved number"},
+    {S::Behaviour, "saveText", "void saveText(key, text)", "Keep a text between runs"},
+    {S::Behaviour, "loadText", "std::string loadText(key, fallback = \"\")", "A saved text"},
+    {S::Behaviour, "hasSave", "bool hasSave(key)", "Is something saved under key"},
+    {S::Behaviour, "deleteSave", "void deleteSave(key)", "Forget a saved value"},
+    {S::Behaviour, "deleteAllSaves", "void deleteAllSaves()", "Forget every saved value"},
     // Debug drawing and timers
     {S::Behaviour, "debugLine", "void debugLine(Vec3 from, Vec3 to, Vec3 color)", "Debug line on top of the scene"},
     {S::Behaviour, "debugBox", "void debugBox(Vec3 center, Vec3 halfSize, Vec3 color)", "Debug box outline"},
@@ -95,6 +111,8 @@ constexpr ScriptApiEntry kApi[] = {
     {S::Type, "RayHit", "struct RayHit", "raycast result: entity, point, normal, distance"},
     {S::Type, "Key", "enum class Key", "Keyboard keys"},
     {S::Type, "MouseButton", "enum class MouseButton", "Left, Right, Middle"},
+    {S::Type, "GamepadButton", "enum class GamepadButton", "A, B, X, Y, bumpers, Start, d-pad ..."},
+    {S::Type, "GamepadAxis", "enum class GamepadAxis", "LeftX, LeftY, RightX, RightY, triggers"},
     {S::Type, "LUMORA_BEHAVIOUR", "LUMORA_BEHAVIOUR(Type);", "Register a behaviour class"},
     // Members
     {S::Member, "x", "float x", "Vec3"},

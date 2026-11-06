@@ -447,6 +447,56 @@ void apiDebugDraw(void* c, int kind, const float* a, const float* b, const float
     }
 }
 
+float apiInput(void* c, int kind, int code, const char* name) {
+    Context& ctx = context(c);
+    const InputState* input = ctx.input;
+    const std::string_view n = name != nullptr ? name : "";
+    const bool button = code >= 0 && code < static_cast<int>(GamepadButton::Count);
+    switch (kind) {
+        case 0: return ctx.actions.down(n) ? 1.0f : 0.0f;
+        case 1: return ctx.actions.pressed(n) ? 1.0f : 0.0f;
+        case 2: return ctx.actions.axis(n);
+        case 3: return input != nullptr && input->gamepadConnected() ? 1.0f : 0.0f;
+        case 4: return input != nullptr && button && input->isDown(static_cast<GamepadButton>(code)) ? 1.0f : 0.0f;
+        case 5: return button && ctx.ui.padPressed(static_cast<GamepadButton>(code)) ? 1.0f : 0.0f;
+        case 6:
+            return input != nullptr && code >= 0 && code < static_cast<int>(GamepadAxis::Count)
+                       ? input->axis(static_cast<GamepadAxis>(code))
+                       : 0.0f;
+        default: return 0.0f;
+    }
+}
+
+int apiSave(void* c, int command, const char* key, const char* text, double number, char* out, int capacity,
+            double* outNumber) {
+    SaveData* save = context(c).save;
+    if (save == nullptr) return 0;
+    const std::string_view k = key != nullptr ? key : "";
+    switch (command) {
+        case 0: save->setNumber(k, number); return 1;
+        case 1: {
+            const auto v = save->number(k);
+            if (v && outNumber != nullptr) *outNumber = *v;
+            return v ? 1 : 0;
+        }
+        case 2: save->setText(k, text != nullptr ? text : ""); return 1;
+        case 3: {
+            const auto v = save->text(k);
+            if (!v) return -1;
+            if (out != nullptr && capacity > 0) {
+                const auto n = std::min<std::size_t>(v->size(), static_cast<std::size_t>(capacity - 1));
+                std::copy_n(v->data(), n, out);
+                out[n] = '\0';
+            }
+            return static_cast<int>(v->size());
+        }
+        case 4: return save->has(k) ? 1 : 0;
+        case 5: save->erase(k); return 1;
+        case 6: save->clear(); return 1;
+        default: return 0;
+    }
+}
+
 /// "speed=4, jump = 6.5; name=2" -> the number for `key`, or `fallback`.
 double apiParameter(void* c, script::Entity entity, const char* key, double fallback) {
     const entt::entity e = liveEntity(c, entity);
@@ -582,6 +632,8 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.drawTextAligned = apiDrawTextAligned;
     api_.particles = apiParticles;
     api_.debugDraw = apiDebugDraw;
+    api_.input = apiInput;
+    api_.save = apiSave;
 }
 
 ScriptRunner::~ScriptRunner() { destroyInstances(); }
@@ -700,7 +752,11 @@ void ScriptRunner::destroyInstances() {
 
 void ScriptRunner::update(float dt, double simulatedSeconds) {
     context_.time = simulatedSeconds;
-    context_.ui.beginStep(context_.input, context_.hud);
+    context_.actions.beginStep(context_.input);
+    const InputActions& actions = context_.actions;
+    context_.ui.beginStep(context_.input, context_.hud,
+                          {actions.pressed("Up"), actions.pressed("Down"), actions.pressed("Left"),
+                           actions.pressed("Right"), actions.pressed("Submit")});
     if (!created_) createInstances();
     // Index loop: behaviours may clone entities (appending instances only in finishStep).
     for (std::size_t i = 0; i < instances_.size();) {
@@ -718,6 +774,17 @@ void ScriptRunner::update(float dt, double simulatedSeconds) {
         }
     }
     finishStep();
+}
+
+void ScriptRunner::setProjectRoot(std::filesystem::path root) {
+    context_.projectRoot = std::move(root);
+    auto actions = InputActions::forProject(context_.projectRoot);
+    if (actions) {
+        context_.actions = std::move(*actions);
+    } else {
+        log::error("Input", "{} - using the default input settings", actions.error().message);
+        context_.actions = InputActions::defaults();
+    }
 }
 
 void ScriptRunner::restart() {

@@ -71,6 +71,14 @@ inline constexpr Entity kNoEntity = ~Entity{0};
 
 enum class MouseButton : int { Left, Right, Middle };
 
+/// Xbox layout (other controllers report the same positions).
+enum class GamepadButton : int {
+    A, B, X, Y, LeftBumper, RightBumper, Back, Start, Guide, LeftStick, RightStick,
+    DPadUp, DPadDown, DPadLeft, DPadRight,
+};
+/// Sticks -1..1 (x right, y down), triggers 0..1.
+enum class GamepadAxis : int { LeftX, LeftY, RightX, RightY, LeftTrigger, RightTrigger };
+
 /// Result of Behaviour::raycast.
 struct RayHit {
     Entity entity = ~Entity{0};
@@ -121,6 +129,13 @@ struct EngineApi {
     void (*drawTextAligned)(void* context, const char* utf8, const float* xyWidthSize, int align, const float* rgba);
     int (*particles)(void* context, Entity entity, int command, int count);  // 0 stop, 1 play, 2 burst, 3 alive
     void (*debugDraw)(void* context, int kind, const float* a, const float* b, const float* rgba);  // 0 line, 1 box, 2 sphere
+    // kind: 0 action down, 1 action pressed, 2 axis, 3 gamepad connected, 4 pad button down,
+    // 5 pad button pressed, 6 pad axis (code = button or axis, name = action or axis)
+    float (*input)(void* context, int kind, int code, const char* name);
+    // command: 0 set number, 1 get number, 2 set text, 3 get text (returns length, -1 if none),
+    // 4 has, 5 delete, 6 delete all
+    int (*save)(void* context, int command, const char* key, const char* text, double number, char* out, int capacity,
+                double* outNumber);
 };
 
 class Behaviour;
@@ -332,6 +347,48 @@ protected:
         return api_->setColor(api_->context, entity_, c) != 0;
     }
 
+    // Input actions: named inputs from the project's input settings (Config/Input.json), so the
+    // same code works with a keyboard and mouse or a gamepad. Built in: Jump, Fire, Aim,
+    // Interact, Sprint, Crouch, Pause, Submit, Cancel, Up, Down, Left, Right; axes MoveX,
+    // MoveY (forward +), LookX, LookY (up +).
+    [[nodiscard]] bool action(std::string_view name) const { return in(0, 0, name) != 0.0f; }
+    /// Pressed since the previous step (once per press).
+    [[nodiscard]] bool actionPressed(std::string_view name) const { return in(1, 0, name) != 0.0f; }
+    /// -1..1
+    [[nodiscard]] float axis(std::string_view name) const { return in(2, 0, name); }
+    [[nodiscard]] bool gamepadConnected() const { return in(3, 0, {}) != 0.0f; }
+    [[nodiscard]] bool gamepadButton(GamepadButton b) const { return in(4, static_cast<int>(b), {}) != 0.0f; }
+    [[nodiscard]] bool gamepadPressed(GamepadButton b) const { return in(5, static_cast<int>(b), {}) != 0.0f; }
+    [[nodiscard]] float gamepadAxis(GamepadAxis a) const { return in(6, static_cast<int>(a), {}); }
+
+    // Saved data: kept between runs of the game (progress, high scores, settings).
+    void saveNumber(std::string_view key, double value) const {
+        api_->save(api_->context, 0, std::string(key).c_str(), nullptr, value, nullptr, 0, nullptr);
+    }
+    [[nodiscard]] double loadNumber(std::string_view key, double fallback = 0.0) const {
+        double v = fallback;
+        return api_->save(api_->context, 1, std::string(key).c_str(), nullptr, 0.0, nullptr, 0, &v) != 0 ? v : fallback;
+    }
+    void saveText(std::string_view key, std::string_view value) const {
+        api_->save(api_->context, 2, std::string(key).c_str(), std::string(value).c_str(), 0.0, nullptr, 0, nullptr);
+    }
+    [[nodiscard]] std::string loadText(std::string_view key, std::string_view fallback = {}) const {
+        const std::string k(key);
+        const int length = api_->save(api_->context, 3, k.c_str(), nullptr, 0.0, nullptr, 0, nullptr);
+        if (length < 0) return std::string(fallback);
+        std::string out(static_cast<std::size_t>(length) + 1, '\0');
+        api_->save(api_->context, 3, k.c_str(), nullptr, 0.0, out.data(), length + 1, nullptr);
+        out.resize(static_cast<std::size_t>(length));
+        return out;
+    }
+    [[nodiscard]] bool hasSave(std::string_view key) const {
+        return api_->save(api_->context, 4, std::string(key).c_str(), nullptr, 0.0, nullptr, 0, nullptr) != 0;
+    }
+    void deleteSave(std::string_view key) const {
+        api_->save(api_->context, 5, std::string(key).c_str(), nullptr, 0.0, nullptr, 0, nullptr);
+    }
+    void deleteAllSaves() const { api_->save(api_->context, 6, "", nullptr, 0.0, nullptr, 0, nullptr); }
+
     // Debug drawing: shapes on top of the scene for this step (draw them in every update()).
     // Shown in the editor while playing, and in the player after F3.
     void debugLine(Vec3 from, Vec3 to, Vec3 color = Vec3{1.0f, 0.85f, 0.2f}) const { debug(0, from, to, color); }
@@ -432,6 +489,9 @@ private:
         }
         timers_.erase(std::remove_if(timers_.begin(), timers_.end(), [](const Timer& t) { return t.id == 0; }),
                       timers_.end());
+    }
+    float in(int kind, int code, std::string_view name) const {
+        return api_->input(api_->context, kind, code, std::string(name).c_str());
     }
     void debug(int kind, Vec3 a, Vec3 b, Vec3 color) const {
         const float pa[3] = {a.x, a.y, a.z};

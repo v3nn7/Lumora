@@ -2,6 +2,7 @@
 
 #include "common/AppContext.hpp"
 #include "common/WaylandPointerLock.hpp"
+#include "common/Gamepad.hpp"
 #include "core/Log.hpp"
 #include "renderer/RenderContext.hpp"
 #include "renderer/Renderer.hpp"
@@ -322,6 +323,7 @@ void VulkanViewport::renderFrame() {
         const glm::vec2 motion = pointerLock_->takeMotion();  // locked: the only source of motion
         if (looking_ && (motion.x != 0.0f || motion.y != 0.0f)) input_.addMouseDelta(motion);
     }
+    gamepad_->poll(input_);  // controllers work without window focus too, like other games
     client_.viewportTick(static_cast<float>(dt), input_, isActive());
     input_.endFrame();
 

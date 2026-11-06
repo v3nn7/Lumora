@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/ModuleExport.hpp"
+#include "common/Gamepad.hpp"
 
 #include "input/InputState.hpp"
 #include "renderer/SceneRenderer.hpp"
@@ -142,6 +143,7 @@ private:
     QWidget* inputContainer_ = nullptr;  // receives the pointer for us on Wayland (pass-through)
     QTimer pointerDrain_;                               // keeps its private event queue drained
     InputState input_;
+    std::unique_ptr<GamepadReader> gamepad_ = std::make_unique<GamepadReader>();
     QElapsedTimer frameTimer_;
     QElapsedTimer paceTimer_;
     QPointF lastMouse_;

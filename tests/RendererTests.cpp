@@ -485,3 +485,41 @@ TEST_F(RendererTest, AmbientOcclusionDarkensContactsOnly) {
     EXPECT_NEAR(luminance(pixel(*occluded, open.x, open.y)), luminance(pixel(*plain, open.x, open.y)), 6.0f)
         << "flat open ground is not darkened";
 }
+
+TEST_F(RendererTest, FxaaSmoothsEdgesOnly) {
+    // A tilted cube against the sky: FXAA changes pixels along its silhouette, nothing else.
+    auto scene = sceneWithSun();
+    const auto cube = scene->createEntity("Cube");
+    scene->registry().emplace<MeshRendererComponent>(cube).baseColor = glm::vec3(0.9f);
+    scene->registry().get<TransformComponent>(cube).rotationDeg = glm::vec3(20.0f, 33.0f, 7.0f);
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.0f, 3.5f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    RenderSettings plain;
+    plain.antiAliasing = false;
+    plain.bloom = false;
+    RenderSettings smooth = plain;
+    smooth.antiAliasing = true;
+    auto a = renderer_->capture(*scene, cam.view(1.0f), {128, 128}, plain);
+    auto b = renderer_->capture(*scene, cam.view(1.0f), {128, 128}, smooth);
+    ASSERT_TRUE(a.has_value() && b.has_value());
+    std::size_t changed = 0;
+    std::size_t changedAwayFromEdges = 0;
+    for (std::uint32_t y = 1; y + 1 < 128; ++y) {
+        for (std::uint32_t x = 1; x + 1 < 128; ++x) {
+            // Both paths dither and quantise slightly differently: count real changes only.
+            if (std::abs(luminance(pixel(*b, x, y)) - luminance(pixel(*a, x, y))) < 3.0f) continue;
+            ++changed;
+            // An edge pixel has a neighbour (in the unfiltered image) with clearly different luma.
+            float contrast = 0.0f;
+            for (glm::ivec2 d : {glm::ivec2(1, 0), glm::ivec2(-1, 0), glm::ivec2(0, 1), glm::ivec2(0, -1)}) {
+                contrast = std::max(contrast, std::abs(luminance(pixel(*a, x + d.x, y + d.y)) - luminance(pixel(*a, x, y))));
+            }
+            if (contrast < 4.0f) ++changedAwayFromEdges;
+        }
+    }
+    EXPECT_GT(changed, 40u) << "the silhouette got smoothed";
+    EXPECT_LT(changed, 128u * 128u / 8u) << "FXAA only touches edges";
+    EXPECT_LT(changedAwayFromEdges, changed / 10 + 2) << "flat areas stay as they were";
+}

@@ -16,6 +16,8 @@ lumora_add_shader(LUMORA_SHADER_FILES SOURCE bloom.hlsl    STAGE frag ENTRY PSDo
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE bloom.hlsl    STAGE frag ENTRY PSUpsample OUTPUT bloom.up.frag.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE overlay.hlsl  STAGE vert ENTRY VSMain OUTPUT overlay.vert.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE overlay.hlsl  STAGE frag ENTRY PSMain OUTPUT overlay.frag.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE fxaa.hlsl     STAGE vert ENTRY VSMain OUTPUT fxaa.vert.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE fxaa.hlsl     STAGE frag ENTRY PSMain OUTPUT fxaa.frag.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE tonemap.hlsl  STAGE vert ENTRY VSMain OUTPUT tonemap.vert.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE tonemap.hlsl  STAGE frag ENTRY PSMain OUTPUT tonemap.frag.spv)
 

@@ -45,6 +45,8 @@ struct RenderSettings {
     bool ambientOcclusion = true;
     float aoRadius = 0.6f;     // metres
     float aoIntensity = 1.6f;  // exponent applied to the visibility
+    /// FXAA on the final image: smooths jagged edges.
+    bool antiAliasing = true;
 };
 
 struct SceneDrawStats {
@@ -92,6 +94,7 @@ private:
     [[nodiscard]] const struct GpuMesh* meshFor(const MeshRendererComponent& mesh, AssetLibrary* assets, bool block);
     VkPipeline tonemapPipeline(VkFormat outputFormat);
     VkPipeline overlayPipeline(VkFormat outputFormat);
+    VkPipeline fxaaPipeline(VkFormat outputFormat);
 
     RenderContext& ctx_;
     rhi::UniquePipeline sky_;
@@ -104,6 +107,7 @@ private:
     std::unordered_map<int, rhi::UniquePipeline> bloom_;  // 0 = downsample, 1 = upsample
     std::unordered_map<VkFormat, rhi::UniquePipeline> tonemap_;
     std::unordered_map<VkFormat, rhi::UniquePipeline> overlay_;
+    std::unordered_map<VkFormat, rhi::UniquePipeline> fxaa_;
 };
 
 } // namespace lumora::render

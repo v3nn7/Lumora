@@ -2,7 +2,8 @@
 #include "fullscreen.hlsli"
 
 // gPush: index0 = HDR scene, index1 = sampler, index2 = bloom texture, flags bit0 = encode sRGB,
-//        bit1 = bloom present; param0 = exposure, param1 = bloom strength, param2 = vignette,
+//        bit1 = bloom present, bit2 = perceptual luma into alpha (input of FXAA);
+//        param0 = exposure, param1 = bloom strength, param2 = vignette,
 //        param3 = bloom normalisation (1 / number of summed chain levels).
 
 FullscreenOut VSMain(uint id : SV_VertexID) {
@@ -43,5 +44,8 @@ float4 PSMain(FullscreenOut input) : SV_Target0 {
         color = linearToSrgb(color);
     }
     float noise = (gradientNoise(input.position.xy) - 0.5) / 255.0;
-    return float4(color + noise, 1.0);
+    color += noise;
+    // FXAA reads luma from alpha: of the gamma-encoded colour, like the eye sees contrast.
+    float alpha = (gPush.flags & 4u) != 0u ? dot(saturate(color), float3(0.299, 0.587, 0.114)) : 1.0;
+    return float4(color, alpha);
 }

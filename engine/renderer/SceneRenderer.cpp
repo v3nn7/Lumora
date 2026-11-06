@@ -210,6 +210,20 @@ VkPipeline SceneRenderer::tonemapPipeline(VkFormat outputFormat) {
         .first->second.get();
 }
 
+VkPipeline SceneRenderer::fxaaPipeline(VkFormat outputFormat) {
+    if (auto it = fxaa_.find(outputFormat); it != fxaa_.end()) {
+        return it->second.get();
+    }
+    rhi::GraphicsPipelineDesc desc;
+    desc.vertexShader = ctx_.shaders().get("fxaa.vert");
+    desc.fragmentShader = ctx_.shaders().get("fxaa.frag");
+    desc.colorFormats = {outputFormat};
+    desc.layout = ctx_.pipelineLayout();
+    desc.debugName = "FXAA";
+    return fxaa_.emplace(outputFormat, rhi::createGraphicsPipeline(ctx_.device(), ctx_.pipelineCache(), desc))
+        .first->second.get();
+}
+
 VkPipeline SceneRenderer::overlayPipeline(VkFormat outputFormat) {
     if (auto it = overlay_.find(outputFormat); it != overlay_.end()) {
         return it->second.get();
@@ -687,8 +701,15 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     }
     stats.drawCalls += static_cast<std::uint32_t>(bloomChain.empty() ? 0 : bloomChain.size() * 2 - 1);
 
-    const VkPipeline tonemap = tonemapPipeline(outputFormat);
-    const bool shaderSrgb = !rhi::isSrgbFormat(outputFormat);
+    // With FXAA the tonemapper writes a gamma-encoded LDR image (luma in alpha) that FXAA then
+    // resolves into the output; without, it writes the output directly.
+    const bool fxaa = settings.antiAliasing;
+    // Half floats: the gamma-encoded image is quantised only once, when FXAA writes the output.
+    constexpr VkFormat kLdrFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    const RGImage ldr = fxaa ? graph.createImage("LDR", {kLdrFormat, extent}) : output;
+    const VkFormat tonemapFormat = fxaa ? kLdrFormat : outputFormat;
+    const VkPipeline tonemap = tonemapPipeline(tonemapFormat);
+    const bool shaderSrgb = !rhi::isSrgbFormat(tonemapFormat);
     const bool haveBloom = !bloomChain.empty();
     const RGImage bloomResult = haveBloom ? bloomChain.front() : RGImage{};
     // Bloom is a lerp towards the blurred image; normalise for the summed chain levels.
@@ -701,7 +722,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         [&](PassBuilder& b) {
             b.sample(hdr);
             if (haveBloom) b.sample(bloomResult);
-            b.writeColor(output, LoadOp::DontCare);
+            b.writeColor(ldr, LoadOp::DontCare);
         },
         [=](PassContext& ctx) {
             vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, tonemap);
@@ -710,7 +731,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             pc.index0 = ctx.bindlessIndex(hdr);
             pc.index1 = sampler;
             pc.index2 = haveBloom ? ctx.bindlessIndex(bloomResult) : 0u;
-            pc.flags = (shaderSrgb ? 1u : 0u) | (haveBloom ? 2u : 0u);
+            pc.flags = (shaderSrgb ? 1u : 0u) | (haveBloom ? 2u : 0u) | (fxaa ? 4u : 0u);
             pc.param0 = exposure;
             pc.param1 = bloomStrength;
             pc.param2 = vignette;
@@ -719,6 +740,28 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                                sizeof(pc), &pc);
             vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
         });
+    if (fxaa) {
+        const VkPipeline resolve = fxaaPipeline(outputFormat);
+        const bool outputSrgb = rhi::isSrgbFormat(outputFormat);
+        graph.addRasterPass(
+            "FXAA",
+            [&](PassBuilder& b) {
+                b.sample(ldr);
+                b.writeColor(output, LoadOp::DontCare);
+            },
+            [=](PassContext& ctx) {
+                vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, resolve);
+                bindSets(ctx.cmd);
+                PushConstants pc;
+                pc.index0 = ctx.bindlessIndex(ldr);
+                pc.index1 = sampler;
+                pc.flags = outputSrgb ? 1u : 0u;
+                vkCmdPushConstants(ctx.cmd, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(pc), &pc);
+                vkCmdDraw(ctx.cmd, 3, 1, 0, 0);
+            });
+        stats.drawCalls += 1;
+    }
 
     // ---- Overlay (gizmos): unlit, alpha blended, on top of the final image.
     if (settings.overlay != nullptr && !settings.overlay->empty()) {

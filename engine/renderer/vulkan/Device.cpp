@@ -69,7 +69,7 @@ std::string missingRequiredFeature(const FeatureChain& f) {
 
 } // namespace
 
-std::string DeviceCapabilities::typeName() const {
+std::string GpuCapabilities::typeName() const {
     switch (type) {
         case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: return "discrete GPU";
         case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return "integrated GPU";
@@ -98,7 +98,7 @@ std::vector<DeviceCandidate> enumerateDevices(VkInstance instance, bool requireS
         props.pNext = &driver;
         vkGetPhysicalDeviceProperties2(devices[i], &props);
 
-        DeviceCapabilities& caps = c.caps;
+        GpuCapabilities& caps = c.caps;
         caps.name = props.properties.deviceName;
         caps.driverName = driver.driverName;
         caps.driverInfo = driver.driverInfo;

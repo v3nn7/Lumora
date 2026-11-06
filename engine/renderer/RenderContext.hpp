@@ -41,7 +41,7 @@ public:
 
     [[nodiscard]] rhi::Instance& instance() noexcept { return *instance_; }
     [[nodiscard]] rhi::Device& device() noexcept { return *device_; }
-    [[nodiscard]] const rhi::DeviceCapabilities& caps() const noexcept { return device_->caps(); }
+    [[nodiscard]] const rhi::GpuCapabilities& caps() const noexcept { return device_->caps(); }
     /// NVRHI device (with NVRHI's validation layer when validation is on).
     [[nodiscard]] nvrhi::IDevice* gpu() const noexcept { return gpu_; }
     /// The Vulkan backend itself (swapchain semaphores).

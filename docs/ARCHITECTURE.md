@@ -52,7 +52,7 @@ where the current design leaves room for them.
 
 ### Layers
 
-1. **RHI (`engine/renderer/vulkan`)**: `Instance`, `Device` (selection plus `DeviceCapabilities`),
+1. **RHI (`engine/renderer/vulkan`)**: `Instance`, `Device` (selection plus `GpuCapabilities`),
    `Swapchain`, `Buffer` / `Image`, `ShaderLibrary`, `PipelineCache`, graphics pipeline builder,
    `BindlessTable` and `UploadQueue`.
 2. **Frame infrastructure**: `RenderGraph`, `TransientImagePool`, `GpuProfiler`, `FrameResources`.

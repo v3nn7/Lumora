@@ -14,7 +14,8 @@ class Instance;
 
 /// What the physical device can do. Advanced features (ray tracing, mesh shaders) are
 /// detected here so higher layers can pick fallback paths; they are not yet used.
-struct DeviceCapabilities {
+/// (Not "DeviceCapabilities": <windows.h> defines that name as a macro.)
+struct GpuCapabilities {
     std::string name;
     std::string driverName;
     std::string driverInfo;
@@ -45,7 +46,7 @@ struct DeviceCapabilities {
 struct DeviceCandidate {
     VkPhysicalDevice physical = VK_NULL_HANDLE;
     std::uint32_t index = 0;
-    DeviceCapabilities caps;
+    GpuCapabilities caps;
     bool suitable = false;
     std::string rejectReason;
     long long score = 0;
@@ -75,7 +76,7 @@ public:
     /// Device extensions enabled at creation (NVRHI needs to know them).
     [[nodiscard]] const std::vector<std::string>& enabledExtensions() const noexcept { return enabledExtensions_; }
     [[nodiscard]] std::uint32_t graphicsFamily() const noexcept { return graphicsFamily_; }
-    [[nodiscard]] const DeviceCapabilities& caps() const noexcept { return caps_; }
+    [[nodiscard]] const GpuCapabilities& caps() const noexcept { return caps_; }
 
     /// Queue access is externally synchronized; all submissions go through these.
     void submit(const VkSubmitInfo2& info, VkFence fence);
@@ -107,7 +108,7 @@ private:
     VkQueue graphicsQueue_ = VK_NULL_HANDLE;
     std::vector<std::string> enabledExtensions_;
     std::uint32_t graphicsFamily_ = 0;
-    DeviceCapabilities caps_;
+    GpuCapabilities caps_;
     std::mutex queueMutex_;
 
     PFN_vkSetDebugUtilsObjectNameEXT setObjectName_ = nullptr;

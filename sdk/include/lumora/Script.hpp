@@ -218,6 +218,9 @@ protected:
     void setPosition(Vec3 v) const { set(entity_, 0, v); }
     void setRotation(Vec3 degrees) const { set(entity_, 1, degrees); }
     void setScale(Vec3 v) const { set(entity_, 2, v); }
+    /// Adds to the position / the rotation in degrees (as Lua's moveBy and rotateBy).
+    void moveBy(Vec3 v) const { setPosition(position() + v); }
+    void rotateBy(Vec3 degrees) const { setRotation(rotation() + degrees); }
     [[nodiscard]] Vec3 positionOf(Entity e) const { return get(e, 0); }
     void setPositionOf(Entity e, Vec3 v) const { set(e, 0, v); }
 

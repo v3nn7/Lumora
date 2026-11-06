@@ -27,6 +27,8 @@ constexpr ScriptApiEntry kApi[] = {
     {S::Behaviour, "setPosition", "void setPosition(Vec3 v)", "Move this entity"},
     {S::Behaviour, "setRotation", "void setRotation(Vec3 degrees)", "Turn this entity"},
     {S::Behaviour, "setScale", "void setScale(Vec3 v)", "Resize this entity"},
+    {S::Behaviour, "moveBy", "void moveBy(Vec3 v)", "Move this entity by an offset (m)"},
+    {S::Behaviour, "rotateBy", "void rotateBy(Vec3 degrees)", "Turn this entity by some degrees"},
     {S::Behaviour, "positionOf", "Vec3 positionOf(Entity e)", "Another entity's position"},
     {S::Behaviour, "setPositionOf", "void setPositionOf(Entity e, Vec3 v)", "Move another entity"},
     // Physics

@@ -1,4 +1,5 @@
 #include "collab/CollabClient.hpp"
+#include <QPointer>
 
 #include "collab/AssetTransfer.hpp"
 #include "core/Log.hpp"
@@ -15,6 +16,10 @@
 #include <algorithm>
 
 namespace lumora::collab {
+
+namespace {
+constexpr int kConnectTimeoutMs = 15000;  // TCP connect + TLS handshake
+}
 
 using nlohmann::json;
 
@@ -101,6 +106,16 @@ void CollabClient::connectTo(const Address& address, const QString& name, const 
     }
     log::info("Collab", "connecting to {}", formatAddress(address).toStdString());
     socket_->connectToHostEncrypted(address.host, address.port);
+    // A tunnel with nothing behind it accepts the connection and then stays silent: give up
+    // with a reason instead of waiting for the operating system's (minutes long) timeout.
+    QTimer::singleShot(kConnectTimeoutMs, this, [this, socket = QPointer<QSslSocket>(socket_.get())] {
+        if (socket == nullptr || socket != socket_.get() || state_ != State::Connecting || socket_->isEncrypted()) return;
+        finish(tr("No answer from %1 within %2 seconds. Check that the host is still in the session and that the "
+                  "address is right. With a tunnel (playit.gg), check that it is running and forwards TCP to the "
+                  "port the host chose (7777 unless changed).")
+                   .arg(formatAddress({address_.host, address_.port, {}}))
+                   .arg(kConnectTimeoutMs / 1000));
+    });
 }
 
 void CollabClient::onSslErrors(const QList<QSslError>&) {
@@ -158,6 +173,8 @@ void CollabClient::finish(const QString& reason) {
         emit participantsChanged();
         emit left(reason);
     } else if (was == State::Connecting) {
+        log::warn("Collab", "could not join {}: {}", formatAddress({address_.host, address_.port, {}}).toStdString(),
+                  reason.toStdString());
         emit joinFailed(reason);
     }
 }

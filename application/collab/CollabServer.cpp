@@ -101,6 +101,15 @@ Result<> CollabServer::start(const Options& options, const json& sceneDocument) 
     }
     tcp_->setMaxPendingConnections(8);
     connect(tcp_.get(), &QTcpServer::pendingConnectionAvailable, this, &CollabServer::onNewConnection);
+    // Before the TLS handshake ends nobody is admitted yet: log it, so a tunnel that reaches the
+    // host (or one that does not) shows up in the host's log.
+    connect(tcp_.get(), &QSslServer::startedEncryptionHandshake, this, [](QSslSocket* socket) {
+        log::info("Collab", "connection from {} (TLS handshake)", socket->peerAddress().toString().toStdString());
+    });
+    connect(tcp_.get(), &QSslServer::errorOccurred, this, [](QSslSocket* socket, QAbstractSocket::SocketError) {
+        log::warn("Collab", "connection from {} failed before joining: {}", socket->peerAddress().toString().toStdString(),
+                  socket->errorString().toStdString());
+    });
 
     udp_ = std::make_unique<QUdpSocket>();
     if (udp_->bind(options.bindAddress, tcp_->serverPort())) {

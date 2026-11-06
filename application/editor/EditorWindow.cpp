@@ -61,6 +61,13 @@
 #include <QDesktopServices>
 #include <QCloseEvent>
 #include <QDockWidget>
+#include <QPushButton>
+#include <QDialog>
+#include <QLineEdit>
+#include <QComboBox>
+#include <QStandardItemModel>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QRegularExpression>
@@ -1934,19 +1941,75 @@ void EditorWindow::exportGameDialog() {
                                                   tr("The exported game uses the saved scene. Save it now?"));
         if (answer == QMessageBox::Yes) saveScene();
     }
-    const QString folder = QFileDialog::getExistingDirectory(this, tr("Export Game To (an empty folder)"));
-    if (folder.isEmpty()) return;
-    if (scripts_ && scripts_->hasScripts() && !QFileInfo::exists(scripts_->libraryPath())) {
+    // Platform and folder.
+    const std::vector<app::ExportTarget> targets = app::exportTargets();
+    auto title = [](const std::string& platform) {
+        return platform.starts_with("windows") ? tr("Windows") : platform.starts_with("linux") ? tr("Linux") : QString::fromStdString(platform);
+    };
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Export Game"));
+    auto* form = new QFormLayout(&dialog);
+    auto* platform = new QComboBox;
+    for (const app::ExportTarget& t : targets) platform->addItem(title(t.platform), QString::fromStdString(t.platform));
+    for (const char* known : {"linux-x64", "windows-x64"}) {
+        if (std::ranges::any_of(targets, [&](const app::ExportTarget& t) { return t.platform == known; })) continue;
+        platform->addItem(tr("%1 (add its build support in the Lumora Hub)").arg(title(known)), QString());
+        auto* model = qobject_cast<QStandardItemModel*>(platform->model());
+        if (model != nullptr) model->item(platform->count() - 1)->setEnabled(false);
+    }
+    form->addRow(tr("Platform"), platform);
+    auto* folderRow = new QHBoxLayout;
+    auto* folderEdit = new QLineEdit;
+    folderEdit->setPlaceholderText(tr("An empty or new folder"));
+    auto* browse = new QPushButton(tr("Browse…"));
+    folderRow->addWidget(folderEdit, 1);
+    folderRow->addWidget(browse);
+    form->addRow(tr("Folder"), folderRow);
+    auto* note = new QLabel(tr("Hub > Editors > Build Support adds the other platform to this editor version."));
+    note->setWordWrap(true);
+    note->setProperty("muted", true);
+    form->addRow(note);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("Export"));
+    form->addRow(buttons);
+    connect(browse, &QPushButton::clicked, &dialog, [&] {
+        const QString chosen = QFileDialog::getExistingDirectory(&dialog, tr("Export Game To (an empty folder)"));
+        if (!chosen.isEmpty()) folderEdit->setText(chosen);
+    });
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    auto updateOk = [&] { buttons->button(QDialogButtonBox::Ok)->setEnabled(!folderEdit->text().trimmed().isEmpty()); };
+    connect(folderEdit, &QLineEdit::textChanged, &dialog, updateOk);
+    updateOk();
+    if (dialog.exec() != QDialog::Accepted) return;
+    const std::string target = platform->currentData().toString().toStdString();
+    const QString folder = folderEdit->text().trimmed();
+    if (target.empty()) return;
+
+    if (target == app::hostPlatform() && scripts_ && scripts_->hasScripts() && !QFileInfo::exists(scripts_->libraryPath())) {
         QMessageBox::warning(this, tr("Export Game"), tr("Build the scripts first (Scripts > Build Scripts)."));
         return;
     }
-    auto launcher = app::exportGame({project_.rootDir(), project_.name(), app::toPath(folder), {}});
+    std::vector<std::string> warnings;
+    app::GameExport request{project_.rootDir(), project_.name(), app::toPath(folder), {}, target, &warnings};
+    for (const app::ExportTarget& t : targets) {
+        if (t.platform == target) request.runtimeRoot = t.runtimeRoot;
+    }
+    auto launcher = app::exportGame(request);
     if (!launcher) {
         QMessageBox::critical(this, tr("Export failed"), QString::fromStdString(launcher.error().message));
         return;
     }
-    QMessageBox::information(this, tr("Export Game"),
-                             tr("Exported. Start the game with %1.").arg(app::toQString(*launcher)));
+    QString text = tr("Exported for %1. Start the game with %2.").arg(title(target), app::toQString(*launcher));
+    if (target.starts_with("linux") && app::hostPlatform().starts_with("windows")) {
+        text += tr("\n\nOn Linux, start it with \"sh run.sh\" the first time (Windows drops the executable flag).");
+    }
+    for (const std::string& w : warnings) text += QStringLiteral("\n\n") + QString::fromStdString(w);
+    if (warnings.empty()) {
+        QMessageBox::information(this, tr("Export Game"), text);
+    } else {
+        QMessageBox::warning(this, tr("Export Game"), text);
+    }
 }
 
 // ---- Prefabs ---------------------------------------------------------------------------------

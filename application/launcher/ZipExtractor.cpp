@@ -8,6 +8,8 @@
 #include <QFile>
 #include <QFileInfo>
 
+#include <vector>
+
 #include <filesystem>
 #include <memory>
 
@@ -132,6 +134,7 @@ Result<ExtractStats> extractZip(const QString& archivePath, const QString& desti
     };
 
     ExtractStats stats;
+    std::vector<std::pair<QString, QString>> links;  // Windows: (link, its target), copied at the end
     for (mz_uint i = 0; i < count; ++i) {
         mz_zip_archive_file_stat stat;
         mz_zip_reader_file_stat(z, i, &stat);
@@ -158,7 +161,9 @@ Result<ExtractStats> extractZip(const QString& archivePath, const QString& desti
             }
             const QString to = QString::fromUtf8(linkTarget);  // validated above
 #if defined(Q_OS_WIN)
-            log::warn("Launcher", "skipping symbolic link '{}' (not supported on Windows)", name.toStdString());
+            // No symbolic links without developer mode: the link becomes a copy of its target
+            // (a Linux package's libfoo.so -> libfoo.so.6, for exporting Linux games).
+            links.emplace_back(target, QFileInfo(target).dir().filePath(to));
 #else
             std::error_code ec;
             std::filesystem::remove(target.toStdString(), ec);
@@ -182,6 +187,17 @@ Result<ExtractStats> extractZip(const QString& archivePath, const QString& desti
         ++stats.files;
         stats.bytes += sink.written;
     }
+    // Links to links resolve over a few passes.
+    for (int pass = 0; pass < 8 && !links.empty(); ++pass) {
+        std::erase_if(links, [&](const std::pair<QString, QString>& link) {
+            if (!QFileInfo(link.second).isFile() || !insideRoot(link.second)) return false;
+            QFile::remove(link.first);
+            if (!QFile::copy(link.second, link.first)) return false;
+            ++stats.files;
+            return true;
+        });
+    }
+    for (const auto& [link, to] : links) log::warn("Launcher", "skipping link {} (target {} missing)", link.toStdString(), to.toStdString());
     return stats;
 }
 

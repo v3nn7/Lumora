@@ -2,12 +2,14 @@
 
 #include "launcher/Signature.hpp"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
@@ -130,6 +132,21 @@ EditorsPage::EditorsPage(QWidget* parent)
     channelRow->addStretch(1);
     channelRow->addWidget(installLatest_);
     feedContent->addLayout(channelRow);
+    // Build support for the other platforms comes with the editor when ticked (also added later
+    // from the installed version's Build Support menu).
+    auto* supportRow = new QHBoxLayout;
+    auto* supportLabel = new QLabel(tr("Also install build support for"));
+    supportLabel->setToolTip(tr("Lets the editor export games for that platform (about the size of an editor)."));
+    supportRow->addWidget(supportLabel);
+    for (const QString& platform : launcher::supportedPlatforms()) {
+        if (platform == launcher::currentPlatform()) continue;
+        auto* box = new QCheckBox(launcher::platformTitle(platform));
+        box->setProperty("platform", platform);
+        supportRow->addWidget(box);
+        withSupport_.push_back(box);
+    }
+    supportRow->addStretch(1);
+    feedContent->addLayout(supportRow);
     availableRows_ = new QVBoxLayout;
     availableRows_->setSpacing(6);
     feedContent->addLayout(availableRows_);
@@ -157,10 +174,21 @@ EditorsPage::EditorsPage(QWidget* parent)
         showMessage(tr("Lumora %1 is installed.").arg(e.version));
         rebuild();
         emit editorsChanged();
+        continuePendingSupport(e.version);
     });
+    connect(&installer_, &launcher::EditorInstaller::platformSupportInstalled, this,
+            [this](const QString& version, const QString& platform) {
+                progress_->hide();
+                cancel_->hide();
+                showMessage(tr("Lumora %1 can now export games for %2.").arg(version, launcher::platformTitle(platform)));
+                rebuild();
+                emit editorsChanged();
+                continuePendingSupport(version);
+            });
     connect(&installer_, &launcher::EditorInstaller::installFailed, this, [this](const QString& error) {
         progress_->hide();
         cancel_->hide();
+        pendingSupport_.clear();
         showMessage(error, true);
         rebuild();
     });
@@ -234,7 +262,16 @@ void EditorsPage::rebuild() {
             title += QStringLiteral("  · ") + launcher::channelName(launcher::channelOfVersion(e.version));
         }
         if (local) title += tr("  (local build)");
-        installedRows_->addWidget(row(title, e.executable, {folder, remove}));
+        QString detail = e.executable;
+        QList<QPushButton*> buttons{folder};
+        if (!local) {
+            QStringList exports{launcher::platformTitle(launcher::currentPlatform())};
+            for (const QString& p : launcher::EditorInstaller::platformSupport(e)) exports << launcher::platformTitle(p);
+            detail += tr("  ·  exports games for %1").arg(exports.join(QStringLiteral(", ")));
+            buttons << supportButton(e);
+        }
+        buttons << remove;
+        installedRows_->addWidget(row(title, detail, buttons));
     }
     if (editors.empty()) {
         auto* none = new QLabel(tr("No editor installed yet - install one below, or add a local build."));
@@ -300,9 +337,73 @@ void EditorsPage::rebuild() {
     }
 }
 
+QPushButton* EditorsPage::supportButton(const launcher::InstalledEditor& editor) {
+    auto* button = new QPushButton(tr("Build Support"));
+    button->setToolTip(tr("Platforms this editor exports games for"));
+    button->setEnabled(!installer_.busy());
+    auto* menu = new QMenu(button);
+    const QStringList have = launcher::EditorInstaller::platformSupport(editor);
+    const launcher::ReleaseInfo* release = manifest_ ? manifest_->find(editor.version) : nullptr;
+    for (const QString& platform : launcher::supportedPlatforms()) {
+        if (platform == launcher::currentPlatform()) continue;
+        const bool installed = have.contains(platform);
+        const launcher::PackageInfo* package = release != nullptr ? release->packageFor(platform) : nullptr;
+        QAction* action = menu->addAction(installed ? tr("Remove %1 Build Support").arg(launcher::platformTitle(platform))
+                                                    : tr("Add %1 Build Support").arg(launcher::platformTitle(platform)));
+        if (!installed && package == nullptr) {
+            action->setEnabled(false);
+            action->setText(action->text() + (manifest_ ? tr(" (not in the feed)") : tr(" (load the release list)")));
+        } else if (!installed) {
+            action->setText(action->text() + QStringLiteral("  ·  ") + megabytes(package->size));
+        }
+        connect(action, &QAction::triggered, this, [this, editor, platform, installed] {
+            if (!installed) return installSupport(editor, platform);
+            if (QMessageBox::question(this, tr("Build Support"),
+                                      tr("Remove %1 build support from Lumora %2?")
+                                          .arg(launcher::platformTitle(platform), editor.version)) != QMessageBox::Yes) {
+                return;
+            }
+            if (auto removed = installer_.removePlatformSupport(editor, platform); !removed) {
+                showMessage(QString::fromStdString(removed.error().message), true);
+            }
+            rebuild();
+        });
+    }
+    button->setMenu(menu);
+    return button;
+}
+
+void EditorsPage::installSupport(const launcher::InstalledEditor& editor, const QString& platform) {
+    const launcher::ReleaseInfo* release = manifest_ ? manifest_->find(editor.version) : nullptr;
+    const launcher::PackageInfo* package = release != nullptr ? release->packageFor(platform) : nullptr;
+    if (package == nullptr) {
+        showMessage(tr("The release feed has no %1 package of Lumora %2.").arg(launcher::platformTitle(platform), editor.version), true);
+        return;
+    }
+    showMessage(tr("Installing %1 build support for Lumora %2…").arg(launcher::platformTitle(platform), editor.version));
+    progress_->setRange(0, 0);
+    progress_->show();
+    cancel_->show();
+    installer_.installPlatformSupport(editor, *release, *package);
+    rebuild();
+}
+
+void EditorsPage::continuePendingSupport(const QString& version) {
+    if (version != pendingVersion_ || pendingSupport_.isEmpty()) return;
+    const auto editor = installer_.find(version);
+    if (!editor) return pendingSupport_.clear();
+    installSupport(*editor, pendingSupport_.takeFirst());
+}
+
 void EditorsPage::install(const launcher::ReleaseInfo& release) {
     const launcher::PackageInfo* package = release.packageFor(launcher::currentPlatform());
     if (package == nullptr) return;
+    pendingVersion_ = release.version;
+    pendingSupport_.clear();
+    for (QCheckBox* box : withSupport_) {
+        const QString platform = box->property("platform").toString();
+        if (box->isChecked() && release.packageFor(platform) != nullptr) pendingSupport_ << platform;
+    }
     showMessage(tr("Installing Lumora %1…").arg(release.version));
     progress_->setRange(0, 0);
     progress_->show();

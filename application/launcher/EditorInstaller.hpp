@@ -58,6 +58,12 @@ public:
 
     void fetchManifest(const QUrl& feedUrl);
     void install(const ReleaseInfo& release, const PackageInfo& package);
+    /// Build support: another platform's package of an installed version, unpacked into
+    /// <editor>/platforms/<platform>/ so the editor can export games for that platform.
+    void installPlatformSupport(const InstalledEditor& editor, const ReleaseInfo& release, const PackageInfo& package);
+    /// Platforms an installed editor exports for besides its own.
+    [[nodiscard]] static QStringList platformSupport(const InstalledEditor& editor);
+    Result<> removePlatformSupport(const InstalledEditor& editor, const QString& platform);
     void cancel();
     [[nodiscard]] bool busy() const noexcept;
     /// The last completed install downloaded only changed files (testing and diagnostics).
@@ -69,6 +75,7 @@ signals:
     void manifestFailed(const QString& error);
     void progress(qint64 received, qint64 total);
     void installCompleted(const lumora::launcher::InstalledEditor& editor);
+    void platformSupportInstalled(const QString& version, const QString& platform);
     void installFailed(const QString& error);
 
 private:
@@ -82,6 +89,7 @@ private:
     void finishDelta();
     void fallBackToZip(const QString& why);
     void finalize(const QString& content, const std::vector<FileEntry>& entries);
+    void finalizePlatformSupport(const QString& content);
     void streamTo(const QUrl& url, quint64 expected, std::function<void()> done);
     void abortReply();
     bool takeReply(QNetworkReply*& reply);
@@ -102,6 +110,7 @@ private:
     bool installing_ = false;
     bool cancelled_ = false;
     QString staging_;
+    QString supportFor_;  // installing build support into this editor folder (empty: an editor)
     // Delta update in progress.
     bool delta_ = false;
     bool lastWasDelta_ = false;

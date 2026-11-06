@@ -569,6 +569,15 @@ game library, plus a launcher (`run.sh` on Linux, `<Name>.bat` on Windows). Copy
 any computer with a Vulkan 1.4 GPU and start the launcher; players do not need Lumora. Script
 sources and editor caches stay behind. Build the scripts first if the game has any.
 
+**Windows and Linux.** The dialog asks for the platform. The editor exports for its own platform
+out of the box; for the other one, add its **build support** in the Hub: *Editors → Build
+Support → Add Windows Build Support* (or Linux) on the installed version, or tick *Also install
+build support for* before installing a version. It is that platform's runtime of the same
+release, installed into `<editor>/platforms/<platform>/`. Lua and visual scripts run on both
+platforms. C++ behaviours are compiled for the editor's platform, so a cross-platform export leaves
+them out (the dialog says so): export from an editor on the target platform to ship them. A Linux
+game exported on Windows loses the files' executable flag; start it once with `sh run.sh`.
+
 ## Working together
 
 Several people can edit one scene at the same time. One editor **hosts** the session and the others

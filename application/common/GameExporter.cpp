@@ -5,6 +5,8 @@
 
 #include <QCoreApplication>
 
+#include <algorithm>
+#include <format>
 #include <fstream>
 #include <system_error>
 
@@ -39,18 +41,65 @@ Result<> copyTree(const fs::path& from, const fs::path& to, const std::function<
     return {};
 }
 
+bool isWindows(std::string_view platform) { return platform.starts_with("windows"); }
+
+fs::path ownInstallation() { return toPath(QCoreApplication::applicationDirPath()).parent_path(); }
+
 } // namespace
+
+std::string hostPlatform() {
+#if defined(_WIN32)
+    std::string os = "windows";
+#elif defined(__APPLE__)
+    std::string os = "macos";
+#else
+    std::string os = "linux";
+#endif
+#if defined(__aarch64__) || defined(_M_ARM64)
+    return os + "-arm64";
+#else
+    return os + "-x64";
+#endif
+}
+
+fs::path playerExecutable(std::string_view platform) {
+    return fs::path("bin") / (isWindows(platform) ? "lumora-editor.exe" : "lumora-editor");
+}
+
+std::vector<ExportTarget> exportTargets(const fs::path& editorRoot) {
+    const fs::path root = editorRoot.empty() ? ownInstallation() : editorRoot;
+    std::vector<ExportTarget> targets{{hostPlatform(), root}};
+    std::error_code ec;
+    for (auto it = fs::directory_iterator(root / "platforms", ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        const std::string platform = it->path().filename().string();
+        if (platform == hostPlatform() || !fs::is_regular_file(it->path() / playerExecutable(platform), ec)) continue;
+        targets.push_back({platform, it->path()});
+    }
+    std::sort(targets.begin() + 1, targets.end(), [](const ExportTarget& a, const ExportTarget& b) { return a.platform < b.platform; });
+    return targets;
+}
 
 Result<fs::path> exportGame(const GameExport& request) {
     std::error_code ec;
-    const fs::path runtime = request.runtimeRoot.empty() ? toPath(QCoreApplication::applicationDirPath()).parent_path()
-                                                         : request.runtimeRoot;
-#if defined(_WIN32)
-    const fs::path player = runtime / "bin" / "lumora-editor.exe";
-#else
-    const fs::path player = runtime / "bin" / "lumora-editor";
-#endif
-    if (!fs::is_regular_file(player, ec)) return makeError("no editor runtime at {}", runtime.string());
+    const std::string platform = request.platform.empty() ? hostPlatform() : request.platform;
+    const bool cross = platform != hostPlatform();
+    fs::path runtime = request.runtimeRoot;
+    if (runtime.empty()) {
+        for (const ExportTarget& t : exportTargets()) {
+            if (t.platform == platform) runtime = t.runtimeRoot;
+        }
+        if (runtime.empty()) {
+            return makeError("this editor cannot export for {}: add its build support to the editor in the Lumora Hub "
+                             "(Editors)",
+                             platform);
+        }
+    }
+    const fs::path player = runtime / playerExecutable(platform);
+    if (!fs::is_regular_file(player, ec)) return makeError("no {} runtime at {}", platform, runtime.string());
+    auto warn = [&](std::string message) {
+        log::warn("Export", "{}", message);
+        if (request.warnings != nullptr) request.warnings->push_back(std::move(message));
+    };
     if (fs::exists(request.output, ec) && !fs::is_empty(request.output, ec)) {
         return makeError("{} is not empty: choose an empty or new folder", request.output.string());
     }
@@ -80,29 +129,47 @@ Result<fs::path> exportGame(const GameExport& request) {
     });
     if (!copied) return std::unexpected(copied.error());
     const fs::path library = request.projectRoot / "Saved" / "ScriptBuild" / "bin";
-    if (fs::is_directory(library, ec)) {
+    bool hasCpp = false;
+    for (auto it = fs::recursive_directory_iterator(request.projectRoot / "Scripts", ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        const auto ext = it->path().extension();
+        hasCpp |= ext == ".cpp" || ext == ".cc" || ext == ".cxx";
+    }
+    ec.clear();
+    if (cross) {
+        // Built for the editor's platform: it would not load on the target.
+        if (hasCpp) {
+            warn(std::format("C++ behaviours are not included: they are compiled for {}, not {}. Lua and visual "
+                             "scripts work; to ship C++ behaviours, export from an editor on {}.",
+                             hostPlatform(), platform, platform));
+        }
+    } else if (fs::is_directory(library, ec)) {
         if (auto lib = copyTree(library, request.output / "Game" / "Saved" / "ScriptBuild" / "bin", {}); !lib) {
             return std::unexpected(lib.error());
         }
     }
 
-#if defined(_WIN32)
-    const fs::path launcher = request.output / (request.name + ".bat");
-    std::ofstream out(launcher);
-    out << "@echo off\r\nstart \"\" \"%~dp0bin\\lumora-editor.exe\" --project \"%~dp0Game\" --play %*\r\n";
-#else
-    const fs::path launcher = request.output / "run.sh";
-    {
-        std::ofstream out(launcher);
-        out << "#!/bin/sh\n# Starts " << request.name << " (made with the Lumora engine).\n"
-            << "HERE=\"$(dirname \"$(readlink -f \"$0\")\")\"\n"
-            << "exec \"$HERE/bin/lumora-editor\" --project \"$HERE/Game\" --play \"$@\"\n";
+    fs::path launcher;
+    if (isWindows(platform)) {
+        launcher = request.output / (request.name + ".bat");
+        std::ofstream out(launcher, std::ios::binary);
+        out << "@echo off\r\nstart \"\" \"%~dp0bin\\lumora-editor.exe\" --project \"%~dp0Game\" --play %*\r\n";
+    } else {
+        launcher = request.output / "run.sh";
+        {
+            std::ofstream out(launcher, std::ios::binary);
+            // Copied from Windows the files lose their executable bit: `sh run.sh` restores it.
+            out << "#!/bin/sh\n# Starts " << request.name << " (made with the Lumora engine).\n"
+                << "HERE=\"$(dirname \"$(readlink -f \"$0\")\")\"\n"
+                << "[ -x \"$HERE/bin/lumora-editor\" ] || chmod +x \"$HERE/bin/lumora-editor\" \"$0\" 2>/dev/null\n"
+                << "exec \"$HERE/bin/lumora-editor\" --project \"$HERE/Game\" --play \"$@\"\n";
+        }
+        fs::permissions(launcher, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
+                        fs::perm_options::add, ec);
+        ec.clear();
     }
-    fs::permissions(launcher, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
-                    fs::perm_options::add, ec);
-#endif
     if (!fs::exists(launcher, ec)) return makeError("cannot write {}", launcher.string());
-    log::info("Export", "exported '{}' to {}", request.name, request.output.string());
+    log::info("Export", "exported '{}' for {} to {}", request.name, platform, request.output.string());
     return launcher;
 }
 

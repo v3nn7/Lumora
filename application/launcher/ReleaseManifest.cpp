@@ -34,6 +34,20 @@ QString editorExecutable() {
 #endif
 }
 
+QString editorExecutable(const QString& platform) {
+    return platform.startsWith(QLatin1String("windows")) ? QStringLiteral("bin/lumora-editor.exe")
+                                                          : QStringLiteral("bin/lumora-editor");
+}
+
+QStringList supportedPlatforms() { return {QStringLiteral("linux-x64"), QStringLiteral("windows-x64")}; }
+
+QString platformTitle(const QString& platform) {
+    if (platform.startsWith(QLatin1String("windows"))) return QStringLiteral("Windows");
+    if (platform.startsWith(QLatin1String("linux"))) return QStringLiteral("Linux");
+    if (platform.startsWith(QLatin1String("macos"))) return QStringLiteral("macOS");
+    return platform;
+}
+
 bool isValidVersion(const QString& version) {
     static const QRegularExpression pattern(QStringLiteral(R"(^\d{1,6}\.\d{1,6}\.\d{1,6}(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$)"));
     return version.size() <= 64 && pattern.match(version).hasMatch();

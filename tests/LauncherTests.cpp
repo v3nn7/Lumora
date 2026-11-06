@@ -625,3 +625,78 @@ TEST(LauncherDelta, FallsBackToTheFullPackage) {
     EXPECT_FALSE(installer.lastInstallWasDelta()) << "a missing blob means the full package";
     EXPECT_EQ(readFileBytes(o.installed->directory + "/lib/liblumora_editor.so"), QByteArray(1200, '5'));
 }
+
+// ---- Build support ---------------------------------------------------------------------------------
+
+TEST(LauncherInstall, AddsAndRemovesAnotherPlatformsBuildSupport) {
+    test::TempDir dir;
+    KeyPair key;
+    const QString other = currentPlatform() == QLatin1String("windows-x64") ? QStringLiteral("linux-x64")
+                                                                           : QStringLiteral("windows-x64");
+    // A release with packages for both platforms, the way CI publishes it.
+    auto save = [&](const QString& name, const ZipWriter& zip) {
+        const QString path = qpath(dir.path() / "feed" / "editor" / "0.5.0") + "/" + name;
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        EXPECT_TRUE(zip.save(path));
+        return readFileBytes(path);
+    };
+    const QByteArray own = save(QStringLiteral("own.zip"), editorPackage());
+    ZipWriter otherZip;
+    otherZip.file(editorExecutable(other).toStdString(), "player", 0100755);
+    otherZip.file("lib/libengine.so.1", QByteArray(512, 'e'));
+    otherZip.symlink("lib/libengine.so", "libengine.so.1");
+    const QByteArray foreign = save(QStringLiteral("other.zip"), otherZip);
+    const QByteArray manifest = QStringLiteral(R"({"format":"lumora.releases","version":1,"releases":[
+        {"version":"0.5.0","channel":"stable","date":"2026-11-06","packages":{
+          "%1":{"url":"editor/0.5.0/own.zip","size":%2,"sha256":"%3"},
+          "%4":{"url":"editor/0.5.0/other.zip","size":%5,"sha256":"%6"}}}]})")
+                                    .arg(currentPlatform())
+                                    .arg(own.size())
+                                    .arg(QString::fromLatin1(sha256Hex(own)), other)
+                                    .arg(foreign.size())
+                                    .arg(QString::fromLatin1(sha256Hex(foreign)))
+                                    .toUtf8();
+    ASSERT_TRUE(writeFile(qpath(dir.path() / "feed" / "manifest.json"), manifest));
+    ASSERT_TRUE(writeFile(qpath(dir.path() / "feed" / "manifest.json.sig"), key.sign(manifest).toBase64()));
+
+    EditorInstaller installer(qpath(dir.path() / "installs"));
+    installer.setPublicKey(key.pub);
+    const Outcome o = fetchAndInstall(installer, QUrl::fromLocalFile(qpath(dir.path() / "feed" / "manifest.json")));
+    ASSERT_TRUE(o.installed.has_value()) << o.error.toStdString();
+    EXPECT_TRUE(EditorInstaller::platformSupport(*o.installed).isEmpty());
+
+    bool done = false;
+    QString error;
+    QString installedPlatform;
+    QObject::connect(&installer, &EditorInstaller::platformSupportInstalled, [&](const QString&, const QString& p) {
+        installedPlatform = p;
+        done = true;
+    });
+    QObject::connect(&installer, &EditorInstaller::installFailed, [&](const QString& e) {
+        error = e;
+        done = true;
+    });
+    const ReleaseInfo& release = o.manifest->releases.front();
+    installer.installPlatformSupport(*o.installed, release, *release.packageFor(other));
+    ASSERT_TRUE(waitUntil([&] { return done; }));
+    ASSERT_TRUE(error.isEmpty()) << error.toStdString();
+    EXPECT_EQ(installedPlatform, other);
+    EXPECT_EQ(EditorInstaller::platformSupport(*o.installed), QStringList{other});
+    const QString support = o.installed->directory + "/platforms/" + other;
+    EXPECT_TRUE(QFileInfo(support + "/" + editorExecutable(other)).isFile());
+    EXPECT_TRUE(QFileInfo(support + "/lumora-platform.json").isFile());
+    EXPECT_EQ(QFileInfo(support + "/lib/libengine.so").size(), 512) << "a link (or, on Windows, a copy of its target)";
+    EXPECT_FALSE(QFileInfo::exists(qpath(dir.path() / "installs") + "/.staging-0.5.0-" + other));
+    EXPECT_TRUE(installer.find(QStringLiteral("0.5.0")).has_value()) << "the editor itself is untouched";
+
+    // Its own platform is not "build support".
+    done = false;
+    error.clear();
+    installer.installPlatformSupport(*o.installed, release, *release.packageFor(currentPlatform()));
+    ASSERT_TRUE(waitUntil([&] { return done; }));
+    EXPECT_FALSE(error.isEmpty());
+
+    ASSERT_TRUE(installer.removePlatformSupport(*o.installed, other).has_value());
+    EXPECT_TRUE(EditorInstaller::platformSupport(*o.installed).isEmpty());
+    EXPECT_FALSE(installer.removePlatformSupport(*o.installed, other).has_value());
+}

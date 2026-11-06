@@ -49,15 +49,18 @@ std::optional<InstalledEditor> readInstall(const QString& directory) {
 }
 
 /// Packages may wrap everything in one top-level folder; the content is wherever bin/ is.
-QString contentFolder(const QString& staging) {
-    if (QFileInfo::exists(QDir(staging).filePath(editorExecutable()))) return staging;
+QString contentFolder(const QString& staging, const QString& executable = editorExecutable()) {
+    if (QFileInfo::exists(QDir(staging).filePath(executable))) return staging;
     const QStringList entries = QDir(staging).entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden);
     if (entries.size() == 1) {
         const QString inner = QDir(staging).filePath(entries.first());
-        if (QFileInfo::exists(QDir(inner).filePath(editorExecutable()))) return inner;
+        if (QFileInfo::exists(QDir(inner).filePath(executable))) return inner;
     }
     return {};
 }
+
+constexpr const char* kPlatformsFolder = "platforms";
+constexpr const char* kPlatformFile = "lumora-platform.json";
 
 } // namespace
 
@@ -183,6 +186,74 @@ void EditorInstaller::install(const ReleaseInfo& release, const PackageInfo& pac
 
 bool EditorInstaller::busy() const noexcept { return installing_; }
 
+void EditorInstaller::installPlatformSupport(const InstalledEditor& editor, const ReleaseInfo& release,
+                                             const PackageInfo& package) {
+    if (installing_) return emit installFailed(tr("Another installation is in progress."));
+    if (!isValidVersion(release.version) || release.version != editor.version) {
+        return emit installFailed(tr("Build support must come from the editor's own release (%1).").arg(editor.version));
+    }
+    if (package.platform == currentPlatform() || !supportedPlatforms().contains(package.platform)) {
+        return emit installFailed(tr("No build support for '%1'.").arg(package.platform));
+    }
+    if (!QDir(root_).mkpath(QStringLiteral(".downloads"))) {
+        return emit installFailed(tr("Cannot create %1.").arg(QDir(root_).filePath(QStringLiteral(".downloads"))));
+    }
+    release_ = release;
+    package_ = package;
+    installing_ = true;
+    cancelled_ = false;
+    delta_ = false;
+    supportFor_ = editor.directory;
+    staging_ = QDir(root_).filePath(QStringLiteral(".staging-%1-%2").arg(release.version, package.platform));
+    QDir(staging_).removeRecursively();
+    startZip();
+}
+
+QStringList EditorInstaller::platformSupport(const InstalledEditor& editor) {
+    QStringList out;
+    const QDir platforms(QDir(editor.directory).filePath(QString::fromLatin1(kPlatformsFolder)));
+    for (const QString& platform : platforms.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
+        if (QFileInfo::exists(platforms.filePath(platform + QLatin1Char('/') + editorExecutable(platform)))) out << platform;
+    }
+    return out;
+}
+
+Result<> EditorInstaller::removePlatformSupport(const InstalledEditor& editor, const QString& platform) {
+    if (!supportedPlatforms().contains(platform)) return makeError("unknown platform '{}'", platform.toStdString());
+    const QString dir = QDir(editor.directory).filePath(QStringLiteral("%1/%2").arg(QLatin1String(kPlatformsFolder), platform));
+    if (!QFileInfo(dir).isDir()) return makeError("{} build support is not installed", platform.toStdString());
+    if (!QDir(dir).removeRecursively()) return makeError("could not remove {} completely", dir.toStdString());
+    log::info("Launcher", "removed {} build support from Lumora {}", platform.toStdString(), editor.version.toStdString());
+    return {};
+}
+
+void EditorInstaller::finalizePlatformSupport(const QString& content) {
+    const json info = {{"version", release_.version.toStdString()},
+                       {"platform", package_.platform.toStdString()},
+                       {"source", package_.url.toString().toStdString()},
+                       {"sha256", package_.sha256.toStdString()},
+                       {"installedAt", QDateTime::currentDateTimeUtc().toString(Qt::ISODate).toStdString()}};
+    const std::string text = info.dump(2);
+    QSaveFile record(QDir(content).filePath(QString::fromLatin1(kPlatformFile)));
+    if (!record.open(QIODevice::WriteOnly) || record.write(text.data(), static_cast<qint64>(text.size())) < 0 ||
+        !record.commit()) {
+        return failInstall(tr("Cannot record the installation."));
+    }
+    const QString platforms = QDir(supportFor_).filePath(QString::fromLatin1(kPlatformsFolder));
+    const QString target = QDir(platforms).filePath(package_.platform);
+    QDir(target).removeRecursively();
+    if (!QDir().mkpath(platforms) || !QDir().rename(content, target)) {
+        return failInstall(tr("Cannot move the build support into %1.").arg(target));
+    }
+    QDir(staging_).removeRecursively();
+    log::info("Launcher", "installed {} build support for Lumora {} in {}", package_.platform.toStdString(),
+              release_.version.toStdString(), target.toStdString());
+    installing_ = false;
+    staging_.clear();
+    supportFor_.clear();
+    emit platformSupportInstalled(release_.version, package_.platform);
+}
+
 void EditorInstaller::startZip() {
     download_ = std::make_unique<QFile>(QDir(root_).filePath(
         QStringLiteral(".downloads/lumora-editor-%1-%2.zip.part").arg(release_.version, package_.platform)));
@@ -245,6 +316,7 @@ void EditorInstaller::failInstall(const QString& error) {
     if (!staging_.isEmpty()) QDir(staging_).removeRecursively();
     installing_ = false;
     delta_ = false;
+    supportFor_.clear();
     log::warn("Launcher", "install failed: {}", error.toStdString());
     emit installFailed(error);
 }
@@ -280,20 +352,21 @@ void EditorInstaller::finishDownload() {
 
     // Extract (and index the files for later delta updates) off the UI thread.
     const QString archive = download_->fileName();
+    const QString executable = editorExecutable(package_.platform);
     struct Outcome {
         QString error;
         QString content;
         std::vector<FileEntry> entries;
     };
     auto outcome = std::make_shared<Outcome>();
-    QThread* worker = QThread::create([archive, staging = staging_, outcome] {
+    QThread* worker = QThread::create([archive, staging = staging_, outcome, executable] {
         if (auto extracted = extractZip(archive, staging); !extracted) {
             outcome->error = tr("Cannot unpack the package: %1").arg(QString::fromStdString(extracted.error().message));
             return;
         }
-        outcome->content = contentFolder(staging);
+        outcome->content = contentFolder(staging, executable);
         if (outcome->content.isEmpty()) {
-            outcome->error = tr("The package does not contain %1.").arg(editorExecutable());
+            outcome->error = tr("The package does not contain %1.").arg(executable);
             return;
         }
         if (auto scanned = scanFolder(outcome->content)) outcome->entries = std::move(*scanned);
@@ -304,6 +377,7 @@ void EditorInstaller::finishDownload() {
         download_.reset();
         hash_.reset();
         if (!outcome->error.isEmpty()) return failInstall(outcome->error);
+        if (!supportFor_.isEmpty()) return finalizePlatformSupport(outcome->content);
         finalize(outcome->content, outcome->entries);
     });
     worker->start();

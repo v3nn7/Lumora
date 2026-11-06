@@ -229,6 +229,59 @@ LUMORA_BEHAVIOUR(Lifetime);
     EXPECT_GT(reg.get<TransformComponent>(ball).position.x, 1.0f);
 }
 
+TEST(GameExport, ExportsForTheOtherPlatformWithItsBuildSupport) {
+    test::TempDir dir;
+    auto project = Project::create(dir.path() / "Demo", "Demo", ProjectTemplate::BasicScene);
+    ASSERT_TRUE(project.has_value()) << project.error().message;
+    std::filesystem::create_directories(dir.path() / "Demo" / "Saved" / "ScriptBuild" / "bin");
+    std::ofstream(dir.path() / "Demo" / "Saved" / "ScriptBuild" / "bin" / "game.so") << "library";
+    std::filesystem::create_directories(dir.path() / "Demo" / "Scripts");
+    std::ofstream(dir.path() / "Demo" / "Scripts" / "Player.cpp") << "// C++ source";
+    std::ofstream(dir.path() / "Demo" / "Scripts" / "Enemy.lua") << "return {}";
+
+    // An editor with the other platform's build support next to it (as the Hub installs it).
+    const std::string other = app::hostPlatform().starts_with("windows") ? "linux-x64" : "windows-x64";
+    const auto editor = dir.path() / "Editor";
+    std::filesystem::create_directories(editor / "bin");
+    std::ofstream(editor / app::playerExecutable(app::hostPlatform())) << "host player";
+    const auto support = editor / "platforms" / other;
+    std::filesystem::create_directories(support / "bin");
+    std::filesystem::create_directories(support / "plugins" / "platforms");
+    std::ofstream(support / app::playerExecutable(other)) << "other player";
+    std::ofstream(support / "plugins" / "platforms" / "qpa.bin") << "qt";
+    std::filesystem::create_directories(editor / "platforms" / "macos-arm64");  // empty: not support
+
+    const auto targets = app::exportTargets(editor);
+    ASSERT_EQ(targets.size(), 2u);
+    EXPECT_EQ(targets[0].platform, app::hostPlatform());
+    EXPECT_EQ(targets[1].platform, other);
+    EXPECT_EQ(targets[1].runtimeRoot, support);
+
+    std::vector<std::string> warnings;
+    const auto out = dir.path() / "Export";
+    auto launcher = app::exportGame({dir.path() / "Demo", "Demo", out, support, other, &warnings});
+    ASSERT_TRUE(launcher.has_value()) << launcher.error().message;
+    EXPECT_TRUE(std::filesystem::exists(out / app::playerExecutable(other)));
+    EXPECT_TRUE(std::filesystem::exists(out / "plugins" / "platforms" / "qpa.bin"));
+    EXPECT_FALSE(std::filesystem::exists(out / "Game" / "Saved" / "ScriptBuild")) << "the host's C++ library stays behind";
+    EXPECT_TRUE(std::filesystem::exists(out / "Game" / "Scripts" / "Enemy.lua"));
+    ASSERT_EQ(warnings.size(), 1u);
+    EXPECT_NE(warnings[0].find("C++"), std::string::npos);
+    std::ifstream script(*launcher, std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(script)), {});
+    if (other.starts_with("windows")) {
+        EXPECT_EQ(launcher->filename(), "Demo.bat");
+        EXPECT_NE(text.find("lumora-editor.exe\" --project \"%~dp0Game\" --play"), std::string::npos);
+        EXPECT_NE(text.find("\r\n"), std::string::npos) << "Windows line ends";
+    } else {
+        EXPECT_EQ(launcher->filename(), "run.sh");
+        EXPECT_NE(text.find("chmod +x"), std::string::npos) << "restores the flag Windows drops";
+    }
+
+    // Without build support for a platform there is nothing to export with.
+    EXPECT_FALSE(app::exportGame({dir.path() / "Demo", "Demo", dir.path() / "Export2", {}, "macos-arm64"}).has_value());
+}
+
 TEST(GameExport, WritesARunnableStandaloneGame) {
     test::TempDir dir;
     auto project = Project::create(dir.path() / "Demo", "Demo", ProjectTemplate::BasicScene);

@@ -9,6 +9,7 @@
 
 #include <optional>
 
+class QCheckBox;
 class QComboBox;
 class QLabel;
 class QProgressBar;
@@ -38,6 +39,11 @@ protected:
 private:
     void rebuild();
     void install(const launcher::ReleaseInfo& release);
+    /// Adds another platform's build support (game export) to an installed editor.
+    void installSupport(const launcher::InstalledEditor& editor, const QString& platform);
+    /// Build support asked for with the next editor install, still to be fetched.
+    void continuePendingSupport(const QString& version);
+    [[nodiscard]] QPushButton* supportButton(const launcher::InstalledEditor& editor);
     QWidget* row(const QString& title, const QString& detail, const QList<QPushButton*>& buttons);
 
     launcher::EditorInstaller installer_;
@@ -52,6 +58,9 @@ private:
     QPushButton* cancel_ = nullptr;
     QVBoxLayout* installedRows_ = nullptr;
     QVBoxLayout* availableRows_ = nullptr;
+    std::vector<QCheckBox*> withSupport_;  // "also install Windows build support" per platform
+    QString pendingVersion_;
+    QStringList pendingSupport_;
 };
 
 } // namespace lumora::app

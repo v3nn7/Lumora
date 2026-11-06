@@ -4,6 +4,7 @@
 
 #include <QByteArray>
 #include <QString>
+#include <QStringList>
 #include <QUrl>
 
 #include <vector>
@@ -14,6 +15,12 @@ namespace lumora::launcher {
 [[nodiscard]] QString currentPlatform();
 /// Editor executable inside an installed package ("bin/lumora-editor[.exe]").
 [[nodiscard]] QString editorExecutable();
+/// The same inside another platform's package ("windows-x64" -> "bin/lumora-editor.exe").
+[[nodiscard]] QString editorExecutable(const QString& platform);
+/// Platforms editors are published for, e.g. {"linux-x64", "windows-x64"}.
+[[nodiscard]] QStringList supportedPlatforms();
+/// "Linux", "Windows" for a package key.
+[[nodiscard]] QString platformTitle(const QString& platform);
 
 /// Versions are "MAJOR.MINOR.PATCH" with an optional pre-release suffix ("0.5.0-beta.2").
 /// They also name install folders, so anything else is rejected.

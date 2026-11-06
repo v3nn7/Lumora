@@ -8,6 +8,7 @@
 #include "renderer/vulkan/Swapchain.hpp"
 
 #include <array>
+#include <filesystem>
 #include <chrono>
 #include <memory>
 #include <vector>
@@ -76,6 +77,9 @@ public:
     [[nodiscard]] const FrameStats& stats() const noexcept { return stats_; }
     [[nodiscard]] RenderContext& context() noexcept { return ctx_; }
     void waitIdle();
+    /// A file changed on disk: drops the GPU meshes and textures made from it (they upload
+    /// again on next use). Waits for the GPU first.
+    void invalidateAssetFile(const std::filesystem::path& absoluteFile);
 
 private:
     FrameResources& beginFrame();

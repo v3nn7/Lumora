@@ -41,6 +41,8 @@ public:
     [[nodiscard]] std::size_t assetCount() const noexcept { return assets_.size(); }
     /// Lets meshes that failed to load be tried again.
     void forgetFailures() { failed_.clear(); }
+    /// Drops the meshes of a model file (absolute, generic form); the GPU must be idle.
+    std::size_t invalidateFile(const std::string& file);
 
 private:
     rhi::UploadQueue& uploads_;

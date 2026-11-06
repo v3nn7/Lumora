@@ -11,6 +11,7 @@ class QListView;
 class QSortFilterProxyModel;
 class QToolButton;
 class QTreeView;
+class QIcon;
 
 namespace lumora::editor {
 
@@ -28,6 +29,10 @@ public:
     explicit ContentBrowserPanel(const QString& projectRoot, QWidget* parent = nullptr);
 
     [[nodiscard]] QString currentFolder() const { return current_; }
+    /// Previews and type icons for the files.
+    void setThumbnails(class ThumbnailCache* thumbnails);
+    /// Icon shown for a file (tests).
+    [[nodiscard]] QIcon iconOf(const QString& path) const;
     void navigate(const QString& dir);
 
 signals:

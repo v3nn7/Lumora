@@ -780,3 +780,72 @@ TEST_F(EditorUiTest, QuickOpenFindsFilesAndEntities) {
     dialog->openCurrent();
     EXPECT_EQ(editor->context().selectedUuid(), scene.uuidOf(cube)) << "Enter selects the entity";
 }
+
+#include "GltfTestUtils.hpp"
+#include "editor/Thumbnails.hpp"
+#include "renderer/Renderer.hpp"
+
+#include <QImage>
+
+TEST(Thumbnails, TypeIconsAndImagePreviewsCachedOnDisk) {
+    EXPECT_EQ(editor::ThumbnailCache::typeLabel(QStringLiteral("cpp")), QStringLiteral("C++"));
+    EXPECT_EQ(editor::ThumbnailCache::typeLabel(QStringLiteral("lscene")), QStringLiteral("SCENE"));
+    EXPECT_EQ(editor::ThumbnailCache::typeLabel(QStringLiteral("wav")), QStringLiteral("WAV"));
+    const QImage cpp = editor::ThumbnailCache::typeIcon(QStringLiteral("cpp")).pixmap(64, 64).toImage();
+    const QImage wav = editor::ThumbnailCache::typeIcon(QStringLiteral("wav")).pixmap(64, 64).toImage();
+    ASSERT_FALSE(cpp.isNull());
+    EXPECT_NE(cpp, wav) << "each type has its own colour and label";
+
+    test::TempDir project;
+    const QString root = QString::fromStdString(project.path().string());
+    const QString png = root + QStringLiteral("/Content/red.png");
+    QDir().mkpath(root + QStringLiteral("/Content"));
+    QImage red(256, 128, QImage::Format_RGBA8888);
+    red.fill(Qt::red);
+    ASSERT_TRUE(red.save(png));
+    editor::ThumbnailCache cache(root);
+    QStringList ready;
+    QObject::connect(&cache, &editor::ThumbnailCache::previewReady, [&](const QString& p) { ready << p; });
+    (void)cache.icon(QFileInfo(png));  // the type icon now, the preview queued
+    EXPECT_FALSE(cache.hasPreview(png));
+    EXPECT_EQ(cache.pending(), 1);
+    cache.processAll();
+    EXPECT_EQ(ready, QStringList{png});
+    const QImage preview = cache.icon(QFileInfo(png)).pixmap(128, 128).toImage();
+    EXPECT_EQ(preview.pixelColor(preview.width() / 2, preview.height() / 2).red(), 255);
+    EXPECT_FALSE(QDir(root + QStringLiteral("/Saved/Thumbnails")).entryList(QDir::Files).isEmpty()) << "kept on disk";
+    editor::ThumbnailCache later(root);
+    (void)later.icon(QFileInfo(png));
+    EXPECT_TRUE(later.hasPreview(png)) << "the next session reads it from disk";
+    EXPECT_EQ(later.pending(), 0);
+}
+
+TEST_F(EditorUiTest, PreviewsRenderAndChangedModelsReload) {
+    editor::EditorWindow* editor = openEditor();
+    ASSERT_NE(editor, nullptr);
+    const auto models = editor->project().contentDir() / "Models";
+    std::filesystem::create_directories(models);
+    const auto cube = models / "cube.gltf";
+    test::writeCubeGltf(cube, false);
+    editor->reloadChangedIn(app::toQString(models));  // a new file: noted, nothing to reload
+    auto first = editor->assets().model(cube);
+    ASSERT_TRUE(first.has_value()) << first.error().message;
+    EXPECT_TRUE((*first)->images.empty()) << "the first version has no texture";
+
+    if (context_->renderer() != nullptr) {
+        const QImage preview = editor->renderPreview(app::toQString(cube));
+        ASSERT_FALSE(preview.isNull());
+        EXPECT_EQ(preview.size(), QSize(128, 128));
+        const QColor c = preview.pixelColor(64, 64);
+        EXPECT_GT(c.red(), c.green() + 30) << "the red cube fills the middle";
+    }
+
+    // Changed by another program: the next request reads the new file.
+    test::writeCubeGltf(cube, false, true);
+    std::filesystem::last_write_time(cube, std::filesystem::file_time_type::clock::now() + std::chrono::seconds(2));
+    EXPECT_EQ(editor->reloadChangedIn(app::toQString(models)), 1);
+    auto second = editor->assets().model(cube);
+    ASSERT_TRUE(second.has_value());
+    EXPECT_FALSE((*second)->images.empty()) << "the new file has a texture";
+    EXPECT_EQ(editor->reloadChangedIn(app::toQString(models)), 0) << "nothing new";
+}

@@ -6,6 +6,9 @@
 #include "assets/AssetLibrary.hpp"
 #include "project/Project.hpp"
 
+#include <QFileSystemWatcher>
+#include <QHash>
+#include <QImage>
 #include <QMainWindow>
 
 #include <glm/vec2.hpp>
@@ -76,6 +79,11 @@ public:
     void openInputSettings();
     /// Ctrl+P: the quick-open popup over the project's files and the scene's entities.
     class QuickOpenDialog* showQuickOpen();
+    /// Preview picture of a model, prefab or material (Content Browser thumbnails).
+    [[nodiscard]] QImage renderPreview(const QString& path);
+    /// Reloads assets in a folder whose files changed on disk; returns how many.
+    int reloadChangedIn(const QString& dir);
+    [[nodiscard]] class ThumbnailCache& thumbnails() noexcept { return *thumbnails_; }
     /// What dropping files at a viewport position does: materials go on the object under the
     /// cursor, models and prefabs are placed there, HDR images become the sky.
     void dropOnViewport(const QStringList& files, glm::vec2 ndc);
@@ -209,6 +217,10 @@ private:
     class ContentBrowserPanel* content_ = nullptr;
     class CodeEditorPanel* code_ = nullptr;
     class InspectorPanel* inspector_ = nullptr;
+    class ThumbnailCache* thumbnails_ = nullptr;
+    QFileSystemWatcher* contentWatcher_ = nullptr;
+    QHash<QString, qint64> fileStamps_;
+    void watchContent();
     QDockWidget* codeDock_ = nullptr;
     QAction* savePrefab_ = nullptr;
     QAction* newBehaviour_ = nullptr;

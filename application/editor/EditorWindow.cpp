@@ -16,6 +16,10 @@
 #include "editor/EntityFactory.hpp"
 #include "editor/InspectorPanel.hpp"
 #include "editor/QuickOpen.hpp"
+#include "editor/Thumbnails.hpp"
+#include "scene/Camera.hpp"
+
+#include <QFileSystemWatcher>
 #include "editor/EntityFactory.hpp"
 
 #include <QDirIterator>
@@ -408,6 +412,10 @@ void EditorWindow::buildDocks() {
     auto* inspector = makeDock(this, tr("Inspector"), QStringLiteral("dock.inspector"), QStringLiteral("settings"), inspector_);
     auto* content = new ContentBrowserPanel(app::toQString(project_.rootDir()));
     content_ = content;
+    thumbnails_ = new ThumbnailCache(app::toQString(project_.rootDir()), this);
+    thumbnails_->setRenderer([this](const QString& path) { return renderPreview(path); });
+    content->setThumbnails(thumbnails_);
+    watchContent();
     auto* contentDock = makeDock(this, tr("Content Browser"), QStringLiteral("dock.content"), QStringLiteral("folder"), content);
     auto* console = makeDock(this, tr("Console"), QStringLiteral("dock.console"), QStringLiteral("console"), new ConsolePanel(app_.logBridge()));
     code_ = new CodeEditorPanel;
@@ -867,6 +875,120 @@ std::optional<std::string> EditorWindow::pickMaterialAsset(QWidget* parent) {
         return std::nullopt;
     }
     return project_.relativePath(path);
+}
+
+QImage EditorWindow::renderPreview(const QString& path) {
+    render::Renderer* renderer = app_.renderer();
+    if (renderer == nullptr) return {};
+    const std::filesystem::path file = std::filesystem::absolute(app::toPath(path));
+    const std::string relative = project_.relativePath(file);
+    Scene scene("Preview");
+    // Lit from the upper left like a product shot, on the default sky.
+    const entt::entity sun = scene.createEntity("Sun");
+    scene.registry().emplace<LightComponent>(sun).intensity = 3.0f;
+    scene.registry().get<TransformComponent>(sun).rotationDeg = {-40.0f, -35.0f, 0.0f};
+    scene.environment().fogDensity = 0.0f;
+    if (file.extension() == kMaterialExtension) {
+        auto& mesh = scene.registry().emplace<MeshRendererComponent>(scene.createEntity("Ball"));
+        mesh.mesh = MeshPrimitive::Sphere;
+        mesh.material = relative;
+    } else if (isPrefabFile(file)) {
+        auto prefab = loadPrefab(file);
+        if (!prefab || !instantiatePrefab(scene, *prefab)) return {};
+    } else {
+        auto model = assets_.model(file);
+        if (!model || (*model)->meshes.empty()) return {};
+        instantiateModel(scene, **model, relative, file.stem().string());
+    }
+    scene.updateWorldTransforms();
+    // Frame everything that renders.
+    glm::vec3 lo(std::numeric_limits<float>::max()), hi(std::numeric_limits<float>::lowest());
+    for (auto [e, mesh] : scene.registry().view<MeshRendererComponent>().each()) {
+        const auto bounds = localBounds(scene, e, &assets_);
+        if (!bounds) continue;
+        const glm::mat4 world = scene.worldMatrix(e);
+        for (int c = 0; c < 8; ++c) {
+            const glm::vec3 corner((c & 1) ? bounds->max.x : bounds->min.x, (c & 2) ? bounds->max.y : bounds->min.y,
+                                   (c & 4) ? bounds->max.z : bounds->min.z);
+            const glm::vec3 p(world * glm::vec4(corner, 1.0f));
+            lo = glm::min(lo, p);
+            hi = glm::max(hi, p);
+        }
+    }
+    if (lo.x > hi.x) return {};
+    const glm::vec3 center = (lo + hi) * 0.5f;
+    const float radius = std::max(glm::length(hi - lo) * 0.5f, 0.01f);
+    FlyCameraController camera;
+    const float fov = glm::radians(35.0f);
+    camera.setPosition(center + glm::normalize(glm::vec3(1.0f, 0.75f, 1.3f)) * (radius / std::sin(fov * 0.5f)) * 1.05f);
+    camera.lookAt(center);
+    CameraView view = camera.view(1.0f);
+    view.fovYRadians = fov;
+    view.projection = perspectiveReverseZ(fov, 1.0f, std::max(0.01f, radius * 0.01f));
+    view.nearPlane = std::max(0.01f, radius * 0.01f);
+    render::RenderSettings settings;
+    settings.assets = &assets_;
+    settings.blockOnAssets = true;
+    settings.bloom = false;
+    auto image = renderer->capture(scene, view, {128, 128}, settings);
+    if (!image) return {};
+    return QImage(image->rgba.data(), static_cast<int>(image->width), static_cast<int>(image->height),
+                  QImage::Format_RGBA8888)
+        .copy();
+}
+
+void EditorWindow::watchContent() {
+    // Asset files changed by other programs (Blender, an image editor, git) reload by
+    // themselves: every folder of the project is watched (Saved/ and dot folders aside).
+    contentWatcher_ = new QFileSystemWatcher(this);
+    const QString root = app::toQString(project_.rootDir());
+    QStringList dirs{root};
+    QDirIterator it(root, QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    while (it.hasNext() && dirs.size() < 2000) {
+        const QString dir = it.next();
+        const QString relative = QDir(root).relativeFilePath(dir);
+        if (relative.startsWith(QLatin1String("Saved")) || relative.startsWith(QLatin1Char('.')) ||
+            relative.contains(QLatin1String("/."))) {
+            continue;
+        }
+        dirs << dir;
+    }
+    contentWatcher_->addPaths(dirs);
+    for (const QString& dir : dirs) {
+        for (const QFileInfo& f : QDir(dir).entryInfoList(QDir::Files)) {
+            fileStamps_.insert(f.absoluteFilePath(), f.lastModified().toMSecsSinceEpoch());
+        }
+    }
+    connect(contentWatcher_, &QFileSystemWatcher::directoryChanged, this, [this](const QString& dir) {
+        // Writers often replace a file in several steps: look once things settle.
+        QTimer::singleShot(150, this, [this, dir] { reloadChangedIn(dir); });
+    });
+}
+
+int EditorWindow::reloadChangedIn(const QString& dir) {
+    int reloaded = 0;
+    QDir folder(dir);
+    for (const QFileInfo& sub : folder.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        if (!contentWatcher_->directories().contains(sub.absoluteFilePath()) && !sub.fileName().startsWith(QLatin1Char('.'))) {
+            contentWatcher_->addPath(sub.absoluteFilePath());  // a new folder
+        }
+    }
+    for (const QFileInfo& f : folder.entryInfoList(QDir::Files)) {
+        const QString path = f.absoluteFilePath();
+        const qint64 stamp = f.lastModified().toMSecsSinceEpoch();
+        const auto known = fileStamps_.constFind(path);
+        const bool changed = known != fileStamps_.constEnd() && *known != stamp;
+        fileStamps_.insert(path, stamp);
+        if (!changed) continue;
+        const std::filesystem::path file = app::toPath(path);
+        if (assets_.invalidateFile(file) > 0) {
+            if (render::Renderer* renderer = app_.renderer()) renderer->invalidateAssetFile(file);
+            log::info("Editor", "reloaded {}", project_.relativePath(file));
+            ++reloaded;
+        }
+        thumbnails_->invalidate(path);
+    }
+    return reloaded;
 }
 
 QuickOpenDialog* EditorWindow::showQuickOpen() {

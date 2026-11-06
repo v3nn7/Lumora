@@ -92,6 +92,19 @@ Result<std::string> AssetLibrary::canonicalTextureKey(std::string_view key) cons
     return ref->image >= 0 ? std::format("{}#tex{}", ref->file.generic_string(), ref->image) : ref->file.generic_string();
 }
 
+std::size_t AssetLibrary::invalidateFile(const std::filesystem::path& absoluteFile) {
+    waitIdle();
+    const std::string file = absoluteFile.lexically_normal().generic_string();
+    std::scoped_lock lock(mutex_);
+    const std::size_t before = models_.size() + textures_.size();
+    auto fromFile = [&](const std::string& key) {
+        return key == file || (key.size() > file.size() && key.starts_with(file) && key[file.size()] == '#');
+    };
+    std::erase_if(models_, [&](const auto& entry) { return fromFile(entry.first); });
+    std::erase_if(textures_, [&](const auto& entry) { return fromFile(entry.first); });
+    return before - models_.size() - textures_.size();
+}
+
 void AssetLibrary::forgetFailures() {
     std::scoped_lock lock(mutex_);
     auto prune = [](auto& map) {

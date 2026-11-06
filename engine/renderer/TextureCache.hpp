@@ -36,6 +36,8 @@ public:
     [[nodiscard]] std::size_t size() const noexcept { return textures_.size(); }
     /// Lets textures that failed to load be tried again.
     void forgetFailures() { failed_.clear(); }
+    /// Drops textures read from a file (absolute, generic form); the GPU must be idle.
+    std::size_t invalidateFile(const std::string& file);
 
 private:
     struct Entry {

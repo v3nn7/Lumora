@@ -103,6 +103,14 @@ Renderer::~Renderer() {
     }
 }
 
+void Renderer::invalidateAssetFile(const std::filesystem::path& absoluteFile) {
+    waitIdle();
+    const std::string file = absoluteFile.lexically_normal().generic_string();
+    const std::size_t meshes = ctx_.meshes().invalidateFile(file);
+    const std::size_t textures = ctx_.textures().invalidateFile(file);
+    if (meshes + textures > 0) log::info("Renderer", "reloading {} ({} meshes, {} textures)", file, meshes, textures);
+}
+
 void Renderer::waitIdle() {
     std::vector<VkFence> fences;
     for (auto& f : frames_) {

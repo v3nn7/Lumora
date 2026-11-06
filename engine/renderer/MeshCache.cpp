@@ -26,6 +26,12 @@ MeshCache::MeshCache(rhi::UploadQueue& uploads) : uploads_(uploads) {
     log::debug("Renderer", "uploaded {} primitive meshes", primitives_.size());
 }
 
+std::size_t MeshCache::invalidateFile(const std::string& file) {
+    const std::string prefix = file + "#";
+    std::erase_if(failed_, [&](const std::string& key) { return key.starts_with(prefix); });
+    return std::erase_if(assets_, [&](const auto& entry) { return entry.first.starts_with(prefix); });
+}
+
 const GpuMesh* MeshCache::asset(AssetLibrary& library, const std::string& key, bool block) {
     auto canonical = library.canonicalKey(key);
     if (!canonical) return nullptr;

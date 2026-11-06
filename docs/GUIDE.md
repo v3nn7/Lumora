@@ -108,7 +108,7 @@ stack it; *View → Reset Layout* restores the default. The layout is remembered
 | Viewport | The scene as the engine renders it; selection, gizmos, camera |
 | Hierarchy | All entities as a tree. Drag to re-parent; right-click to create, rename, duplicate or delete; filter at the top |
 | Inspector | Components of the selected entity. With nothing selected it shows the scene environment |
-| Content Browser | The whole project as folders. Double-click to open folders, scenes, models, prefabs and scripts; *New* creates folders, scenes, behaviours and prefabs; *Import* or drop files to bring them in; right-click to rename, duplicate or delete (to the trash) |
+| Content Browser | The whole project as folders, with previews of images, models, prefabs and materials and a labelled icon for every other file type. Double-click to open folders, scenes, models, prefabs and scripts; *New* creates folders, scenes, behaviours and prefabs; *Import* or drop files to bring them in; right-click to rename, duplicate or delete (to the trash) |
 | Code | Built-in C++ editor for scripts: syntax colouring, line numbers, completion of the scripting API while typing (or <kbd>Ctrl</kbd>+<kbd>Space</kbd>; the keys after `Key::`, the fields after `.`), <kbd>Ctrl</kbd>+<kbd>S</kbd> saves and rebuilds, double-click a compiler error to jump to it |
 | Console | Engine log |
 | Profiler | Frame time and GPU time per render pass |
@@ -204,6 +204,9 @@ turning one) bends the mesh. Up to four joints influence each vertex.
 The Mesh Renderer component holds the material: base colour, metallic, roughness, emissive colour
 and strength, an optional procedural grid or checker pattern, and optional base-colour, metallic-roughness, normal and emissive textures. Shading is physically
 based (GGX), so metallic and roughness behave as in other PBR tools.
+
+**Changed files reload by themselves**: save a model from Blender or an image from an editor into the
+project and the scene shows the new version (the editor watches the project's folders).
 
 **Material assets** (`.lmat`) share one surface between many objects. *New → Material* in the
 Content Browser creates one; select it to edit it in the Inspector (changes are saved at once and

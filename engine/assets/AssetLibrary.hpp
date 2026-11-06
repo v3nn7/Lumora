@@ -83,6 +83,10 @@ public:
     void clear();
     /// Forgets cached failures so the next request tries again (e.g. a missing file arrived).
     void forgetFailures();
+    /// A file changed on disk: drops what was loaded from it (the model and its meshes, or the
+    /// image, and images inside it) so the next request reads it again. Waits for background
+    /// loads first. Returns how many cached assets were dropped.
+    std::size_t invalidateFile(const std::filesystem::path& absoluteFile);
 
 private:
     template <class T>

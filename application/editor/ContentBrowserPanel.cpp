@@ -3,6 +3,7 @@
 #include "common/Theme.hpp"
 #include "assets/Material.hpp"
 #include "common/ProjectUi.hpp"
+#include "editor/Thumbnails.hpp"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -65,6 +66,19 @@ public:
         return app::theme::icon(QStringLiteral("file"));
     }
     using QFileIconProvider::icon;
+};
+
+/// The browser's files with previews (or type icons) from a ThumbnailCache.
+class AssetFileModel final : public QFileSystemModel {
+public:
+    using QFileSystemModel::QFileSystemModel;
+    ThumbnailCache* thumbnails = nullptr;
+    QVariant data(const QModelIndex& index, int role) const override {
+        if (role == Qt::DecorationRole && thumbnails != nullptr && index.column() == 0 && !isDir(index)) {
+            return thumbnails->icon(fileInfo(index));
+        }
+        return QFileSystemModel::data(index, role);
+    }
 };
 
 /// Hides the editor's own state (Saved/) at the project's top level.
@@ -141,7 +155,7 @@ ContentBrowserPanel::ContentBrowserPanel(const QString& projectRoot, QWidget* pa
     tree_->header()->hide();
     tree_->setMinimumWidth(140);
 
-    model_ = new QFileSystemModel(this);
+    model_ = new AssetFileModel(this);
     model_->setIconProvider(new AssetIconProvider);
     model_->setReadOnly(false);  // rename in place
     model_->setRootPath(root_);
@@ -149,8 +163,8 @@ ContentBrowserPanel::ContentBrowserPanel(const QString& projectRoot, QWidget* pa
     view_ = new QListView;
     view_->setModel(model_);
     view_->setViewMode(QListView::IconMode);
-    view_->setIconSize(QSize(48, 48));
-    view_->setGridSize(QSize(104, 92));
+    view_->setIconSize(QSize(64, 64));
+    view_->setGridSize(QSize(110, 108));
     view_->setResizeMode(QListView::Adjust);
     view_->setMovement(QListView::Static);
     view_->setWordWrap(true);
@@ -186,6 +200,19 @@ ContentBrowserPanel::ContentBrowserPanel(const QString& projectRoot, QWidget* pa
     view_->viewport()->installEventFilter(this);
     view_->installEventFilter(this);  // Delete / F2 / Backspace
     navigate(QDir(root_).exists(QStringLiteral("Content")) ? QDir(root_).filePath(QStringLiteral("Content")) : root_);
+}
+
+QIcon ContentBrowserPanel::iconOf(const QString& path) const {
+    return qvariant_cast<QIcon>(model_->data(model_->index(path), Qt::DecorationRole));
+}
+
+void ContentBrowserPanel::setThumbnails(ThumbnailCache* thumbnails) {
+    static_cast<AssetFileModel*>(model_)->thumbnails = thumbnails;
+    connect(thumbnails, &ThumbnailCache::previewReady, this, [this](const QString& path) {
+        const QModelIndex index = model_->index(path);
+        if (index.isValid()) emit model_->dataChanged(index, index, {Qt::DecorationRole});
+    });
+    view_->viewport()->update();
 }
 
 void ContentBrowserPanel::navigate(const QString& dir) {

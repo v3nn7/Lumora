@@ -912,3 +912,52 @@ TEST_F(EditorUiTest, ContentBrowserSnapshot) {
     }
     browser->grab().save(dir + QStringLiteral("/content_browser.png"));
 }
+
+#include "editor/AddComponentMenu.hpp"
+#include "scene/ComponentRegistry.hpp"
+
+#include <QLineEdit>
+#include <QWidgetAction>
+
+TEST(AddComponent, GroupsComponentsIntoCategoriesAndSearches) {
+    using editor::AddComponentMenu;
+    std::vector<AddComponentMenu::Entry> entries;
+    for (const ComponentDesc& d : ComponentRegistry::builtin().components()) {
+        if (d.userAddable) entries.push_back({QString::fromStdString(d.id), QString::fromStdString(d.label), QString::fromStdString(d.category)});
+    }
+    const auto count = static_cast<int>(entries.size());
+    AddComponentMenu menu(std::move(entries));
+    EXPECT_EQ(menu.filter({}), count) << "every component is in a category";
+    QStringList submenus;
+    for (QAction* a : menu.actions()) {
+        if (a->menu() != nullptr) submenus << a->text();
+    }
+    EXPECT_TRUE(submenus.contains(QStringLiteral("Rendering")));
+    EXPECT_TRUE(submenus.contains(QStringLiteral("Physics")));
+    EXPECT_TRUE(submenus.contains(QStringLiteral("Environment")));
+    EXPECT_EQ(submenus.indexOf(QStringLiteral("Core")), 0) << "Core first";
+    for (QAction* a : menu.actions()) {
+        if (a->menu() == nullptr || a->text() != QStringLiteral("Physics")) continue;
+        QStringList names;
+        for (QAction* item : a->menu()->actions()) names << item->text();
+        EXPECT_TRUE(names.contains(QStringLiteral("Rigid Body")));
+        EXPECT_TRUE(names.contains(QStringLiteral("Vehicle")));
+        EXPECT_FALSE(names.contains(QStringLiteral("Light")));
+    }
+
+    QString chosen;
+    QObject::connect(&menu, &AddComponentMenu::chosen, [&](const QString& id) { chosen = id; });
+    menu.searchField()->setText(QStringLiteral("rigid"));
+    QAction* first = nullptr;
+    for (QAction* a : menu.actions()) {
+        if (a->isSeparator() || a->menu() != nullptr || qobject_cast<QWidgetAction*>(a) != nullptr) continue;
+        first = a;
+        break;
+    }
+    ASSERT_NE(first, nullptr);
+    EXPECT_TRUE(first->text().startsWith(QStringLiteral("Rigid Body")));
+    emit menu.searchField()->returnPressed();
+    EXPECT_EQ(chosen, QStringLiteral("RigidBody")) << "Enter adds the best match";
+    EXPECT_GE(menu.filter(QStringLiteral("phys")), 5) << "a category name lists its components";
+    EXPECT_EQ(menu.filter(QStringLiteral("zzzzqx")), 0);
+}

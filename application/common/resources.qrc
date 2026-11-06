@@ -1,6 +1,13 @@
 <RCC>
   <qresource prefix="/icons">
     <file alias="back.svg">icons/back.svg</file>
+    <file alias="physics.svg">icons/physics.svg</file>
+    <file alias="audio.svg">icons/audio.svg</file>
+    <file alias="code.svg">icons/code.svg</file>
+    <file alias="mountain.svg">icons/mountain.svg</file>
+    <file alias="animation.svg">icons/animation.svg</file>
+    <file alias="navigation.svg">icons/navigation.svg</file>
+    <file alias="ui.svg">icons/ui.svg</file>
     <file alias="camera.svg">icons/camera.svg</file>
     <file alias="chart.svg">icons/chart.svg</file>
     <file alias="close.svg">icons/close.svg</file>

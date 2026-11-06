@@ -11,7 +11,30 @@ const FieldDesc* ComponentDesc::findField(std::string_view fieldId) const {
     return it == fields.end() ? nullptr : &*it;
 }
 
-void ComponentRegistry::add(ComponentDesc desc) { components_.push_back(std::move(desc)); }
+namespace {
+
+std::string categoryOf(std::string_view id) {
+    static const std::pair<std::string_view, std::string_view> kCategories[] = {
+        {"MeshRenderer", "Rendering"}, {"Light", "Rendering"},       {"Decal", "Rendering"},
+        {"ParticleEmitter", "Rendering"},                           {"Terrain", "Environment"},
+        {"Water", "Environment"},      {"Foliage", "Environment"},   {"RigidBody", "Physics"},
+        {"Collider", "Physics"},       {"CharacterController", "Physics"}, {"Joint", "Physics"},
+        {"Ragdoll", "Physics"},        {"Vehicle", "Physics"},       {"Animator", "Animation"},
+        {"Skin", "Animation"},         {"ModelNode", "Animation"},   {"NavAgent", "Navigation"},
+        {"AudioSource", "Audio"},      {"Script", "Scripting"},
+    };
+    for (const auto& [component, category] : kCategories) {
+        if (component == id) return std::string(category);
+    }
+    return "Core";  // Transform, Camera, Rotator, Oscillator, and anything new
+}
+
+} // namespace
+
+void ComponentRegistry::add(ComponentDesc desc) {
+    if (desc.category == "Core") desc.category = categoryOf(desc.id);
+    components_.push_back(std::move(desc));
+}
 
 const ComponentDesc* ComponentRegistry::find(std::string_view id) const {
     const auto it = std::ranges::find(components_, id, &ComponentDesc::id);

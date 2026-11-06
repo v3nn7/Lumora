@@ -35,6 +35,9 @@ struct FieldDesc {
 struct ComponentDesc {
     std::string id;
     std::string label;
+    /// Group in "Add Component": Core, Rendering, Environment, Physics, Animation, Navigation,
+    /// Audio, Scripting.
+    std::string category = "Core";
     bool userAddable = true;  // shows up in "Add Component"
     bool removable = true;
     std::vector<FieldDesc> fields;

@@ -1,5 +1,7 @@
 #include "editor/InspectorPanel.hpp"
 
+#include "editor/AddComponentMenu.hpp"
+
 #include "common/Theme.hpp"
 #include "editor/EditorContext.hpp"
 #include "editor/EntityFactory.hpp"
@@ -250,13 +252,18 @@ void InspectorPanel::buildEntity() {
 
     // Add Component
     auto* add = new QPushButton(app::theme::icon(QStringLiteral("plus")), tr("Add Component"));
-    auto* menu = new QMenu(add);
+    std::vector<AddComponentMenu::Entry> entries;
     for (const ComponentDesc& desc : registry.components()) {
         if (!desc.userAddable || desc.has(scene.registry(), e)) continue;
-        menu->addAction(QString::fromStdString(desc.label), this, [this, id, &desc] { ctx_.addComponent(id, desc); });
+        entries.push_back({QString::fromStdString(desc.id), QString::fromStdString(desc.label), QString::fromStdString(desc.category)});
     }
+    const bool any = !entries.empty();
+    auto* menu = new AddComponentMenu(std::move(entries), add);
+    connect(menu, &AddComponentMenu::chosen, this, [this, id, &registry](const QString& component) {
+        if (const ComponentDesc* desc = registry.find(component.toStdString())) ctx_.addComponent(id, *desc);
+    });
     add->setMenu(menu);
-    add->setEnabled(!menu->isEmpty());
+    add->setEnabled(any);
     contentLayout_->addSpacing(6);
     contentLayout_->addWidget(add);
 }

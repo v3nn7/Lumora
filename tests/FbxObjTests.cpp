@@ -486,3 +486,77 @@ TEST(FbxImport, RejectsBrokenFiles) {
     EXPECT_FALSE(importModel(dir.path() / "broken.fbx").has_value());
     EXPECT_FALSE(importModel(dir.path() / "missing.obj").has_value());
 }
+
+TEST(FbxImport, BlendShapesBecomeMorphTargets) {
+    test::TempDir dir;
+    std::ofstream(dir.path() / "face.fbx") << R"(; FBX 7.4.0 project file
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7400
+}
+GlobalSettings:  {
+	Version: 1000
+	Properties70:  {
+		P: "UpAxis", "int", "Integer", "",1
+		P: "UpAxisSign", "int", "Integer", "",1
+		P: "FrontAxis", "int", "Integer", "",2
+		P: "FrontAxisSign", "int", "Integer", "",1
+		P: "CoordAxis", "int", "Integer", "",0
+		P: "CoordAxisSign", "int", "Integer", "",1
+		P: "UnitScaleFactor", "double", "Number", "",100
+	}
+}
+Objects:  {
+	Geometry: 1000, "Geometry::Tri", "Mesh" {
+		Vertices: *9 {
+			a: 0,0,0,1,0,0,0,1,0
+		}
+		PolygonVertexIndex: *3 {
+			a: 0,1,-3
+		}
+		GeometryVersion: 124
+	}
+	Geometry: 1100, "Geometry::Smile", "Shape" {
+		Version: 100
+		Indexes: *1 {
+			a: 2
+		}
+		Vertices: *3 {
+			a: 0.5,0,0
+		}
+	}
+	Model: 2000, "Model::Face", "Mesh" {
+		Version: 232
+	}
+	Deformer: 5100, "Deformer::Morph", "BlendShape" {
+		Version: 100
+	}
+	Deformer: 5101, "SubDeformer::Smile", "BlendShapeChannel" {
+		Version: 100
+		DeformPercent: 40
+		FullWeights: *1 {
+			a: 100
+		}
+	}
+}
+Connections:  {
+	C: "OO",2000,0
+	C: "OO",1000,2000
+	C: "OO",5100,1000
+	C: "OO",5101,5100
+	C: "OO",1100,5101
+}
+)";
+    auto model = importModel(dir.path() / "face.fbx");
+    ASSERT_TRUE(model.has_value()) << model.error().message;
+    ASSERT_EQ(model->meshes.size(), 1u);
+    const ImportedMesh& mesh = model->meshes[0];
+    ASSERT_EQ(mesh.data.morphs.size(), 1u);
+    ASSERT_EQ(mesh.weights.size(), 1u);
+    EXPECT_NEAR(mesh.weights[0], 0.4f, 1e-5f) << "DeformPercent 40";
+    EXPECT_EQ(mesh.morphNames[0], "Smile");
+    for (std::size_t v = 0; v < mesh.data.vertices.size(); ++v) {
+        const bool top = mesh.data.vertices[v].position.y > 0.5f;
+        EXPECT_FLOAT_EQ(mesh.data.morphs[0].positions[v].x, top ? 0.5f : 0.0f) << "only the shape's vertex moves";
+    }
+}

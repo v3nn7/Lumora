@@ -2347,3 +2347,45 @@ TEST_F(RendererTest, ClearcoatSheenAndSpecularChangeTheReflection) {
     EXPECT_GT(velvet, plain + 2.0f) << "sheen brightens the dark cloth";
     EXPECT_LT(noSpecular, plain - 0.5f) << "no dielectric reflection at all";
 }
+
+TEST_F(RendererTest, MorphTargetsMoveTheMeshAndTheSecondUvSetPicksItsTexels) {
+    test::TempDir project;
+    test::writeMorphQuadGltf(project.path() / "Content" / "Models" / "quad.gltf");
+    AssetLibrary assets(project.path());
+    auto model = assets.model(project.path() / "Content" / "Models" / "quad.gltf");
+    ASSERT_TRUE(model.has_value()) << model.error().message;
+    auto scene = sceneWithSun();
+    scene->environment().fogDensity = 0.0f;
+    const entt::entity root = instantiateModel(*scene, **model, "Content/Models/quad.gltf", "Quad");
+    entt::entity quad = entt::null;
+    for (auto [e, m] : scene->registry().view<MorphWeightsComponent>().each()) quad = e;
+    ASSERT_TRUE(quad != entt::null);
+    (void)root;
+    FlyCameraController cam;
+    cam.setPosition({0.5f, 0.0f, 3.0f});
+    cam.lookAt({0.5f, 0.0f, 0.0f});
+    const CameraView view = cam.view(1.0f);
+    const glm::uvec2 size(96, 96);
+    RenderSettings settings;
+    settings.assets = &assets;
+    settings.blockOnAssets = true;
+    settings.temporalAntiAliasing = false;
+    auto render = [&](float weight) {
+        scene->registry().get<MorphWeightsComponent>(quad).weights = {weight};
+        scene->updateWorldTransforms();
+        auto image = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+        EXPECT_TRUE(image.has_value());
+        return std::move(*image);
+    };
+    auto green = [](glm::u8vec4 p) { return p.g > p.r + 60 && p.g > p.b + 40; };
+    const glm::ivec2 left = toPixel(view, {-0.3f, 0.0f, 0.0f}, size);
+    const glm::ivec2 right = toPixel(view, {1.3f, 0.0f, 0.0f}, size);
+    const CapturedImage rest = render(0.0f);
+    EXPECT_EQ(renderer_->stats().scene.morphedObjects, 0u) << "zero weights: the mesh as it is";
+    EXPECT_TRUE(green(pixel(rest, left.x, left.y))) << "the second UV set shows only the map's green half";
+    EXPECT_FALSE(green(pixel(rest, right.x, right.y)));
+    const CapturedImage moved = render(1.0f);
+    EXPECT_EQ(renderer_->stats().scene.morphedObjects, 1u);
+    EXPECT_FALSE(green(pixel(moved, left.x, left.y))) << "the target slid it 1 m to the right";
+    EXPECT_TRUE(green(pixel(moved, right.x, right.y)));
+}

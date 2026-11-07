@@ -345,6 +345,12 @@ struct SkinComponent {
     int skin = -1;  // index into the model's skins (the model is the one of MeshRenderer::meshAsset)
 };
 
+/// Blend shape weights of the entity's mesh (glTF morph targets), one per target; the animator
+/// writes them, scripts may too. Set by instantiateModel for meshes that have targets.
+struct MorphWeightsComponent {
+    std::vector<float> weights;
+};
+
 /// Which node of the source model an entity mirrors (set by instantiateModel; used by animation).
 struct ModelNodeComponent {
     int node = -1;

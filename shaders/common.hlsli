@@ -95,7 +95,7 @@ struct GpuObject {
     float4 specularClearcoat;  // rgb specular colour, w clearcoat
     float4 sheen;              // rgb sheen colour, w sheen roughness
     float4 transmission;       // x transmission, y clearcoat roughness, z thickness (m), w attenuation distance (m, 0 = clear)
-    float4 attenuation;        // rgb attenuation colour (volume)
+    float4 attenuation;        // rgb attenuation colour (volume); w: asuint = maps on the second UV set (bits: base, mr, emissive, normal, occlusion)
 };
 
 /// The material's texture coordinates (KHR_texture_transform).

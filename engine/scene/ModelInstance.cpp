@@ -13,11 +13,17 @@ namespace lumora {
 namespace {
 
 void addMeshRenderer(Scene& scene, entt::entity e, const ImportedModel& model, std::string_view relativeFile, int meshIndex,
-                     int skin) {
+                     int skin, const std::vector<float>& nodeWeights) {
     const ImportedMesh& mesh = model.meshes[static_cast<std::size_t>(meshIndex)];
     auto& renderer = scene.registry().emplace<MeshRendererComponent>(e);
     renderer.meshAsset = AssetLibrary::meshKey(relativeFile, meshIndex);
     if (skin >= 0 && !mesh.data.skin.empty()) scene.registry().emplace<SkinComponent>(e).skin = skin;
+    if (!mesh.data.morphs.empty()) {
+        // The node's weights, else the mesh's defaults.
+        std::vector<float> weights = !nodeWeights.empty() ? nodeWeights : mesh.weights;
+        weights.resize(mesh.data.morphs.size(), 0.0f);
+        scene.registry().emplace<MorphWeightsComponent>(e).weights = std::move(weights);
+    }
     if (mesh.material < 0 || mesh.material >= static_cast<int>(model.materials.size())) return;
     const ImportedMaterial& m = model.materials[static_cast<std::size_t>(mesh.material)];
     renderer.baseColor = glm::vec3(m.baseColor);
@@ -69,7 +75,7 @@ entt::entity instantiateModel(Scene& scene, const ImportedModel& model, std::str
                 if (parts[p] < 0 || parts[p] >= static_cast<int>(model.meshes.size())) continue;
                 const entt::entity target = p == 0 ? e : scene.createEntity(model.meshes[static_cast<std::size_t>(parts[p])].name,
                                                                              Uuid::generate(), e);
-                addMeshRenderer(scene, target, model, relativeFile, parts[p], node.skin);
+                addMeshRenderer(scene, target, model, relativeFile, parts[p], node.skin, node.weights);
             }
         }
     }

@@ -58,6 +58,9 @@ struct ImportedMaterial {
     /// KHR_texture_transform of the material's maps: one for all of them (the base colour
     /// map's, or the first map that has one).
     TextureTransform uvTransform;
+    /// Maps that read the second UV set (TEXCOORD_1): bit 0 base colour, 1 metallic-roughness,
+    /// 2 emissive, 3 normal, 4 occlusion. The texture transform applies to the first set only.
+    std::uint32_t uv1Maps = 0;
     float ior = 1.5f;                    // KHR_materials_ior
     float specularFactor = 1.0f;         // KHR_materials_specular: strength of the dielectric reflection
     glm::vec3 specularColor{1.0f};       //   ... and its tint at normal incidence
@@ -94,6 +97,8 @@ struct ImportedMesh {
     std::string name;
     MeshData data;           // the triangle primitives that use `material`, merged
     int material = -1;
+    std::vector<float> weights;           // default morph target weights (data.morphs)
+    std::vector<std::string> morphNames;  // the targets' names, when the file gives them
 };
 
 /// Joints (node indices) deforming skinned meshes, with their inverse bind matrices.
@@ -111,18 +116,22 @@ struct ImportedNode {
     glm::vec3 translation{0.0f};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 scale{1.0f};
+    std::vector<float> weights;  // morph target weights of its mesh (empty = the mesh's own)
 };
 
 /// One animated property of one node. Values are vec3 (translation, scale) or quaternions
 /// stored x, y, z, w (rotation); cubic-spline channels hold in-tangent, value, out-tangent per key.
 struct AnimationChannel {
-    enum class Path { Translation, Rotation, Scale };
+    enum class Path { Translation, Rotation, Scale, Weights };
     enum class Interpolation { Step, Linear, CubicSpline };
     int node = -1;  // index into ImportedModel::nodes
     Path path = Path::Translation;
     Interpolation interpolation = Interpolation::Linear;
     std::vector<float> times;       // seconds, ascending
-    std::vector<glm::vec4> values;
+    std::vector<glm::vec4> values;  // translation, rotation, scale
+    /// Weights: `weightCount` morph weights per key (x3 for cubic splines, like `values`).
+    std::vector<float> weights;
+    std::uint32_t weightCount = 0;
 };
 
 struct ImportedAnimation {
@@ -136,6 +145,7 @@ struct NodePose {
     glm::vec3 translation{0.0f};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 scale{1.0f};
+    std::vector<float> weights;  // morph target weights, when animated
 };
 
 /// Writes the animated properties at `time` (seconds, clamped to the clip) into `poses`

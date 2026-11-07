@@ -8,6 +8,9 @@ struct VSInput {
     [[vk::location(0)]] float3 position : POSITION;
     [[vk::location(1)]] float3 normal : NORMAL;
     [[vk::location(2)]] float2 uv : TEXCOORD0;
+#if defined(LUMORA_MASKED)
+    [[vk::location(4)]] float2 uv1 : UVSET;  // masked variants are never skinned
+#endif
 #if defined(LUMORA_SKINNED)
     [[vk::location(4)]] uint4 joints : BLENDINDICES;
     [[vk::location(5)]] float4 weights : BLENDWEIGHT;
@@ -42,7 +45,8 @@ VSOutput VSMain(VSInput input, uint instance : SV_InstanceID) {
     VSOutput o;
     o.objectIndex = gPush.index0 + instance;
     o.position = lightClip(gObjects[o.objectIndex], input);
-    o.uv = materialUv(gObjects[o.objectIndex], input.uv);
+    const GpuObject object = gObjects[o.objectIndex];
+    o.uv = (asuint(object.attenuation.w) & 1u) != 0u ? input.uv1 : materialUv(object, input.uv);
     return o;
 }
 

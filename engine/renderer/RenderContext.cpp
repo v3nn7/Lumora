@@ -44,22 +44,25 @@ std::vector<nvrhi::VertexAttributeDesc> vertexAttributes(VertexInput input) {
     constexpr auto ss = static_cast<std::uint32_t>(sizeof(SkinVertex));
     switch (input) {
         case VertexInput::Mesh:
+            // Vulkan locations follow the order (0-4); D3D12 matches the semantic names.
             return {attr("POSITION", F::RGB32_FLOAT, 0, offsetof(Vertex, position), vs),
                     attr("NORMAL", F::RGB32_FLOAT, 0, offsetof(Vertex, normal), vs),
                     attr("TEXCOORD", F::RG32_FLOAT, 0, offsetof(Vertex, uv), vs),
-                    attr("TANGENT", F::RGBA32_FLOAT, 0, offsetof(Vertex, tangent), vs)};
+                    attr("TANGENT", F::RGBA32_FLOAT, 0, offsetof(Vertex, tangent), vs),
+                    attr("UVSET", F::RG32_FLOAT, 0, offsetof(Vertex, uv1), vs)};
         case VertexInput::MeshPosition:
             return {attr("POSITION", F::RGB32_FLOAT, 0, offsetof(Vertex, position), vs)};
         case VertexInput::MeshSkinned:
         case VertexInput::MeshSkinnedPosition:
-            // Locations 0-3 for the vertex, 4-5 for the skin, as the skinned shaders declare them
+            // Locations 0-3 for the vertex, 4-5 for the skin, 6 the second UV set, as the skinned shaders declare them
             // (depth-only ones simply ignore the normal, uv and tangent).
             return {attr("POSITION", F::RGB32_FLOAT, 0, offsetof(Vertex, position), vs),
                     attr("NORMAL", F::RGB32_FLOAT, 0, offsetof(Vertex, normal), vs),
                     attr("TEXCOORD", F::RG32_FLOAT, 0, offsetof(Vertex, uv), vs),
                     attr("TANGENT", F::RGBA32_FLOAT, 0, offsetof(Vertex, tangent), vs),
                     attr("BLENDINDICES", F::RGBA16_UINT, 1, offsetof(SkinVertex, joints), ss),
-                    attr("BLENDWEIGHT", F::RGBA32_FLOAT, 1, offsetof(SkinVertex, weights), ss)};
+                    attr("BLENDWEIGHT", F::RGBA32_FLOAT, 1, offsetof(SkinVertex, weights), ss),
+                    attr("UVSET", F::RG32_FLOAT, 0, offsetof(Vertex, uv1), vs)};
         case VertexInput::Overlay:
             return {attr("POSITION", F::RGB32_FLOAT, 0, 0, 16), attr("COLOR", F::RGBA8_UNORM, 0, 12, 16)};
         case VertexInput::Hud:

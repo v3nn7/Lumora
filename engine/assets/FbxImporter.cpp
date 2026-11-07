@@ -258,6 +258,13 @@ private:
                 mesh.name = parts.empty() ? baseName : std::format("{} ({})", baseName, parts.size());
                 mesh.material = part.index < src.materials.count ? static_cast<int>(src.materials.data[part.index]->typed_id) : -1;
                 fill(src, part, mesh.data);
+                if (!mesh.data.morphs.empty()) {
+                    const ufbx_blend_deformer& blend = *src.blend_deformers.data[0];
+                    for (std::size_t c = 0; c < blend.channels.count; ++c) {
+                        mesh.weights.push_back(static_cast<float>(blend.channels.data[c]->weight));
+                        mesh.morphNames.push_back(text(blend.channels.data[c]->name));
+                    }
+                }
                 if (parts.empty()) {
                     parts.push_back(static_cast<int>(model_.meshes.size()));
                     model_.meshes.push_back(std::move(mesh));
@@ -294,6 +301,7 @@ private:
         const ufbx_skin_deformer* skin = src.skin_deformers.count > 0 ? src.skin_deformers.data[0] : nullptr;
         std::vector<std::uint32_t> corners(src.max_face_triangles * 3);
         std::unordered_map<CornerKey, std::uint32_t, CornerHash> unique;
+        std::vector<std::uint32_t> sourceVertex;  // per output vertex: the mesh vertex it is a corner of
         for (std::size_t f = 0; f < part.face_indices.count; ++f) {
             const ufbx_face face = src.faces.data[part.face_indices.data[f]];
             const std::uint32_t triangles = ufbx_triangulate_face(corners.data(), corners.size(), &src, face);
@@ -316,6 +324,7 @@ private:
                         v.uv = glm::vec2(static_cast<float>(uv.x), 1.0f - static_cast<float>(uv.y));  // FBX/OBJ: v up
                     }
                     out.vertices.push_back(v);
+                    sourceVertex.push_back(key.vertex);
                     if (skin != nullptr) out.skin.push_back(skinVertex(*skin, key.vertex));
                 }
                 out.indices.push_back(it->second);
@@ -323,6 +332,34 @@ private:
         }
         generateTangents(out);
         out.bounds = computeBounds(out.vertices);
+        // Blend shapes (one per channel: its full-weight shape), as offsets per output vertex.
+        if (src.blend_deformers.count > 0) {
+            const ufbx_blend_deformer& blend = *src.blend_deformers.data[0];
+            std::vector<glm::vec3> positions(src.num_vertices), normals(src.num_vertices);
+            for (std::size_t c = 0; c < blend.channels.count; ++c) {
+                MorphTarget& target = out.morphs.emplace_back();
+                const ufbx_blend_shape* shape = blend.channels.data[c]->target_shape;
+                if (shape == nullptr) {
+                    target.positions.assign(out.vertices.size(), glm::vec3(0.0f));
+                    continue;
+                }
+                std::ranges::fill(positions, glm::vec3(0.0f));
+                std::ranges::fill(normals, glm::vec3(0.0f));
+                const bool hasNormals = shape->normal_offsets.count == shape->num_offsets && shape->num_offsets > 0;
+                for (std::size_t o = 0; o < shape->num_offsets; ++o) {
+                    const std::uint32_t v = shape->offset_vertices.data[o];
+                    if (v >= src.num_vertices) continue;
+                    const float w = shape->offset_weights.count > o ? static_cast<float>(shape->offset_weights.data[o]) : 1.0f;
+                    positions[v] = toVec3(shape->position_offsets.data[o]) * w;
+                    if (hasNormals) normals[v] = toVec3(shape->normal_offsets.data[o]) * w;
+                }
+                target.positions.reserve(out.vertices.size());
+                for (const std::uint32_t v : sourceVertex) target.positions.push_back(positions[v]);
+                if (hasNormals) {
+                    for (const std::uint32_t v : sourceVertex) target.normals.push_back(normals[v]);
+                }
+            }
+        }
     }
 
     static SkinVertex skinVertex(const ufbx_skin_deformer& skin, std::uint32_t vertex) {

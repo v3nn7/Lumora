@@ -138,6 +138,82 @@ inline std::vector<unsigned char> encodePng(int width, int height, const std::ve
     return png;
 }
 
+
+/// A unit quad facing +Z ("Quad" node, node weight 0.25) with one morph target ("Slide": +1 m
+/// along X) animated from weight 0 to 1 over a second ("Morph"), and a base colour map read
+/// through the second UV set, which points every corner at the map's right half: left half
+/// red, right half green.
+inline void writeMorphQuadGltf(const std::filesystem::path& file) {
+    std::filesystem::create_directories(file.parent_path());
+    std::vector<unsigned char> bin;
+    auto put = [&](const void* p, std::size_t n) {
+        const auto* b = static_cast<const unsigned char*>(p);
+        bin.insert(bin.end(), b, b + n);
+    };
+    const float positions[] = {-0.5f, -0.5f, 0, 0.5f, -0.5f, 0, 0.5f, 0.5f, 0, -0.5f, 0.5f, 0};
+    const float normals[] = {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1};
+    const float uv0[] = {0, 1, 1, 1, 1, 0, 0, 0};
+    const float uv1[] = {0.75f, 0.5f, 0.75f, 0.5f, 0.75f, 0.5f, 0.75f, 0.5f};
+    const std::uint16_t indices[] = {0, 1, 2, 0, 2, 3};
+    const float deltas[] = {1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0};
+    const float times[] = {0, 1};
+    const float weights[] = {0, 1};
+    std::vector<std::pair<std::size_t, std::size_t>> views;  // offset, length
+    auto view = [&](const void* p, std::size_t n) {
+        views.emplace_back(bin.size(), n);
+        put(p, n);
+    };
+    view(positions, sizeof positions);
+    view(normals, sizeof normals);
+    view(uv0, sizeof uv0);
+    view(uv1, sizeof uv1);
+    view(indices, sizeof indices);
+    bin.resize((bin.size() + 3) / 4 * 4);
+    view(deltas, sizeof deltas);
+    view(times, sizeof times);
+    view(weights, sizeof weights);
+    std::string viewsJson;
+    for (const auto& [offset, length] : views) {
+        if (!viewsJson.empty()) viewsJson += ", ";
+        viewsJson += std::format(R"({{"buffer": 0, "byteOffset": {}, "byteLength": {}}})", offset, length);
+    }
+    std::vector<unsigned char> rgba(8 * 8 * 4);
+    for (int i = 0; i < 64; ++i) {
+        const bool left = i % 8 < 4;
+        rgba[static_cast<std::size_t>(i) * 4 + 0] = left ? 230 : 10;
+        rgba[static_cast<std::size_t>(i) * 4 + 1] = left ? 10 : 230;
+        rgba[static_cast<std::size_t>(i) * 4 + 2] = 10;
+        rgba[static_cast<std::size_t>(i) * 4 + 3] = 255;
+    }
+    std::ofstream(file) << std::format(R"({{
+  "asset": {{"version": "2.0"}},
+  "scene": 0,
+  "scenes": [{{"nodes": [0]}}],
+  "nodes": [{{"name": "Quad", "mesh": 0, "weights": [0.25]}}],
+  "meshes": [{{"name": "QuadMesh", "weights": [0], "extras": {{"targetNames": ["Slide"]}},
+    "primitives": [{{"attributes": {{"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2, "TEXCOORD_1": 3}}, "indices": 4, "material": 0,
+                    "targets": [{{"POSITION": 5}}]}}]}}],
+  "materials": [{{"name": "TwoSets", "pbrMetallicRoughness": {{"baseColorTexture": {{"index": 0, "texCoord": 1}}, "metallicFactor": 0}}}}],
+  "textures": [{{"source": 0, "sampler": 0}}],
+  "samplers": [{{"magFilter": 9728, "minFilter": 9728}}],
+  "images": [{{"uri": "data:image/png;base64,{}"}}],
+  "animations": [{{"name": "Morph", "channels": [{{"sampler": 0, "target": {{"node": 0, "path": "weights"}}}}],
+                  "samplers": [{{"input": 6, "output": 7, "interpolation": "LINEAR"}}]}}],
+  "buffers": [{{"byteLength": {}, "uri": "data:application/octet-stream;base64,{}"}}],
+  "bufferViews": [{}],
+  "accessors": [
+    {{"bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3", "min": [-0.5, -0.5, 0], "max": [0.5, 0.5, 0]}},
+    {{"bufferView": 1, "componentType": 5126, "count": 4, "type": "VEC3"}},
+    {{"bufferView": 2, "componentType": 5126, "count": 4, "type": "VEC2"}},
+    {{"bufferView": 3, "componentType": 5126, "count": 4, "type": "VEC2"}},
+    {{"bufferView": 4, "componentType": 5123, "count": 6, "type": "SCALAR"}},
+    {{"bufferView": 5, "componentType": 5126, "count": 4, "type": "VEC3", "min": [1, 0, 0], "max": [1, 0, 0]}},
+    {{"bufferView": 6, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1]}},
+    {{"bufferView": 7, "componentType": 5126, "count": 2, "type": "SCALAR"}}
+  ]
+}})",
+                                       base64(encodePng(8, 8, rgba)), bin.size(), base64(bin), viewsJson);
+}
 } // namespace lumora::test
 
 namespace lumora::test {

@@ -9,6 +9,11 @@ struct VSInput {
     [[vk::location(4)]] uint4 joints : BLENDINDICES;
     [[vk::location(5)]] float4 weights : BLENDWEIGHT;
 #endif
+#if defined(LUMORA_SKINNED)
+    [[vk::location(6)]] float2 uv1 : UVSET;  // second UV set (after the skin stream)
+#else
+    [[vk::location(4)]] float2 uv1 : UVSET;  // second UV set
+#endif
 };
 
 struct VSOutput {
@@ -18,6 +23,7 @@ struct VSOutput {
     float2 uv : TEXCOORD2;
     float4 tangent : TEXCOORD3;  // world-space tangent, w = bitangent sign
     nointerpolation uint objectIndex : TEXCOORD4;
+    float2 uv1 : TEXCOORD5;      // second UV set (maps flagged in the object's uv1Maps)
 };
 
 // Instanced draws: copies of one mesh are consecutive objects starting at gPush.index0.
@@ -40,6 +46,7 @@ VSOutput VSMain(VSInput input, uint instance : SV_InstanceID) {
     o.worldPosition = world.xyz;
     o.normal = mul((float3x3)object.normalMatrix, normal);
     o.uv = materialUv(object, input.uv);
+    o.uv1 = input.uv1;
     o.tangent = float4(mul((float3x3)object.world, tangent), input.tangent.w);
     o.objectIndex = objectIndex;
     return o;
@@ -152,6 +159,13 @@ PSOutput PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) {
 float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
 #endif
     GpuObject object = gObjects[input.objectIndex];
+    const uint uv1Maps = asuint(object.attenuation.w);
+    // Each map's UV set: bit 0 base colour, 1 metallic-roughness, 2 emissive, 3 normal, 4 occlusion.
+    const float2 baseUv = (uv1Maps & 1u) != 0u ? input.uv1 : input.uv;
+    const float2 mrUv = (uv1Maps & 2u) != 0u ? input.uv1 : input.uv;
+    const float2 emissiveUv = (uv1Maps & 4u) != 0u ? input.uv1 : input.uv;
+    const float2 normalUv = (uv1Maps & 8u) != 0u ? input.uv1 : input.uv;
+    const float2 occlusionUv = (uv1Maps & 16u) != 0u ? input.uv1 : input.uv;
     // Screen-space derivatives must be taken in uniform control flow (used by shadow filtering).
     float3 dpdx = ddx(input.worldPosition);
     float3 dpdy = ddy(input.worldPosition);
@@ -169,7 +183,7 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
             float3 b = cross(n, t) * input.tangent.w * faceSign;
             // x and y from the map (BC5 keeps only those), z rebuilt: the normal has unit length.
             float3 m;
-            m.xy = sampleMaterial(object.textures.w, input.uv).xy * 2.0 - 1.0;
+            m.xy = sampleMaterial(object.textures.w, normalUv).xy * 2.0 - 1.0;
             m.z = sqrt(saturate(1.0 - dot(m.xy, m.xy)));
             m.xy *= object.surface.w;  // glTF normalTexture.scale
             s.normal = normalize(t * m.x + b * m.y + n * m.z);
@@ -185,7 +199,7 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     const bool seeThrough = ((uint)object.surface.y & 2u) != 0u;
     float alpha = seeThrough ? object.surface.x : 1.0;
     if (object.textures.x != NO_TEXTURE) {
-        float4 base = sampleMaterial(object.textures.x, input.uv);  // sRGB view: sampled in linear
+        float4 base = sampleMaterial(object.textures.x, baseUv);  // sRGB view: sampled in linear
         albedo *= base.rgb;
         if (seeThrough) {
             alpha *= base.a;
@@ -197,7 +211,7 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     s.metallic = saturate(object.baseColorMetallic.w);
     s.roughness = object.emissiveRoughness.w;
     if (object.textures.y != NO_TEXTURE) {
-        float4 mr = sampleMaterial(object.textures.y, input.uv);  // glTF: G = roughness, B = metallic
+        float4 mr = sampleMaterial(object.textures.y, mrUv);  // glTF: G = roughness, B = metallic
         s.roughness *= mr.g;
         s.metallic *= mr.b;
     }
@@ -219,7 +233,7 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     float3 color = evaluateAmbient(s, specularWeight);
     float occlusion = 1.0;
     if (asuint(object.surface.z) != NO_TEXTURE) {
-        occlusion *= sampleMaterial(asuint(object.surface.z), input.uv).r;  // baked ambient occlusion (glTF: red)
+        occlusion *= sampleMaterial(asuint(object.surface.z), occlusionUv).r;  // baked ambient occlusion (glTF: red)
     }
     if ((gPush.flags & 4u) != 0u) {
         // Screen-space ambient occlusion (index2) darkens light from the sky in creases.
@@ -272,7 +286,7 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     }
     float3 emissive = object.emissiveRoughness.rgb;
     if (object.textures.z != NO_TEXTURE) {
-        emissive *= sampleMaterial(object.textures.z, input.uv).rgb;
+        emissive *= sampleMaterial(object.textures.z, emissiveUv).rgb;
     }
     color += emissive;
     if ((gPush.flags & 2u) != 0u && gFrame.counts.y != 0xFFFFFFFFu) {

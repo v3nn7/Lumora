@@ -121,7 +121,7 @@ struct GpuObject {
     glm::vec4 specularClearcoat{1.0f, 1.0f, 1.0f, 0.0f};  // rgb specular colour, w clearcoat
     glm::vec4 sheen{0.0f};                           // rgb sheen colour, w sheen roughness
     glm::vec4 transmission{0.0f};  // x transmission, y clearcoat roughness, z thickness (m), w attenuation distance (m, 0 = clear)
-    glm::vec4 attenuation{1.0f, 1.0f, 1.0f, 0.0f};  // rgb attenuation colour (volume)
+    glm::vec4 attenuation{1.0f, 1.0f, 1.0f, 0.0f};  // rgb attenuation colour (volume); w: asfloat(uv1Maps) maps on UV set 1
 };
 
 struct PushConstants {

@@ -71,6 +71,15 @@ std::string nameOr(const char* name, const std::string& fallback) {
 }
 
 /// Appends one triangle primitive to `out`. Returns false (with a warning) if unsupported.
+/// Every morph target's arrays as long as the vertex list (present ones only).
+void fitMorphs(MeshData& mesh) {
+    for (MorphTarget& t : mesh.morphs) {
+        t.positions.resize(mesh.vertices.size(), glm::vec3(0.0f));
+        if (!t.normals.empty()) t.normals.resize(mesh.vertices.size(), glm::vec3(0.0f));
+        if (!t.tangents.empty()) t.tangents.resize(mesh.vertices.size(), glm::vec3(0.0f));
+    }
+}
+
 bool appendPrimitive(const cgltf_primitive& prim, MeshData& out, std::vector<std::string>& warnings,
                      const std::string& meshName, bool& hasTangents) {
     if (prim.type != cgltf_primitive_type_triangles) {
@@ -80,6 +89,7 @@ bool appendPrimitive(const cgltf_primitive& prim, MeshData& out, std::vector<std
     const cgltf_accessor* positions = nullptr;
     const cgltf_accessor* normals = nullptr;
     const cgltf_accessor* uvs = nullptr;
+    const cgltf_accessor* uvs1 = nullptr;
     const cgltf_accessor* tangents = nullptr;
     const cgltf_accessor* joints = nullptr;
     const cgltf_accessor* weights = nullptr;
@@ -90,6 +100,7 @@ bool appendPrimitive(const cgltf_primitive& prim, MeshData& out, std::vector<std
         if (a.type == cgltf_attribute_type_position) positions = a.data;
         if (a.type == cgltf_attribute_type_normal) normals = a.data;
         if (a.type == cgltf_attribute_type_texcoord && a.index == 0) uvs = a.data;
+        if (a.type == cgltf_attribute_type_texcoord && a.index == 1) uvs1 = a.data;
         if (a.type == cgltf_attribute_type_tangent) tangents = a.data;
     }
     if (positions == nullptr || positions->count == 0) {
@@ -97,9 +108,6 @@ bool appendPrimitive(const cgltf_primitive& prim, MeshData& out, std::vector<std
         return false;
     }
     hasTangents = hasTangents && tangents != nullptr;
-    if (prim.targets_count > 0) {
-        warnings.push_back(std::format("mesh '{}': morph targets are ignored", meshName));
-    }
 
     const auto base = static_cast<std::uint32_t>(out.vertices.size());
     const cgltf_size count = positions->count;
@@ -113,7 +121,25 @@ bool appendPrimitive(const cgltf_primitive& prim, MeshData& out, std::vector<std
             vert.normal = glm::vec3(0.0f);
         }
         if (uvs != nullptr && v < uvs->count) cgltf_accessor_read_float(uvs, v, &vert.uv.x, 2);
+        if (uvs1 != nullptr && v < uvs1->count) cgltf_accessor_read_float(uvs1, v, &vert.uv1.x, 2);
         if (tangents != nullptr && v < tangents->count) cgltf_accessor_read_float(tangents, v, &vert.tangent.x, 4);
+    }
+
+    // Morph targets: offsets for this primitive's vertices (zero before and after it; every
+    // primitive of a glTF mesh has the same targets).
+    if (out.morphs.size() < prim.targets_count) out.morphs.resize(prim.targets_count);
+    for (cgltf_size t = 0; t < prim.targets_count; ++t) {
+        MorphTarget& target = out.morphs[t];
+        for (cgltf_size i = 0; i < prim.targets[t].attributes_count; ++i) {
+            const cgltf_attribute& a = prim.targets[t].attributes[i];
+            std::vector<glm::vec3>* into = a.type == cgltf_attribute_type_position ? &target.positions
+                                           : a.type == cgltf_attribute_type_normal ? &target.normals
+                                           : a.type == cgltf_attribute_type_tangent ? &target.tangents
+                                                                                    : nullptr;
+            if (into == nullptr || a.data == nullptr) continue;
+            into->resize(base + count, glm::vec3(0.0f));
+            for (cgltf_size v = 0; v < count && v < a.data->count; ++v) cgltf_accessor_read_float(a.data, v, &(*into)[base + v].x, 3);
+        }
     }
 
     // Skin influences: kept for every vertex once any primitive of the mesh has them.
@@ -147,6 +173,7 @@ bool appendPrimitive(const cgltf_primitive& prim, MeshData& out, std::vector<std
                 out.vertices.resize(base);
                 if (!out.skin.empty()) out.skin.resize(base);
                 out.indices.resize(firstIndex);
+                fitMorphs(out);
                 return false;
             }
             out.indices.push_back(base + index);
@@ -174,6 +201,7 @@ bool appendPrimitive(const cgltf_primitive& prim, MeshData& out, std::vector<std
         const float len = glm::length(n);
         n = len > 1e-12f ? n / len : glm::vec3(0.0f, 1.0f, 0.0f);
     }
+    fitMorphs(out);
     return true;
 }
 
@@ -216,9 +244,9 @@ Result<std::vector<std::byte>> imageBytes(const cgltf_image& image, const std::f
 int imageIndexOf(const cgltf_data& data, const cgltf_texture_view& view, std::vector<std::string>& warnings,
                  const std::string& material) {
     if (view.texture == nullptr) return -1;
-    if (view.texcoord != 0) {
-        warnings.push_back(std::format("material '{}': texture uses UV set {} (only set 0 is supported)", material,
-                                       view.texcoord));
+    const int texcoord = view.has_transform && view.transform.has_texcoord ? view.transform.texcoord : view.texcoord;
+    if (texcoord > 1) {
+        warnings.push_back(std::format("material '{}': texture uses UV set {} (sets 0 and 1 are supported)", material, texcoord));
     }
     // The core image (PNG/JPEG) when there is one: it is usually the lossless original. Otherwise
     // the EXT_texture_webp or KHR_texture_basisu (KTX2) source.
@@ -248,6 +276,12 @@ void materialExtensions(const cgltf_material& src, ImportedMaterial& mat, std::v
     std::vector<const cgltf_texture_view*> views = {&src.pbr_metallic_roughness.base_color_texture,
                                                     &src.pbr_metallic_roughness.metallic_roughness_texture,
                                                     &src.normal_texture, &src.occlusion_texture, &src.emissive_texture};
+    for (std::size_t i = 0; i < views.size(); ++i) {  // order of the uv1Maps bits: base, mr, normal, occlusion, emissive
+        const cgltf_texture_view& view = *views[i];
+        const int texcoord = view.has_transform && view.transform.has_texcoord ? view.transform.texcoord : view.texcoord;
+        static constexpr std::uint32_t kBit[] = {1u, 2u, 8u, 16u, 4u};
+        if (view.texture != nullptr && texcoord == 1) mat.uv1Maps |= kBit[i];
+    }
     bool found = false;
     for (const cgltf_texture_view* view : views) {
         if (view->texture == nullptr || !view->has_transform) continue;
@@ -569,6 +603,13 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
             }
             if (!hasTangents) generateTangents(mesh.data);
             mesh.data.bounds = computeBounds(mesh.data.vertices);
+            if (!mesh.data.morphs.empty()) {
+                mesh.weights.assign(mesh.data.morphs.size(), 0.0f);
+                for (cgltf_size w = 0; w < src.weights_count && w < mesh.weights.size(); ++w) mesh.weights[w] = src.weights[w];
+                for (cgltf_size n = 0; n < src.target_names_count; ++n) {
+                    mesh.morphNames.emplace_back(src.target_names[n] != nullptr ? src.target_names[n] : "");
+                }
+            }
             if (g == 0) {
                 model.meshParts[m].push_back(static_cast<int>(model.meshes.size()));
                 model.meshes.push_back(std::move(mesh));
@@ -615,6 +656,7 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
             if (node->has_scale) out.scale = {node->scale[0], node->scale[1], node->scale[2]};
         }
         if (node->skin != nullptr) out.skin = static_cast<int>(cgltf_skin_index(&data, node->skin));
+        out.weights.assign(node->weights, node->weights + node->weights_count);
         const int index = static_cast<int>(model.nodes.size());
         nodeIndex[node] = index;
         model.nodes.push_back(std::move(out));
@@ -677,8 +719,9 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
                 case cgltf_animation_path_type_translation: channel.path = AnimationChannel::Path::Translation; break;
                 case cgltf_animation_path_type_rotation: channel.path = AnimationChannel::Path::Rotation; break;
                 case cgltf_animation_path_type_scale: channel.path = AnimationChannel::Path::Scale; break;
+                case cgltf_animation_path_type_weights: channel.path = AnimationChannel::Path::Weights; break;
                 default:
-                    model.warnings.push_back(std::format("animation '{}': morph target weights are ignored", animation.name));
+                    model.warnings.push_back(std::format("animation '{}': unsupported channel skipped", animation.name));
                     continue;
             }
             switch (ch.sampler->interpolation) {
@@ -692,12 +735,26 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
             const cgltf_accessor* output = ch.sampler->output;
             channel.times.resize(input->count);
             for (cgltf_size k = 0; k < input->count; ++k) cgltf_accessor_read_float(input, k, &channel.times[k], 1);
+            const std::size_t perKey = channel.interpolation == AnimationChannel::Interpolation::CubicSpline ? 3 : 1;
+            if (channel.path == AnimationChannel::Path::Weights) {
+                // A scalar accessor: weightCount weights per key (and per tangent).
+                const std::size_t keys = channel.times.size() * perKey;
+                if (keys == 0 || output->count % keys != 0) {
+                    model.warnings.push_back(std::format("animation '{}': malformed weights channel skipped", animation.name));
+                    continue;
+                }
+                channel.weightCount = static_cast<std::uint32_t>(output->count / keys);
+                channel.weights.resize(output->count);
+                for (cgltf_size k = 0; k < output->count; ++k) cgltf_accessor_read_float(output, k, &channel.weights[k], 1);
+                animation.duration = std::max(animation.duration, channel.times.back());
+                animation.channels.push_back(std::move(channel));
+                continue;
+            }
             const cgltf_size components = channel.path == AnimationChannel::Path::Rotation ? 4 : 3;
             channel.values.resize(output->count, glm::vec4(0.0f));
             for (cgltf_size k = 0; k < output->count; ++k) {
                 cgltf_accessor_read_float(output, k, &channel.values[k].x, components);
             }
-            const std::size_t perKey = channel.interpolation == AnimationChannel::Interpolation::CubicSpline ? 3 : 1;
             if (channel.times.empty() || channel.values.size() != channel.times.size() * perKey) {
                 model.warnings.push_back(std::format("animation '{}': malformed channel skipped", animation.name));
                 continue;
@@ -720,6 +777,27 @@ void sampleAnimation(const ImportedAnimation& animation, float time, std::vector
         k1 = std::min(k1, t.size() - 1);
         const float span = t[k1] - t[k0];
         const float u = span > 0.0f ? std::clamp((time - t[k0]) / span, 0.0f, 1.0f) : 0.0f;
+        if (ch.path == AnimationChannel::Path::Weights) {
+            const std::size_t n = ch.weightCount;
+            std::vector<float>& out = poses[static_cast<std::size_t>(ch.node)].weights;
+            out.resize(n);
+            for (std::size_t w = 0; w < n; ++w) {
+                switch (ch.interpolation) {
+                    case AnimationChannel::Interpolation::Step: out[w] = ch.weights[k0 * n + w]; break;
+                    case AnimationChannel::Interpolation::CubicSpline: {
+                        const float p0 = ch.weights[(k0 * 3 + 1) * n + w];
+                        const float m0 = ch.weights[(k0 * 3 + 2) * n + w] * span;
+                        const float p1 = ch.weights[(k1 * 3 + 1) * n + w];
+                        const float m1 = ch.weights[(k1 * 3 + 0) * n + w] * span;
+                        const float u2 = u * u, u3 = u2 * u;
+                        out[w] = (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * p1 + (u3 - u2) * m1;
+                        break;
+                    }
+                    default: out[w] = ch.weights[k0 * n + w] + (ch.weights[k1 * n + w] - ch.weights[k0 * n + w]) * u; break;
+                }
+            }
+            continue;
+        }
         glm::vec4 value;
         const bool rotation = ch.path == AnimationChannel::Path::Rotation;
         switch (ch.interpolation) {
@@ -755,6 +833,7 @@ void sampleAnimation(const ImportedAnimation& animation, float time, std::vector
             case AnimationChannel::Path::Rotation:
                 pose.rotation = glm::normalize(glm::quat(value.w, value.x, value.y, value.z));
                 break;
+            case AnimationChannel::Path::Weights: break;  // handled above
         }
     }
 }

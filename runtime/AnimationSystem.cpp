@@ -32,7 +32,7 @@ struct AnimationSystem::Impl {
         bool failed = false;
         std::vector<entt::entity> nodeEntities;  // by model node index
         std::vector<NodePose> poses;
-        std::vector<std::uint8_t> animated;  // per node: bit0 translation, bit1 rotation, bit2 scale
+        std::vector<std::uint8_t> animated;  // per node: bit0 translation, bit1 rotation, bit2 scale, bit3 morph weights
         // Crossfade: the clip being left, still advancing, and how far the blend is.
         const ImportedAnimation* previous = nullptr;
         float previousTime = 0.0f;
@@ -107,7 +107,10 @@ struct AnimationSystem::Impl {
         out.resize(state.model->nodes.size());
         for (std::size_t i = 0; i < out.size(); ++i) {
             const ImportedNode& n = state.model->nodes[i];
-            out[i] = {n.translation, n.rotation, n.scale};
+            out[i].translation = n.translation;
+            out[i].rotation = n.rotation;
+            out[i].scale = n.scale;
+            out[i].weights.clear();
         }
         sampleAnimation(clip, time, out);
     }
@@ -123,6 +126,9 @@ struct AnimationSystem::Impl {
                 p.translation = glm::mix(from.translation, p.translation, w);
                 p.rotation = glm::slerp(from.rotation, p.rotation, w);
                 p.scale = glm::mix(from.scale, p.scale, w);
+                if (!from.weights.empty() && from.weights.size() == p.weights.size()) {
+                    for (std::size_t k = 0; k < p.weights.size(); ++k) p.weights[k] = from.weights[k] + (p.weights[k] - from.weights[k]) * w;
+                }
             }
         }
         auto& reg = scene.registry();
@@ -138,6 +144,17 @@ struct AnimationSystem::Impl {
                 t.rotationDeg = glm::degrees(glm::vec3(x, y, z));
             }
             if (state.animated[i] & 4u) t.scale = pose.scale;
+            if ((state.animated[i] & 8u) && !pose.weights.empty()) {
+                // Morph weights: the node's mesh, and its other material parts (children that
+                // are not nodes themselves).
+                auto write = [&](entt::entity target) {
+                    if (auto* morph = reg.try_get<MorphWeightsComponent>(target)) morph->weights = pose.weights;
+                };
+                write(e);
+                for (entt::entity child : scene.childrenOf(e)) {
+                    if (!reg.all_of<ModelNodeComponent>(child)) write(child);
+                }
+            }
         }
     }
 };

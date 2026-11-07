@@ -21,6 +21,7 @@ namespace lumora::render {
 
 struct GpuMesh {
     nvrhi::BufferHandle vertices;
+    std::uint64_t vertexOffset = 0;  // bytes into `vertices` (meshes deformed into a frame's shared buffer)
     nvrhi::BufferHandle indices;
     std::uint32_t indexCount = 0;
     Aabb bounds;

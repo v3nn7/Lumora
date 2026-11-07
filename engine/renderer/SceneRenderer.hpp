@@ -94,6 +94,7 @@ struct SceneDrawStats {
     std::uint32_t visibleObjects = 0;
     std::uint32_t culledObjects = 0;
     std::uint32_t transparentObjects = 0;  // see-through objects drawn (blended, back to front)
+    std::uint32_t morphedObjects = 0;      // meshes deformed by their blend shapes this frame
     std::uint32_t lodObjects = 0;  // visible objects drawn with a simpler level of detail
     std::uint32_t lights = 0;
     std::uint32_t particles = 0;

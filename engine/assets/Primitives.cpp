@@ -200,4 +200,37 @@ MeshData makePrimitive(MeshPrimitive primitive) {
     return mesh;
 }
 
+Aabb applyMorphTargets(const MeshData& mesh, std::span<const float> weights, std::vector<Vertex>& out) {
+    out = mesh.vertices;
+    bool normals = false, tangents = false;
+    for (std::size_t t = 0; t < mesh.morphs.size() && t < weights.size(); ++t) {
+        const float w = weights[t];
+        if (w == 0.0f) continue;
+        const MorphTarget& target = mesh.morphs[t];
+        for (std::size_t v = 0; v < out.size() && v < target.positions.size(); ++v) out[v].position += target.positions[v] * w;
+        if (!target.normals.empty()) {
+            normals = true;
+            for (std::size_t v = 0; v < out.size() && v < target.normals.size(); ++v) out[v].normal += target.normals[v] * w;
+        }
+        if (!target.tangents.empty()) {
+            tangents = true;
+            for (std::size_t v = 0; v < out.size() && v < target.tangents.size(); ++v) {
+                out[v].tangent += glm::vec4(target.tangents[v] * w, 0.0f);
+            }
+        }
+    }
+    for (Vertex& v : out) {
+        if (normals) {
+            const float length = glm::length(v.normal);
+            if (length > 1e-12f) v.normal /= length;
+        }
+        if (tangents) {
+            const glm::vec3 t(v.tangent);
+            const float length = glm::length(t);
+            if (length > 1e-12f) v.tangent = glm::vec4(t / length, v.tangent.w);
+        }
+    }
+    return computeBounds(out);
+}
+
 } // namespace lumora

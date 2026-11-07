@@ -10,6 +10,7 @@ struct VSInput {
     [[vk::location(0)]] float3 position : POSITION;
 #if defined(LUMORA_MASKED)
     [[vk::location(2)]] float2 uv : TEXCOORD0;
+    [[vk::location(4)]] float2 uv1 : UVSET;  // masked variants are never skinned
 #endif
 #if defined(LUMORA_SKINNED)
     [[vk::location(4)]] uint4 joints : BLENDINDICES;
@@ -42,7 +43,7 @@ VSOutput VSMain(VSInput input, uint instance : SV_InstanceID) {
     o.position = toTarget(o.current);
     o.previous = mul(gFrame.previousViewProjection, mul(object.previousWorld, float4(position, 1.0)));
 #if defined(LUMORA_MASKED)
-    o.uv = materialUv(object, input.uv);
+    o.uv = (asuint(object.attenuation.w) & 1u) != 0u ? input.uv1 : materialUv(object, input.uv);
     o.objectIndex = objectIndex;
 #endif
     return o;

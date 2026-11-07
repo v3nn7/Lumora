@@ -3,6 +3,8 @@
 #include "scene/Components.hpp"
 
 #include <algorithm>
+#include <charconv>
+#include <format>
 
 namespace lumora {
 
@@ -162,6 +164,42 @@ ComponentRegistry makeBuiltin() {
         d.fields = {
             ranged(R::field(&SkinComponent::skin, "skin", "Skin Index", FieldKind::Int), -1.0f, 1e6f, 1.0f),
         };
+        reg.add(std::move(d));
+    }
+    {
+        auto d = R::describe<MorphWeightsComponent>("MorphWeights", "Morph Weights");
+        d.category = "Animation";
+        // Saved and edited as a list of numbers ("0, 0.5, 1").
+        FieldDesc weights;
+        weights.id = "weights";
+        weights.label = "Weights";
+        weights.kind = FieldKind::String;
+        weights.get = [](const entt::registry& r, entt::entity e) -> FieldValue {
+            std::string text;
+            for (const float w : r.get<MorphWeightsComponent>(e).weights) {
+                if (!text.empty()) text += ", ";
+                text += std::format("{}", w);
+            }
+            return text;
+        };
+        weights.set = [](entt::registry& r, entt::entity e, const FieldValue& value) {
+            const std::string* text = std::get_if<std::string>(&value);
+            if (text == nullptr) return;
+            std::vector<float> parsed;
+            const char* p = text->data();
+            const char* end = p + text->size();
+            while (p < end) {
+                while (p < end && (*p == ' ' || *p == ',' || *p == '\t')) ++p;
+                if (p >= end) break;
+                float w = 0.0f;
+                const auto [next, ec] = std::from_chars(p, end, w);
+                if (ec != std::errc{}) break;
+                parsed.push_back(w);
+                p = next;
+            }
+            r.get<MorphWeightsComponent>(e).weights = std::move(parsed);
+        };
+        d.fields = {std::move(weights)};
         reg.add(std::move(d));
     }
     {

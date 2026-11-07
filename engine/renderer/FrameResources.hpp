@@ -1,10 +1,12 @@
 #pragma once
 
 #include "renderer/GpuProfiler.hpp"
+#include "renderer/MeshCache.hpp"
 #include "renderer/TransientImagePool.hpp"
 #include "renderer/vulkan/Resources.hpp"
 
 #include <array>
+#include <deque>
 #include <memory>
 #include <vector>
 
@@ -38,6 +40,8 @@ struct FrameResources {
     DynamicBuffer hudVertices;
     DynamicBuffer spriteVertices;
     DynamicBuffer particleVertices;
+    DynamicBuffer morphVertices;  // meshes with blend shapes, deformed on the CPU this frame
+    std::deque<GpuMesh> morphedMeshes;  // ... drawn from it (stable addresses for the frame's draws)
     nvrhi::BindingSetHandle bindings;  // set 0 over the buffers above
     std::array<nvrhi::IBuffer*, 5> bound{};
 

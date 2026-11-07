@@ -5,6 +5,7 @@
 #include "assets/AssetLibrary.hpp"
 #include "assets/GltfImporter.hpp"
 #include "assets/Image.hpp"
+#include "scene/ComponentRegistry.hpp"
 #include "scene/ModelInstance.hpp"
 #include "scene/Scene.hpp"
 #include "scene/SceneSerializer.hpp"
@@ -599,4 +600,66 @@ TEST(GltfMaterials, ExtensionsAndTextureTransform) {
     EXPECT_NEAR(apply({0, 1}).x, 0.5f, 1e-5f);
     EXPECT_NEAR(apply({0, 1}).y, 1.0f, 1e-5f);
     EXPECT_TRUE(TextureTransform{}.identity());
+}
+
+TEST(GltfMorphTargets, ImportSecondUvSetWeightsAndAnimation) {
+    test::TempDir dir;
+    test::writeMorphQuadGltf(dir.path() / "Content" / "Models" / "quad.gltf");
+    AssetLibrary assets(dir.path());
+    auto model = assets.model(dir.path() / "Content" / "Models" / "quad.gltf");
+    ASSERT_TRUE(model.has_value()) << model.error().message;
+    for (const std::string& w : (*model)->warnings) ADD_FAILURE() << "warning: " << w;
+    const ImportedMesh& mesh = (*model)->meshes[0];
+    ASSERT_EQ(mesh.data.morphs.size(), 1u);
+    ASSERT_EQ(mesh.data.morphs[0].positions.size(), mesh.data.vertices.size());
+    EXPECT_FLOAT_EQ(mesh.data.morphs[0].positions[2].x, 1.0f);
+    EXPECT_TRUE(mesh.data.morphs[0].normals.empty());
+    ASSERT_EQ(mesh.weights.size(), 1u);
+    EXPECT_FLOAT_EQ(mesh.weights[0], 0.0f);
+    ASSERT_EQ(mesh.morphNames.size(), 1u);
+    EXPECT_EQ(mesh.morphNames[0], "Slide");
+    EXPECT_FLOAT_EQ(mesh.data.vertices[0].uv1.x, 0.75f) << "TEXCOORD_1";
+    EXPECT_EQ((*model)->materials[0].uv1Maps, 1u) << "the base colour map reads UV set 1";
+    ASSERT_EQ((*model)->nodes[0].weights.size(), 1u);
+    EXPECT_FLOAT_EQ((*model)->nodes[0].weights[0], 0.25f);
+
+    // Applying the target moves the vertices (and the bounds) by the weight.
+    std::vector<Vertex> deformed;
+    const std::vector<float> half = {0.5f};
+    const Aabb bounds = applyMorphTargets(mesh.data, half, deformed);
+    EXPECT_FLOAT_EQ(deformed[0].position.x, mesh.data.vertices[0].position.x + 0.5f);
+    EXPECT_FLOAT_EQ(bounds.max.x, 1.0f);
+
+    // The weights channel samples like any other.
+    ASSERT_EQ((*model)->animations.size(), 1u);
+    const AnimationChannel& channel = (*model)->animations[0].channels[0];
+    EXPECT_EQ(channel.path, AnimationChannel::Path::Weights);
+    EXPECT_EQ(channel.weightCount, 1u);
+    std::vector<NodePose> poses(1);
+    sampleAnimation((*model)->animations[0], 0.3f, poses);
+    ASSERT_EQ(poses[0].weights.size(), 1u);
+    EXPECT_NEAR(poses[0].weights[0], 0.3f, 1e-5f);
+
+    // In a scene: the node's weights, then the animator's, saved with the scene.
+    Scene scene("Morph");
+    const entt::entity root = instantiateModel(scene, **model, "Content/Models/quad.gltf", "Quad");
+    entt::entity quad = entt::null;
+    for (auto [e, n] : scene.registry().view<NameComponent>().each()) {
+        if (n.name == "Quad" && e != root) quad = e;
+    }
+    ASSERT_TRUE(quad != entt::null);
+    ASSERT_TRUE(scene.registry().all_of<MorphWeightsComponent>(quad));
+    EXPECT_FLOAT_EQ(scene.registry().get<MorphWeightsComponent>(quad).weights[0], 0.25f);
+    Simulation sim(scene);
+    sim.setProjectRoot(dir.path());
+    for (int i = 0; i < 30; ++i) sim.step();  // 0.5 s into "Morph"
+    EXPECT_NEAR(scene.registry().get<MorphWeightsComponent>(quad).weights[0], 0.5f, 0.02f);
+
+    scene.registry().get<MorphWeightsComponent>(quad).weights = {0.125f, 1.0f};
+    const ComponentDesc* desc = ComponentRegistry::builtin().find("MorphWeights");
+    ASSERT_NE(desc, nullptr);
+    const FieldValue text = desc->fields[0].get(scene.registry(), quad);
+    EXPECT_EQ(std::get<std::string>(text), "0.125, 1");
+    desc->fields[0].set(scene.registry(), quad, FieldValue(std::string("0.5,0.25 , 2")));
+    EXPECT_EQ(scene.registry().get<MorphWeightsComponent>(quad).weights, (std::vector<float>{0.5f, 0.25f, 2.0f}));
 }

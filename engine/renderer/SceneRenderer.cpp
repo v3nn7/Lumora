@@ -180,7 +180,7 @@ bool appendSkinPalette(const Scene& scene, entt::entity entity, const MeshRender
 /// A mesh's vertex (and, when skinned, skin) stream and its index buffer.
 void bindMesh(nvrhi::GraphicsState& state, const GpuMesh& mesh) {
     state.vertexBuffers.resize(0);
-    state.vertexBuffers.push_back(nvrhi::VertexBufferBinding().setBuffer(mesh.vertices).setSlot(0));
+    state.vertexBuffers.push_back(nvrhi::VertexBufferBinding().setBuffer(mesh.vertices).setSlot(0).setOffset(mesh.vertexOffset));
     if (mesh.skinned()) state.vertexBuffers.push_back(nvrhi::VertexBufferBinding().setBuffer(mesh.skin).setSlot(1));
     state.indexBuffer = nvrhi::IndexBufferBinding().setBuffer(mesh.indices).setFormat(nvrhi::Format::R32_UINT);
 }
@@ -484,7 +484,8 @@ SceneRenderer::ModelSurface SceneRenderer::modelSurface(AssetLibrary& assets, co
                 surface.sheen = glm::vec4(glm::max(m.sheenColor, glm::vec3(0.0f)), std::clamp(m.sheenRoughness, 0.0f, 1.0f));
                 surface.transmission = glm::vec4(std::clamp(m.transmission, 0.0f, 1.0f), std::clamp(m.clearcoatRoughness, 0.0f, 1.0f),
                                                  std::max(m.thickness, 0.0f), std::max(m.attenuationDistance, 0.0f));
-                surface.attenuation = glm::vec4(glm::clamp(m.attenuationColor, glm::vec3(0.0f), glm::vec3(1.0f)), 0.0f);
+                surface.attenuation = glm::vec4(glm::clamp(m.attenuationColor, glm::vec3(0.0f), glm::vec3(1.0f)),
+                                                std::bit_cast<float>(m.uv1Maps));
             }
         }
     }
@@ -956,13 +957,43 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         for (const glm::mat4& m : entry.worlds) candidates.push_back({e, &entry.look, &m, gpuMesh, material});
     }
     std::erase_if(landscape_, [&](const auto& item) { return item.second.lastFrame + 300 < frameCounter_; });
+    // Meshes with blend shapes at non-zero weights: deformed on the CPU into one buffer for the
+    // frame, each drawn from its own range (no instancing, no coarser levels of detail).
+    frame.morphedMeshes.clear();
+    std::vector<Vertex> morphVertices;
+    std::vector<Vertex> morphScratch;
+    auto morphed = [&](const MeshRendererComponent& mesh, const GpuMesh& base, const std::vector<float>& weights) -> const GpuMesh* {
+        if (settings.assets == nullptr || mesh.meshAsset.empty()) return nullptr;
+        if (std::ranges::none_of(weights, [](float w) { return std::abs(w) > 1e-5f; })) return nullptr;
+        const auto request = settings.assets->requestMesh(mesh.meshAsset);  // loaded already: the GPU mesh exists
+        if (request.value == nullptr || request.value->data.morphs.empty()) return nullptr;
+        const MeshData& data = request.value->data;
+        GpuMesh& out = frame.morphedMeshes.emplace_back();
+        out.indices = base.indices;
+        out.indexCount = base.indexCount;
+        out.skin = base.skin;
+        out.bounds = applyMorphTargets(data, weights, morphScratch);
+        out.vertexOffset = morphVertices.size() * sizeof(Vertex);
+        morphVertices.insert(morphVertices.end(), morphScratch.begin(), morphScratch.end());
+        return &out;
+    };
     for (auto [e, mesh, world] : reg.view<MeshRendererComponent, WorldTransformComponent>().each()) {
         if (!mesh.visible) continue;
         const GpuMesh* gpuMeshPtr = meshFor(mesh, settings.assets, settings.blockOnAssets);
         if (gpuMeshPtr == nullptr) continue;  // still loading, or unresolved (already reported)
+        if (const auto* morph = reg.try_get<MorphWeightsComponent>(e)) {
+            if (const GpuMesh* deformed = morphed(mesh, *gpuMeshPtr, morph->weights)) gpuMeshPtr = deformed;
+        }
         std::shared_ptr<const MaterialAsset> material;
         if (!mesh.material.empty() && settings.assets != nullptr) material = settings.assets->material(mesh.material);
         candidates.push_back({e, &mesh, &world.matrix, gpuMeshPtr, std::move(material)});
+    }
+
+    if (!morphVertices.empty()) {
+        nvrhi::IBuffer* buffer = frame.morphVertices.write(gpu, std::as_bytes(std::span(morphVertices)), DynamicBuffer::Kind::Vertex,
+                                                           sizeof(Vertex), "Morphed vertices");
+        for (GpuMesh& m : frame.morphedMeshes) m.vertices = buffer;
+        stats.morphedObjects = static_cast<std::uint32_t>(frame.morphedMeshes.size());
     }
 
     // 2. Bounds, culling and per-object constants on the job system's threads (pure math).

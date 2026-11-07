@@ -4,8 +4,10 @@
 
 #include "editor/PropertyWidgets.hpp"
 
+#include <QImage>
 #include <QWidget>
 
+#include <functional>
 #include <vector>
 
 class QLabel;
@@ -32,6 +34,8 @@ public:
 
     /// Where material references resolve (and whose asset library re-reads edited materials).
     void setProject(AssetLibrary* assets, QString projectRoot);
+    /// Renders material previews (a sphere above the material's fields).
+    void setMaterialPreview(std::function<QImage(const QString&, int)> preview) { materialPreview_ = std::move(preview); }
     /// Shows an asset file instead of the selection (a .lmat is edited here); selecting an
     /// entity goes back to it. Other files clear the asset view.
     void showAsset(const QString& absolutePath);
@@ -57,6 +61,7 @@ private:
     AssetLibrary* assets_ = nullptr;
     QString projectRoot_;
     QString assetPath_;
+    std::function<QImage(const QString&, int)> materialPreview_;
 };
 
 } // namespace lumora::editor

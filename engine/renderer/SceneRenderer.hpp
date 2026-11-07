@@ -19,6 +19,7 @@
 namespace lumora {
 class AssetLibrary;
 class Scene;
+struct MaterialAsset;
 }
 
 namespace lumora::render {
@@ -167,6 +168,8 @@ private:
         glm::vec4 attenuation{1.0f, 1.0f, 1.0f, 0.0f};
     };
     [[nodiscard]] ModelSurface modelSurface(AssetLibrary& assets, const std::string& meshAsset);
+    /// The same for a material asset (.lmat), which replaces everything else.
+    [[nodiscard]] static ModelSurface materialSurface(const MaterialAsset& material);
     std::unordered_map<std::string, ModelSurface> modelSurfaces_;
     const AssetLibrary* surfaceAssets_ = nullptr;
     std::uint64_t surfaceGeneration_ = 0;

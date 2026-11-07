@@ -2389,3 +2389,70 @@ TEST_F(RendererTest, MorphTargetsMoveTheMeshAndTheSecondUvSetPicksItsTexels) {
     EXPECT_FALSE(green(pixel(moved, left.x, left.y))) << "the target slid it 1 m to the right";
     EXPECT_TRUE(green(pixel(moved, right.x, right.y)));
 }
+
+TEST_F(RendererTest, MaterialAssetsCarryAlphaSidesAndLayers) {
+    // A model whose own material is cut out and two-sided; a .lmat on it replaces all that.
+    test::TempDir project;
+    std::filesystem::create_directories(project.path() / "Content" / "Models");
+    test::writeCubeGltf(project.path() / "Content" / "Models" / "cube.gltf", false);
+    AssetLibrary assets(project.path());
+    auto model = assets.model(project.path() / "Content" / "Models" / "cube.gltf");
+    ASSERT_TRUE(model.has_value());
+    const auto file = project.path() / "Content" / "Materials" / "Glass.lmat";
+    MaterialAsset glass;
+    glass.baseColor = glm::vec3(1.0f);
+    glass.roughness = 0.05f;
+    ASSERT_TRUE(saveMaterial(glass, file).has_value());
+
+    auto scene = sceneWithSun();
+    scene->environment().fogDensity = 0.0f;
+    const entt::entity root = instantiateModel(*scene, **model, "Content/Models/cube.gltf", "Cube");
+    scene->registry().get<TransformComponent>(root).position = {0.0f, -1.0f, 0.0f};
+    for (auto [e, m] : scene->registry().view<MeshRendererComponent>().each()) m.material = "Content/Materials/Glass.lmat";
+    const auto wall = scene->createEntity("Wall");
+    auto& wm = scene->registry().emplace<MeshRendererComponent>(wall);
+    wm.baseColor = glm::vec3(0.0f);
+    wm.emissive = {1.0f, 0.0f, 0.0f};
+    wm.emissiveStrength = 1.0f;
+    auto& wt = scene->registry().get<TransformComponent>(wall);
+    wt.position = {0.0f, 0.0f, -4.0f};
+    wt.scale = {20.0f, 20.0f, 0.2f};
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.0f, 5.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    RenderSettings settings;
+    settings.assets = &assets;
+    settings.blockOnAssets = true;
+    settings.temporalAntiAliasing = false;
+    auto render = [&](const MaterialAsset& m) {
+        EXPECT_TRUE(saveMaterial(m, file).has_value());
+        assets.reloadMaterial("Content/Materials/Glass.lmat");
+        auto image = renderer_->capture(*scene, cam.view(1.0f), {64, 64}, settings);
+        EXPECT_TRUE(image.has_value());
+        return pixel(*image, 32, 32);
+    };
+    const auto opaque = render(glass);
+    EXPECT_EQ(renderer_->stats().scene.transparentObjects, 0u);
+    EXPECT_GT(opaque.g, 60) << "opaque white";
+
+    MaterialAsset seeThrough = glass;
+    seeThrough.alphaMode = MaterialAsset::AlphaMode::Transparent;
+    seeThrough.opacity = 0.3f;
+    const auto blended = render(seeThrough);
+    EXPECT_EQ(renderer_->stats().scene.transparentObjects, 1u);
+    EXPECT_GT(blended.r, blended.g + 40) << "the red wall shows through";
+
+    MaterialAsset clear = glass;
+    clear.transmission = 1.0f;
+    const auto transmitted = render(clear);
+    EXPECT_EQ(renderer_->stats().scene.transparentObjects, 1u) << "transmission draws it over the scene behind";
+    EXPECT_GT(transmitted.r, transmitted.g + 60);
+
+    MaterialAsset tinted = clear;
+    tinted.thickness = 1.0f;
+    tinted.attenuationDistance = 1.0f;
+    tinted.attenuationColor = {0.05f, 0.05f, 1.0f};
+    const auto absorbed = render(tinted);
+    EXPECT_LT(absorbed.r, transmitted.r * 0.6f) << "absorbed in the volume";
+}

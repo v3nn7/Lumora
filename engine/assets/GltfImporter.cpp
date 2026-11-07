@@ -334,16 +334,6 @@ void materialExtensions(const cgltf_material& src, ImportedMaterial& mat, std::v
 
 } // namespace
 
-glm::vec3 TextureTransform::rowU() const {
-    const float c = std::cos(rotation), s = std::sin(rotation);
-    return {c * scale.x, s * scale.y, offset.x};
-}
-
-glm::vec3 TextureTransform::rowV() const {
-    const float c = std::cos(rotation), s = std::sin(rotation);
-    return {-s * scale.x, c * scale.y, offset.y};
-}
-
 float findPaddedBackground(const ImageData& image, std::vector<std::uint8_t>* outMask) {
     const std::uint32_t w = image.width, h = image.height;
     if (w < 8 || h < 8) return 0.0f;

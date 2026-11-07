@@ -12,9 +12,13 @@ namespace {
 
 nlohmann::json vec(const glm::vec3& v) { return nlohmann::json::array({v.x, v.y, v.z}); }
 
-bool readVec(const nlohmann::json& j, glm::vec3& out) {
-    if (!j.is_array() || j.size() != 3) return false;
-    for (int i = 0; i < 3; ++i) {
+nlohmann::json vec(const glm::vec2& v) { return nlohmann::json::array({v.x, v.y}); }
+
+template <class V>
+bool readVec(const nlohmann::json& j, V& out) {
+    constexpr int n = V::length();
+    if (!j.is_array() || j.size() != static_cast<std::size_t>(n)) return false;
+    for (int i = 0; i < n; ++i) {
         if (!j[static_cast<std::size_t>(i)].is_number()) return false;
         out[i] = j[static_cast<std::size_t>(i)].get<float>();
     }
@@ -22,6 +26,14 @@ bool readVec(const nlohmann::json& j, glm::vec3& out) {
 }
 
 } // namespace
+
+TextureTransform MaterialAsset::uvTransform() const {
+    TextureTransform t;
+    t.scale = uvScale;
+    t.offset = uvOffset;
+    t.rotation = uvRotation * 0.017453292519943295f;
+    return t;
+}
 
 nlohmann::json materialToJson(const MaterialAsset& m) {
     return {
@@ -36,6 +48,26 @@ nlohmann::json materialToJson(const MaterialAsset& m) {
         {"metallicRoughnessTexture", m.metallicRoughnessTexture},
         {"normalTexture", m.normalTexture},
         {"emissiveTexture", m.emissiveTexture},
+        {"occlusionTexture", m.occlusionTexture},
+        {"normalStrength", m.normalStrength},
+        {"alphaMode", static_cast<int>(m.alphaMode)},
+        {"alphaCutoff", m.alphaCutoff},
+        {"opacity", m.opacity},
+        {"doubleSided", m.doubleSided},
+        {"uvScale", vec(m.uvScale)},
+        {"uvOffset", vec(m.uvOffset)},
+        {"uvRotation", m.uvRotation},
+        {"ior", m.ior},
+        {"specularFactor", m.specularFactor},
+        {"specularColor", vec(m.specularColor)},
+        {"clearcoat", m.clearcoat},
+        {"clearcoatRoughness", m.clearcoatRoughness},
+        {"sheenColor", vec(m.sheenColor)},
+        {"sheenRoughness", m.sheenRoughness},
+        {"transmission", m.transmission},
+        {"thickness", m.thickness},
+        {"attenuationDistance", m.attenuationDistance},
+        {"attenuationColor", vec(m.attenuationColor)},
     };
 }
 
@@ -52,6 +84,17 @@ Result<MaterialAsset> materialFromJson(const nlohmann::json& j) {
         if (j.contains(key) && !readVec(j[key], out)) return makeError("'{}' must be [x, y, z]", key);
         return {};
     };
+    auto pair = [&](const char* key, glm::vec2& out) -> Result<> {
+        if (j.contains(key) && !readVec(j[key], out)) return makeError("'{}' must be [x, y]", key);
+        return {};
+    };
+    auto flag = [&](const char* key, bool& out) -> Result<> {
+        if (!j.contains(key)) return {};
+        if (!j[key].is_boolean()) return makeError("'{}' must be true or false", key);
+        out = j[key].get<bool>();
+        return {};
+    };
+    int alphaMode = static_cast<int>(m.alphaMode);
     auto text = [&](const char* key, std::string& out) -> Result<> {
         if (!j.contains(key)) return {};
         if (!j[key].is_string()) return makeError("'{}' must be a string", key);
@@ -63,9 +106,21 @@ Result<MaterialAsset> materialFromJson(const nlohmann::json& j) {
                               number("emissiveStrength", m.emissiveStrength), number("pattern", m.pattern),
                               text("baseColorTexture", m.baseColorTexture),
                               text("metallicRoughnessTexture", m.metallicRoughnessTexture),
-                              text("normalTexture", m.normalTexture), text("emissiveTexture", m.emissiveTexture)}) {
+                              text("normalTexture", m.normalTexture), text("emissiveTexture", m.emissiveTexture),
+                              text("occlusionTexture", m.occlusionTexture), number("normalStrength", m.normalStrength),
+                              number("alphaMode", alphaMode), number("alphaCutoff", m.alphaCutoff),
+                              number("opacity", m.opacity), flag("doubleSided", m.doubleSided),
+                              pair("uvScale", m.uvScale), pair("uvOffset", m.uvOffset), number("uvRotation", m.uvRotation),
+                              number("ior", m.ior), number("specularFactor", m.specularFactor),
+                              vector("specularColor", m.specularColor), number("clearcoat", m.clearcoat),
+                              number("clearcoatRoughness", m.clearcoatRoughness), vector("sheenColor", m.sheenColor),
+                              number("sheenRoughness", m.sheenRoughness), number("transmission", m.transmission),
+                              number("thickness", m.thickness), number("attenuationDistance", m.attenuationDistance),
+                              vector("attenuationColor", m.attenuationColor)}) {
         if (!r) return std::unexpected(r.error());
     }
+    if (alphaMode < 0 || alphaMode > 2) return makeError("'alphaMode' must be 0 (opaque), 1 (cut out) or 2 (transparent)");
+    m.alphaMode = static_cast<MaterialAsset::AlphaMode>(alphaMode);
     return m;
 }
 

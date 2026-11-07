@@ -3,6 +3,7 @@
 #include "assets/GltfImporter.hpp"
 
 #include "assets/AssetLibrary.hpp"
+#include "assets/Material.hpp"
 #include "assets/MeshLod.hpp"
 
 #include "core/JobSystem.hpp"
@@ -490,6 +491,24 @@ SceneRenderer::ModelSurface SceneRenderer::modelSurface(AssetLibrary& assets, co
         }
     }
     modelSurfaces_.emplace(key, surface);
+    return surface;
+}
+
+SceneRenderer::ModelSurface SceneRenderer::materialSurface(const MaterialAsset& m) {
+    ModelSurface surface;
+    surface.alphaCutoff = m.alphaMode == MaterialAsset::AlphaMode::CutOut ? std::clamp(m.alphaCutoff, 0.01f, 1.0f) : 0.0f;
+    surface.twoSided = m.doubleSided;
+    surface.transparent = m.alphaMode == MaterialAsset::AlphaMode::Transparent;
+    surface.opacity = surface.transparent ? std::clamp(m.opacity, 0.0f, 1.0f) : 1.0f;
+    surface.transmissive = m.transmission > 0.0f;
+    const TextureTransform uv = m.uvTransform();
+    surface.uvTransformU = glm::vec4(uv.rowU(), std::max(m.ior, 1.0f));
+    surface.uvTransformV = glm::vec4(uv.rowV(), std::max(m.specularFactor, 0.0f));
+    surface.specularClearcoat = glm::vec4(glm::max(m.specularColor, glm::vec3(0.0f)), std::clamp(m.clearcoat, 0.0f, 1.0f));
+    surface.sheen = glm::vec4(glm::max(m.sheenColor, glm::vec3(0.0f)), std::clamp(m.sheenRoughness, 0.0f, 1.0f));
+    surface.transmission = glm::vec4(std::clamp(m.transmission, 0.0f, 1.0f), std::clamp(m.clearcoatRoughness, 0.0f, 1.0f),
+                                     std::max(m.thickness, 0.0f), std::max(m.attenuationDistance, 0.0f));
+    surface.attenuation = glm::vec4(glm::clamp(m.attenuationColor, glm::vec3(0.0f), glm::vec3(1.0f)), 0.0f);
     return surface;
 }
 
@@ -1102,39 +1121,55 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             }
         }
         const MeshRendererComponent& look = *candidates[i].mesh;
-        float cutoff = look.alphaCutoff;
-        bool twoSided = look.doubleSided;
-        float opacity = std::clamp(look.opacity, 0.0f, 1.0f);
-        bool transparent = opacity < 1.0f;
+        const MaterialAsset* lmat = candidates[i].material.get();
+        float cutoff = 0.0f;
+        bool twoSided = false;
+        float opacity = 1.0f;
+        bool transparent = false;
         bool transmissive = false;
-        if (!look.meshAsset.empty() && settings.assets != nullptr) {
-            const ModelSurface surface = modelSurface(*settings.assets, look.meshAsset);
-            if (cutoff < 0.0f) cutoff = surface.alphaCutoff;
-            twoSided = twoSided || surface.twoSided;
-            transparent = transparent || surface.transparent;
-            opacity *= surface.opacity;
-            if (candidates[i].material == nullptr) {  // a .lmat replaces the model's material
-                // Volume lengths are in the model's units: scale them like the object.
-                const float scale = std::cbrt(std::abs(glm::determinant(glm::mat3(obj.world))));
-                obj.uvTransformU = surface.uvTransformU;
-                obj.uvTransformV = surface.uvTransformV;
-                obj.specularClearcoat = surface.specularClearcoat;
-                obj.sheen = surface.sheen;
-                obj.transmission = surface.transmission * glm::vec4(1.0f, 1.0f, scale, scale);
-                obj.attenuation = surface.attenuation;
-                transmissive = surface.transmissive;
-                transparent = transparent || transmissive;
+        std::optional<ModelSurface> surface;
+        if (lmat != nullptr) {
+            // A material asset replaces everything: the renderer's settings and the model's material.
+            surface = materialSurface(*lmat);
+            cutoff = surface->alphaCutoff;
+            twoSided = surface->twoSided;
+            opacity = surface->opacity;
+            transparent = surface->transparent;
+        } else {
+            cutoff = look.alphaCutoff;
+            twoSided = look.doubleSided;
+            opacity = std::clamp(look.opacity, 0.0f, 1.0f);
+            transparent = opacity < 1.0f;
+            if (!look.meshAsset.empty() && settings.assets != nullptr) {
+                surface = modelSurface(*settings.assets, look.meshAsset);
+                if (cutoff < 0.0f) cutoff = surface->alphaCutoff;
+                twoSided = twoSided || surface->twoSided;
+                transparent = transparent || surface->transparent;
+                opacity *= surface->opacity;
             }
+        }
+        if (surface) {
+            // Volume lengths are in the object's units: scale them like the object.
+            const float scale = std::cbrt(std::abs(glm::determinant(glm::mat3(obj.world))));
+            obj.uvTransformU = surface->uvTransformU;
+            obj.uvTransformV = surface->uvTransformV;
+            obj.specularClearcoat = surface->specularClearcoat;
+            obj.sheen = surface->sheen;
+            obj.transmission = surface->transmission * glm::vec4(1.0f, 1.0f, scale, scale);
+            obj.attenuation = surface->attenuation;
+            transmissive = surface->transmissive;
+            transparent = transparent || transmissive;
         }
         const bool masked = !transparent && cutoff > 0.0f && obj.textures.x != kNoTexture;
         std::uint32_t occlusion = kNoTexture;
-        if (p.visible && settings.assets != nullptr && !look.occlusionTexture.empty()) {
-            occlusion = ctx_.textures().index(*settings.assets, look.occlusionTexture, TextureKind::Data, settings.blockOnAssets);
+        const std::string& occlusionMap = lmat != nullptr ? lmat->occlusionTexture : look.occlusionTexture;
+        if (p.visible && settings.assets != nullptr && !occlusionMap.empty()) {
+            occlusion = ctx_.textures().index(*settings.assets, occlusionMap, TextureKind::Data, settings.blockOnAssets);
         }
-        // x: cutoff (opaque) or opacity (see-through); y: bit 0 two-sided, bit 1 see-through.
+        // x: cutoff (opaque) or opacity (see-through); y: bit 0 two-sided, bit 1 see-through, bit 2 transmissive.
         obj.surface = glm::vec4(transparent ? opacity : masked ? cutoff : 0.0f,
                                 static_cast<float>((twoSided ? 1 : 0) | (transparent ? 2 : 0) | (transmissive ? 4 : 0)),
-                                std::bit_cast<float>(occlusion), look.normalStrength);
+                                std::bit_cast<float>(occlusion), lmat != nullptr ? lmat->normalStrength : look.normalStrength);
         const auto variant = static_cast<std::uint8_t>((masked ? kMasked : 0) | (twoSided ? kTwoSided : 0));
         const Draw draw{drawn,
                         static_cast<std::uint32_t>(objects.size()),

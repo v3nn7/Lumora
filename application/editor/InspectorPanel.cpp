@@ -136,7 +136,7 @@ QWidget* InspectorPanel::materialSection(const std::string& key) {
     hint->setWordWrap(true);
     hint->setContentsMargins(8, 6, 8, 0);
     layout->addWidget(hint);
-    layout->addWidget(new MaterialEditor(file, key, assets_, pickAsset_));
+    layout->addWidget(new MaterialEditor(file, key, assets_, pickAsset_, materialPreview_));
     return section;
 }
 

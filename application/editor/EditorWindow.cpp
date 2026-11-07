@@ -505,6 +505,7 @@ void EditorWindow::buildDocks() {
                      return image ? pickTextureAsset(parent) : pickMeshAsset(parent);
                  });
     inspector_->setProject(&assets_, app::toQString(project_.rootDir()));
+    inspector_->setMaterialPreview([this](const QString& file, int size) { return renderPreview(file, size); });
     auto* inspector = makeDock(this, tr("Inspector"), QStringLiteral("dock.inspector"), QStringLiteral("settings"), inspector_);
     auto* content = new ContentBrowserPanel(app::toQString(project_.rootDir()));
     content_ = content;
@@ -1107,7 +1108,7 @@ std::optional<std::string> EditorWindow::pickContentFile(QWidget* parent, const 
     return relative;
 }
 
-QImage EditorWindow::renderPreview(const QString& path) {
+QImage EditorWindow::renderPreview(const QString& path, int size) {
     render::Renderer* renderer = app_.renderer();
     if (renderer == nullptr) return {};
     const std::filesystem::path file = std::filesystem::absolute(app::toPath(path));
@@ -1160,7 +1161,8 @@ QImage EditorWindow::renderPreview(const QString& path) {
     settings.assets = &assets_;
     settings.blockOnAssets = true;
     settings.bloom = false;
-    auto image = renderer->capture(scene, view, {128, 128}, settings);
+    const auto pixels = static_cast<std::uint32_t>(std::clamp(size, 16, 1024));
+    auto image = renderer->capture(scene, view, {pixels, pixels}, settings);
     if (!image) return {};
     return QImage(image->rgba.data(), static_cast<int>(image->width), static_cast<int>(image->height),
                   QImage::Format_RGBA8888)

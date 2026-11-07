@@ -1,6 +1,7 @@
 #pragma once
 
 #include "assets/MeshData.hpp"
+#include "assets/TextureTransform.hpp"
 #include "core/Error.hpp"
 
 #include <glm/gtc/quaternion.hpp>
@@ -13,19 +14,6 @@
 #include <vector>
 
 namespace lumora {
-
-/// KHR_texture_transform: uv' = offset + rotate(rotation) * (scale * uv), rotation in radians
-/// counter-clockwise in UV space.
-struct TextureTransform {
-    glm::vec2 offset{0.0f};
-    float rotation = 0.0f;
-    glm::vec2 scale{1.0f};
-    bool operator==(const TextureTransform&) const = default;
-    [[nodiscard]] bool identity() const { return *this == TextureTransform{}; }
-    /// Rows of the 2x3 matrix: u' = dot(rowU, (u, v, 1)), v' = dot(rowV, (u, v, 1)).
-    [[nodiscard]] glm::vec3 rowU() const;
-    [[nodiscard]] glm::vec3 rowV() const;
-};
 
 /// glTF metallic-roughness material. Texture fields index ImportedModel::images (-1 = none).
 struct ImportedMaterial {

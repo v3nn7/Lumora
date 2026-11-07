@@ -98,7 +98,7 @@ public:
     /// Ctrl+P: the quick-open popup over the project's files and the scene's entities.
     class QuickOpenDialog* showQuickOpen();
     /// Preview picture of a model, prefab or material (Content Browser thumbnails).
-    [[nodiscard]] QImage renderPreview(const QString& path);
+    [[nodiscard]] QImage renderPreview(const QString& path, int size = 128);
     /// Reloads assets in a folder whose files changed on disk; returns how many.
     int reloadChangedIn(const QString& dir);
     [[nodiscard]] class ThumbnailCache& thumbnails() noexcept { return *thumbnails_; }

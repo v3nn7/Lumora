@@ -180,6 +180,12 @@ i `volume` (z 1.2), drugi zestaw UV, morph targets (dziś pomijane). Nowe pola w
 (bufor rozszerzeń materiałów zamiast wpychania w `surface`).
 
 ### 2.4 Materiały .lmat na równi z glTF (S)
+- **Stan: zrobione.** `.lmat` ma mapę okluzji i siłę mapy normalnych, tryb alfy (nieprzezroczysty,
+  wycięty, przezroczysty) z progiem i krycie, dwustronność, kafelkowanie/przesunięcie/obrót UV oraz
+  pola rozszerzeń (IOR, specular, clear coat, sheen, transmisja, objętość). Materiał zastępuje
+  wszystko: ustawienia Mesh Renderera i materiał modelu. Stare pliki czytają się bez zmian (brakujące
+  pola = domyślne). Edytor: pola w grupach (Surface, Maps, Layers, Glass) i podgląd na kuli
+  odświeżany po zmianach (ten sam renderer co miniatury).
 `engine/assets/Material.cpp` nie ma okluzji, trybu alfy, dwustronności ani rozszerzeń; edytor
 `MaterialEditor.cpp` dostaje te pola i podgląd na kuli.
 

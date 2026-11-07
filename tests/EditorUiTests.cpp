@@ -692,6 +692,18 @@ TEST_F(EditorUiTest, MaterialsAreCreatedEditedAndDroppedOnObjects) {
     auto* materialEditor = inspector->findChild<editor::MaterialEditor*>();
     ASSERT_NE(materialEditor, nullptr);
     EXPECT_TRUE(materialEditor->isLoaded());
+    {
+        // Grouped fields up to glass, and the preview sphere above them (when a GPU renders it).
+        QStringList labels;
+        for (QLabel* l : materialEditor->findChildren<QLabel*>()) labels << l->text();
+        for (const char* expected : {"Alpha", "Two Sided", "Occlusion Map", "Tiling U", "Clear Coat", "Transmission", "Glass"}) {
+            EXPECT_TRUE(labels.contains(QString::fromLatin1(expected))) << expected;
+        }
+        EXPECT_NE(materialEditor->findChild<QLabel*>(QStringLiteral("materialPreview")), nullptr);
+        if (context_->renderer() != nullptr) {
+            EXPECT_FALSE(materialEditor->previewImage().isNull()) << "a sphere wearing it";
+        }
+    }
     EXPECT_EQ(browser->createMaterial(QStringLiteral("Paint")), QString()) << "never overwrites";
 
     // Dropped on the object under the cursor: one undo step.

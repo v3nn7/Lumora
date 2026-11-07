@@ -512,6 +512,49 @@ void apiDrawTextAligned(void* c, const char* text, const float* box, int align, 
     hud->addText({box[0], box[1]}, box[3], {rgba[0], rgba[1], rgba[2], rgba[3]}, text, a, box[2]);
 }
 
+int apiUiDocument(void* c, int command, const char* path, const char* name, float* value, const char* text, char* out,
+                  int capacity) {
+    Context& ctx = context(c);
+    UiScreens& screens = ctx.screens;
+    const std::string key = path != nullptr ? path : "";
+    const std::string_view widgetName = name != nullptr ? name : "";
+    switch (command) {
+        case 0: return screens.open(ctx.projectRoot, key) ? 1 : 0;
+        case 1: screens.close(key); return 1;
+        case 2: return screens.isOpen(key) ? 1 : 0;
+        case 3: return screens.clicked(widgetName) ? 1 : 0;
+        case 4: return screens.changed(widgetName) ? 1 : 0;
+        default: break;
+    }
+    UiWidget* w = screens.widget(widgetName);
+    if (w == nullptr) return 0;
+    switch (command) {
+        case 5:  // value
+            if (value != nullptr) *value = w->value;
+            return 1;
+        case 6:  // set value
+            if (value != nullptr) w->value = std::clamp(*value, std::min(w->min, w->max), std::max(w->min, w->max));
+            if (value != nullptr && w->type == UiWidget::Type::Checkbox) w->value = *value != 0.0f ? 1.0f : 0.0f;
+            return 1;
+        case 7:  // set text
+            w->text = text != nullptr ? text : "";
+            return 1;
+        case 8:  // set visible
+            w->visible = value == nullptr || *value != 0.0f;
+            return 1;
+        case 9: {  // text
+            const int length = static_cast<int>(w->text.size());
+            if (out != nullptr && capacity > 0) {
+                const auto n = static_cast<std::size_t>(std::min(length, capacity - 1));
+                std::copy_n(w->text.data(), n, out);
+                out[n] = '\0';
+            }
+            return length;
+        }
+        default: return 0;
+    }
+}
+
 void apiDrawImage(void* c, const char* texture, const float* rect, const float* uv, const float* rgba) {
     HudCanvas* hud = context(c).hud;
     if (hud == nullptr || texture == nullptr || rect == nullptr) return;
@@ -791,6 +834,7 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.audioBus = apiAudioBus;
     api_.drawImage = apiDrawImage;
     api_.drawTextFont = apiDrawTextFont;
+    api_.uiDocument = apiUiDocument;
 }
 
 
@@ -1049,6 +1093,8 @@ void ScriptRunner::update(float dt, double simulatedSeconds) {
     context_.ui.beginStep(context_.input, context_.hud,
                           {actions.pressed("Up"), actions.pressed("Down"), actions.pressed("Left"),
                            actions.pressed("Right"), actions.pressed("Submit")});
+    // Open UI documents first: behaviours see their clicks in this step.
+    if (context_.hud != nullptr) context_.screens.draw(context_.ui, *context_.hud, context_.input, context_.localization);
     if (!created_) {
         createInstances();
     } else {

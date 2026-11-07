@@ -222,6 +222,35 @@ int lDrawTextFont(lua_State* L) {
     api(L).drawTextFont(ctx(L), luaL_checkstring(L, 1), box, static_cast<int>(luaL_optinteger(L, 6, 0)), c, luaL_optstring(L, 11, ""));
     return 0;
 }
+int lUiDocument(lua_State* L) {
+    // command, path, name [, value or text]
+    const int command = static_cast<int>(luaL_checkinteger(L, 1));
+    const char* path = luaL_optstring(L, 2, "");
+    const char* name = luaL_optstring(L, 3, "");
+    float value = 0.0f;
+    const char* text = "";
+    if (lua_isnumber(L, 4)) value = static_cast<float>(lua_tonumber(L, 4));
+    else if (lua_isboolean(L, 4)) value = lua_toboolean(L, 4) ? 1.0f : 0.0f;
+    else if (lua_isstring(L, 4)) text = lua_tostring(L, 4);
+    if (command == 9) {
+        const int length = api(L).uiDocument(ctx(L), 9, path, name, nullptr, nullptr, nullptr, 0);
+        if (length <= 0) {
+            lua_pushstring(L, "");
+            return 1;
+        }
+        std::string out(static_cast<std::size_t>(length) + 1, '\0');
+        api(L).uiDocument(ctx(L), 9, path, name, nullptr, nullptr, out.data(), length + 1);
+        lua_pushlstring(L, out.data(), static_cast<std::size_t>(length));
+        return 1;
+    }
+    const int result = api(L).uiDocument(ctx(L), command, path, name, &value, text, nullptr, 0);
+    if (command == 5) {
+        lua_pushnumber(L, value);
+        return 1;
+    }
+    lua_pushinteger(L, result);
+    return 1;
+}
 int lAudioBus(lua_State* L) {
     // bus, command (0 set volume, 1 get, 2 mute, 3 muted?), value
     lua_pushnumber(L, api(L).audioBus(ctx(L), luaL_checkstring(L, 1), static_cast<int>(luaL_checkinteger(L, 2)), optNum(L, 3, 0)));
@@ -385,7 +414,7 @@ const luaL_Reg kEngine[] = {
     {"mousePosition", lMousePosition}, {"parameter", lParameter}, {"sound", lSound}, {"spawn", lSpawn},
     {"animation", lAnimation}, {"animationBlend", lAnimationBlend}, {"animParam", lAnimParam}, {"animState", lAnimState},
     {"character", lCharacter}, {"drawRect", lDrawRect}, {"drawText", lDrawText}, {"drawTextAligned", lDrawTextAligned},
-    {"drawImage", lDrawImage}, {"drawTextFont", lDrawTextFont}, {"audioBus", lAudioBus},
+    {"drawImage", lDrawImage}, {"drawTextFont", lDrawTextFont}, {"audioBus", lAudioBus}, {"uiDocument", lUiDocument},
     {"screenSize", lScreenSize}, {"loadScene", lLoadScene}, {"setMaterial", lSetMaterial}, {"setColor", lSetColor},
     {"inputEdge", lInputEdge}, {"ui", lUi}, {"uiStyle", lUiStyle}, {"particles", lParticles}, {"debugDraw", lDebugDraw},
     {"findPath", lFindPath}, {"navigation", lNavigation}, {"input", lInput}, {"saveNumber", lSaveNumber},

@@ -4,6 +4,8 @@
 #define STBTT_STATIC
 #include <stb_truetype.h>
 
+#include <glm/common.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -165,7 +167,22 @@ void HudFont::layout(const HudCanvas& canvas, std::vector<HudVertex>& out, std::
                      const std::function<std::uint32_t(const std::string&)>& image,
                      const std::function<int(const std::string&)>& font) {
     if (full_) resetAtlas();
+    glm::vec4 clip = HudCanvas::kNoClip;  // of the item being laid out
     auto quad = [&](glm::vec2 p0, glm::vec2 p1, glm::vec2 uv0, glm::vec2 uv1, const glm::vec4& color) {
+        // Cut to the clip area; texture coordinates follow (they are linear across the quad).
+        const glm::vec2 c0 = glm::max(p0, glm::vec2(clip.x, clip.y));
+        const glm::vec2 c1 = glm::min(p1, glm::vec2(clip.z, clip.w));
+        if (c1.x <= c0.x || c1.y <= c0.y) return;
+        if (c0 != p0 || c1 != p1) {
+            const glm::vec2 span = glm::max(p1 - p0, glm::vec2(1e-6f));
+            const glm::vec2 t0 = (c0 - p0) / span, t1 = (c1 - p0) / span;
+            const glm::vec2 u0 = uv0 + (uv1 - uv0) * t0, u1 = uv0 + (uv1 - uv0) * t1;
+            const bool solid = uv0.x < 0.0f;
+            uv0 = solid ? uv0 : u0;
+            uv1 = solid ? uv1 : u1;
+            p0 = c0;
+            p1 = c1;
+        }
         const HudVertex a{p0, uv0, color}, b{{p1.x, p0.y}, {uv1.x, uv0.y}, color}, c{p1, uv1, color},
             d{{p0.x, p1.y}, {uv0.x, uv1.y}, color};
         out.insert(out.end(), {a, b, c, a, c, d});
@@ -224,13 +241,18 @@ void HudFont::layout(const HudCanvas& canvas, std::vector<HudVertex>& out, std::
         switch (kind) {
             case Kind::Rect: {
                 const HudCanvas::Rect& rect = canvas.rects[index];
+                clip = rect.clip;
                 if (batches.empty() || batches.back().first + batches.back().count != out.size()) use(false, 0);
                 quad(rect.position, rect.position + rect.size, {-1.0f, -1.0f}, {-1.0f, -1.0f}, rect.color);
                 break;
             }
-            case Kind::Text: text(canvas.texts[index]); break;
+            case Kind::Text:
+                clip = canvas.texts[index].clip;
+                text(canvas.texts[index]);
+                break;
             case Kind::Image: {
                 const HudCanvas::Image& im = canvas.images[index];
+                clip = im.clip;
                 const std::uint32_t texture = image ? image(im.texture) : UINT32_MAX;
                 if (texture == UINT32_MAX) break;
                 use(true, texture);

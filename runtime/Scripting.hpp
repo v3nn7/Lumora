@@ -2,6 +2,7 @@
 
 #include "core/Error.hpp"
 #include "runtime/GameUi.hpp"
+#include "runtime/UiScreens.hpp"
 #include "runtime/InputActions.hpp"
 #include "runtime/SaveData.hpp"
 
@@ -134,6 +135,7 @@ public:
         std::vector<entt::entity> pendingDestroy;
         std::string pendingScene;  // loadScene() request, handled by the Simulation
         GameUi ui;
+        UiScreens screens;  // UI documents (.lui) opened by behaviours
         InputActions actions = InputActions::defaults();
         SaveData* save = nullptr;
         class NavigationWorld* navigation = nullptr;

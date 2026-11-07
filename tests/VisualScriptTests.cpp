@@ -210,3 +210,38 @@ TEST(VisualScript, TextToNumbersIgnoresTheProcessLocale) {
     std::setlocale(LC_NUMERIC, saved.c_str());
     if (!comma) GTEST_SKIP() << "no decimal-comma locale installed to test with";
 }
+
+#include "runtime/UiDocument.hpp"
+
+TEST(VisualScript, UiDocumentAndWidgetNodes) {
+    // On Start: Open UI; on Update: a checkbox and a slider (their outputs into texts of the
+    // document) and Set UI Text with the slider's value.
+    GraphWorld w;
+    UiDocument doc = defaultUiDocument();
+    UiWidget label;
+    label.type = UiWidget::Type::Label;
+    label.name = "Status";
+    label.text = "-";
+    doc.root.children.push_back(label);
+    ASSERT_TRUE(saveUiDocument(doc, w.dir.path() / "Content" / "UI" / "Hud.lui").has_value());
+    const json graph = {
+        {"version", 1},
+        {"nodes",
+         {node(1, "event.start"), node(2, "uidoc.open", {{"document", "Content/UI/Hud.lui"}}), node(3, "event.update"),
+          node(4, "ui.checkbox", {{"text", "Fast"}, {"initial", true}}), node(5, "ui.slider", {{"text", "Speed"}, {"min", 0}, {"max", 10}, {"initial", 4}}),
+          node(6, "uidoc.setText", {{"name", "Status"}}), node(7, "text.number", {{"decimals", 0}})}},
+        {"links",
+         {link(1, "exec", 2, "in"), link(3, "exec", 4, "in"), link(4, "then", 5, "in"), link(5, "then", 6, "in"),
+          link(5, "value", 7, "value"), link(7, "text", 6, "text")}}};
+    w.add("Logic", graph);
+    w.start();
+    w.sim->step();
+    w.sim->step();
+    bool status = false, fast = false;
+    for (const HudCanvas::Text& t : w.sim->hud().texts) {
+        if (t.utf8 == "4") status = true;  // the slider's initial value, through Set UI Text
+        if (t.utf8 == "Fast") fast = true;
+    }
+    EXPECT_TRUE(status) << "Set UI Text wrote the slider's value into the open document";
+    EXPECT_TRUE(fast) << "the checkbox is drawn";
+}

@@ -165,6 +165,12 @@ struct EngineApi {
     // Text in a project font (.ttf / .otf key; "" = built-in): box x, y, width, size; align 0-2.
     void (*drawTextFont)(void* context, const char* utf8, const float* xyWidthSize, int align, const float* rgba,
                          const char* font);
+    // UI documents (.lui): 0 open path (1 if it could), 1 close path ("" = all), 2 is path open,
+    // 3 was widget `name` clicked this step, 4 did it change; on the widget `name`: 5 value into
+    // value[0], 6 set value, 7 set text, 8 set visible (value[0] != 0), 9 text into out (returns
+    // its length). 0 when there is no such widget.
+    int (*uiDocument)(void* context, int command, const char* path, const char* name, float* value, const char* text,
+                      char* out, int capacity);
 };
 
 class Behaviour;
@@ -289,6 +295,35 @@ protected:
         const float box[4] = {x, y, 0.0f, size};
         const float c[4] = {color.x, color.y, color.z, alpha};
         api_->drawTextFont(api_->context, std::string(text).c_str(), box, 0, c, std::string(font).c_str());
+    }
+    // UI documents (.lui, made in the editor's UI Editor): open one, then ask for its widgets
+    // by name. Values and texts stay until changed.
+    bool openUi(std::string_view path) const { return ui(0, path, {}) != 0; }
+    void closeUi(std::string_view path = {}) const { ui(1, path, {}); }
+    [[nodiscard]] bool uiOpen(std::string_view path) const { return ui(2, path, {}) != 0; }
+    /// The button (or checkbox) was clicked this step.
+    [[nodiscard]] bool uiClicked(std::string_view name) const { return ui(3, {}, name) != 0; }
+    /// The checkbox or slider changed this step.
+    [[nodiscard]] bool uiChanged(std::string_view name) const { return ui(4, {}, name) != 0; }
+    [[nodiscard]] float uiValue(std::string_view name) const {
+        float v = 0.0f;
+        ui(5, {}, name, &v);
+        return v;
+    }
+    void setUiValue(std::string_view name, float value) const { ui(6, {}, name, &value); }
+    void setUiText(std::string_view name, std::string_view text) const { ui(7, {}, name, nullptr, text); }
+    void setUiVisible(std::string_view name, bool visible) const {
+        float v = visible ? 1.0f : 0.0f;
+        ui(8, {}, name, &v);
+    }
+    [[nodiscard]] std::string uiText(std::string_view name) const {
+        const std::string n(name);
+        const int length = api_->uiDocument(api_->context, 9, "", n.c_str(), nullptr, nullptr, nullptr, 0);
+        if (length <= 0) return {};
+        std::string out(static_cast<std::size_t>(length) + 1, '\0');
+        api_->uiDocument(api_->context, 9, "", n.c_str(), nullptr, nullptr, out.data(), length + 1);
+        out.resize(static_cast<std::size_t>(length));
+        return out;
     }
     /// Text aligned in a box: centred (align 1) or right-aligned (align 2) within [x, x + width].
     void drawTextCentered(std::string_view text, float centerX, float y, float size = 24.0f, Vec3 color = Vec3{1, 1, 1},
@@ -672,6 +707,10 @@ private:
         const float box[4] = {x, y, w, size};
         const float c[4] = {color.x, color.y, color.z, alpha};
         api_->drawTextAligned(api_->context, std::string(text).c_str(), box, align, c);
+    }
+    int ui(int command, std::string_view path, std::string_view name, float* value = nullptr, std::string_view text = {}) const {
+        const std::string p(path), n(name), t(text);
+        return api_->uiDocument(api_->context, command, p.c_str(), n.c_str(), value, t.c_str(), nullptr, 0);
     }
     void set(Entity e, int which, Vec3 value) const {
         const float v[3] = {value.x, value.y, value.z};

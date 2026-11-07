@@ -237,6 +237,17 @@ function Behaviour:setBusVolume(bus, volume) engine.audioBus(bus, 0, volume) end
 function Behaviour:busVolume(bus) return engine.audioBus(bus, 1, 0) end
 function Behaviour:setBusMuted(bus, muted) engine.audioBus(bus, 2, muted and 1 or 0) end
 function Behaviour:busMuted(bus) return engine.audioBus(bus, 3, 0) ~= 0 end
+-- UI documents (.lui, made in the UI Editor): open one, then use its widgets by name
+function Behaviour:openUi(path) return engine.uiDocument(0, path, "") ~= 0 end
+function Behaviour:closeUi(path) engine.uiDocument(1, path or "", "") end
+function Behaviour:uiOpen(path) return engine.uiDocument(2, path, "") ~= 0 end
+function Behaviour:uiClicked(name) return engine.uiDocument(3, "", name) ~= 0 end
+function Behaviour:uiChanged(name) return engine.uiDocument(4, "", name) ~= 0 end
+function Behaviour:uiValue(name) return engine.uiDocument(5, "", name) end
+function Behaviour:setUiValue(name, value) engine.uiDocument(6, "", name, value) end
+function Behaviour:setUiText(name, text) engine.uiDocument(7, "", name, tostring(text)) end
+function Behaviour:setUiVisible(name, visible) engine.uiDocument(8, "", name, visible and 1 or 0) end
+function Behaviour:uiText(name) return engine.uiDocument(9, "", name) end
 -- Game UI widgets (immediate mode: call every update)
 function Behaviour:button(text, x, y, w, h) return (engine.ui(0, text, x, y, w or 220, h or 48, 0, 0, 0)) end
 function Behaviour:checkbox(text, value, x, y, w, h)

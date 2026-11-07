@@ -639,6 +639,42 @@ std::vector<NodeDef> buildLibrary() {
                          [](Exec& x) { x.api().sound(x.ctx(), x.entity(1), 0); }));
     lib.push_back(pure("audio.playing", "Is Sound Playing", "Audio", "The Audio Source is playing.", {ent()},
                        {boolean("playing")}, [](Exec& x) { x.out(0, Value::ofBool(x.api().sound(x.ctx(), x.entity(0), 2) != 0)); }));
+    lib.push_back(action("anim.setFloat", "Set Animator Number", "Animation", "Sets a number parameter of the animator controller.",
+                         {ent(), str("parameter", "speed"), num("value")}, {}, [](Exec& x) {
+                             const std::string name = x.text(2);
+                             x.api().animatorParameter(x.ctx(), x.entity(1), 0, name.c_str(), static_cast<float>(x.number(3)));
+                         }));
+    lib.push_back(action("anim.setBool", "Set Animator Bool", "Animation", "Sets a true/false parameter of the animator controller.",
+                         {ent(), str("parameter", "grounded"), boolean("value")}, {}, [](Exec& x) {
+                             const std::string name = x.text(2);
+                             x.api().animatorParameter(x.ctx(), x.entity(1), 1, name.c_str(), x.flag(3) ? 1.0f : 0.0f);
+                         }));
+    lib.push_back(action("anim.trigger", "Fire Animator Trigger", "Animation", "Fires a trigger of the animator controller (once).",
+                         {ent(), str("parameter", "jump")}, {}, [](Exec& x) {
+                             const std::string name = x.text(2);
+                             x.api().animatorParameter(x.ctx(), x.entity(1), 2, name.c_str(), 1.0f);
+                         }));
+    lib.push_back(pure("anim.state", "Animator State", "Animation", "The animator controller's current state.", {ent()},
+                       {str("state")}, [](Exec& x) {
+                           char buffer[128] = {};
+                           const int length = x.api().animatorState(x.ctx(), x.entity(0), buffer, static_cast<int>(sizeof buffer));
+                           x.out(0, Value::ofString(length > 0 ? std::string(buffer) : std::string()));
+                       }));
+    lib.push_back(action("audio.setBusVolume", "Set Bus Volume", "Audio", "Volume of a mixer bus (Master, Music, SFX, UI, Voice, Ambience).",
+                         {str("bus", "Music"), num("volume", 1.0)}, {}, [](Exec& x) {
+                             const std::string bus = x.text(1);
+                             x.api().audioBus(x.ctx(), bus.c_str(), 0, static_cast<float>(x.number(2)));
+                         }));
+    lib.push_back(action("audio.muteBus", "Mute Bus", "Audio", "Mutes or unmutes a mixer bus.",
+                         {str("bus", "Music"), boolean("muted", true)}, {}, [](Exec& x) {
+                             const std::string bus = x.text(1);
+                             x.api().audioBus(x.ctx(), bus.c_str(), 2, x.flag(2) ? 1.0f : 0.0f);
+                         }));
+    lib.push_back(pure("audio.busVolume", "Bus Volume", "Audio", "The volume of a mixer bus.", {str("bus", "Music")},
+                       {num("volume")}, [](Exec& x) {
+                           const std::string bus = x.text(0);
+                           x.out(0, Value::ofNumber(x.api().audioBus(x.ctx(), bus.c_str(), 1, 0.0f)));
+                       }));
     lib.push_back(action("anim.play", "Play Animation", "Animation", "Plays a clip of the Animator (empty: its default).",
                          {ent(), str("clip")}, {}, [](Exec& x) {
                              const std::string clip = x.text(2);
@@ -708,6 +744,83 @@ std::vector<NodeDef> buildLibrary() {
                            x.out(0, Value::ofNumber(wh[0]));
                            x.out(1, Value::ofNumber(wh[1]));
                        }));
+    lib.push_back(flow("ui.checkbox", "UI Checkbox", "Draws a checkbox; runs Toggled when it is clicked. Checked: its state.",
+                       {str("text", "Option"), num("x", 20.0), num("y", 20.0), num("width", 220.0), num("height", 40.0),
+                        boolean("initial")},
+                       {execPin("then"), execPin("toggled"), boolean("checked")}, [](Exec& x) {
+                           // The state lives in the node: 0 not set yet (take the initial value), 1 off, 2 on.
+                           double& state = x.state();
+                           if (state == 0.0) state = x.flag(6) ? 2.0 : 1.0;  // 1 off, 2 on
+                           const std::string text = x.text(1);
+                           const float rect[4] = {static_cast<float>(x.number(2)), static_cast<float>(x.number(3)),
+                                                  static_cast<float>(x.number(4)), static_cast<float>(x.number(5))};
+                           float value = state == 2.0 ? 1.0f : 0.0f;
+                           const bool toggled = x.api().ui(x.ctx(), 1, text.c_str(), rect, &value, nullptr) != 0;
+                           if (toggled) state = state == 2.0 ? 1.0 : 2.0;
+                           x.out(2, Value::ofBool(state == 2.0));
+                           x.fire(0);
+                           if (toggled) x.fire(1);
+                       }));
+    lib.push_back(flow("ui.slider", "UI Slider", "Draws a slider; runs Changed while it is dragged. Value: where it is.",
+                       {str("text", "Volume"), num("x", 20.0), num("y", 20.0), num("width", 260.0), num("height", 40.0),
+                        num("min", 0.0), num("max", 1.0), num("initial", 0.5)},
+                       {execPin("then"), execPin("changed"), num("value")}, [](Exec& x) {
+                           // The value lives in the node's state, shifted so 0 means "not set yet".
+                           constexpr double kSet = 1.0e7;
+                           double& state = x.state();
+                           if (state == 0.0) state = x.number(8) + kSet;
+                           const std::string text = x.text(1);
+                           const float rect[4] = {static_cast<float>(x.number(2)), static_cast<float>(x.number(3)),
+                                                  static_cast<float>(x.number(4)), static_cast<float>(x.number(5))};
+                           float value = static_cast<float>(state - kSet);
+                           const float range[2] = {static_cast<float>(x.number(6)), static_cast<float>(x.number(7))};
+                           const bool changed = x.api().ui(x.ctx(), 2, text.c_str(), rect, &value, range) != 0;
+                           state = static_cast<double>(value) + kSet;
+                           x.out(2, Value::ofNumber(value));
+                           x.fire(0);
+                           if (changed) x.fire(1);
+                       }));
+    // UI documents (.lui)
+    lib.push_back(action("uidoc.open", "Open UI", "UI", "Shows a UI document (made in the UI Editor).",
+                         {str("document", "Content/UI/", PinHint::Asset)}, {}, [](Exec& x) {
+                             const std::string path = x.text(1);
+                             x.api().uiDocument(x.ctx(), 0, path.c_str(), "", nullptr, "", nullptr, 0);
+                         }));
+    lib.push_back(action("uidoc.close", "Close UI", "UI", "Hides a UI document (empty: all of them).",
+                         {str("document", "Content/UI/", PinHint::Asset)}, {}, [](Exec& x) {
+                             const std::string path = x.text(1);
+                             x.api().uiDocument(x.ctx(), 1, path.c_str(), "", nullptr, "", nullptr, 0);
+                         }));
+    lib.push_back(pure("uidoc.clicked", "UI Clicked", "UI", "The UI button (or checkbox) with this name was clicked this step.",
+                       {str("name", "Play")}, {boolean("clicked")}, [](Exec& x) {
+                           const std::string name = x.text(0);
+                           x.out(0, Value::ofBool(x.api().uiDocument(x.ctx(), 3, "", name.c_str(), nullptr, "", nullptr, 0) != 0));
+                       }));
+    lib.push_back(pure("uidoc.value", "UI Value", "UI", "A UI checkbox (0 / 1) or slider value.", {str("name", "Volume")},
+                       {num("value")}, [](Exec& x) {
+                           const std::string name = x.text(0);
+                           float v = 0.0f;
+                           x.api().uiDocument(x.ctx(), 5, "", name.c_str(), &v, "", nullptr, 0);
+                           x.out(0, Value::ofNumber(v));
+                       }));
+    lib.push_back(action("uidoc.setText", "Set UI Text", "UI", "Changes the text of a UI widget (score, names).",
+                         {str("name", "Score"), any("text")}, {}, [](Exec& x) {
+                             const std::string name = x.text(1);
+                             const std::string text = x.in(2).asString();
+                             x.api().uiDocument(x.ctx(), 7, "", name.c_str(), nullptr, text.c_str(), nullptr, 0);
+                         }));
+    lib.push_back(action("uidoc.setValue", "Set UI Value", "UI", "Sets a UI checkbox or slider.",
+                         {str("name", "Volume"), num("value", 1.0)}, {}, [](Exec& x) {
+                             const std::string name = x.text(1);
+                             float v = static_cast<float>(x.number(2));
+                             x.api().uiDocument(x.ctx(), 6, "", name.c_str(), &v, "", nullptr, 0);
+                         }));
+    lib.push_back(action("uidoc.setVisible", "Set UI Visible", "UI", "Shows or hides a UI widget and what is inside it.",
+                         {str("name"), boolean("visible", true)}, {}, [](Exec& x) {
+                             const std::string name = x.text(1);
+                             float v = x.flag(2) ? 1.0f : 0.0f;
+                             x.api().uiDocument(x.ctx(), 8, "", name.c_str(), &v, "", nullptr, 0);
+                         }));
     lib.push_back(flow("ui.button", "UI Button", "Draws a button; runs Clicked when it is clicked.",
                        {str("text", "Play"), num("x", 20.0), num("y", 20.0), num("width", 220.0), num("height", 48.0)},
                        {execPin("then"), execPin("clicked")}, [](Exec& x) {

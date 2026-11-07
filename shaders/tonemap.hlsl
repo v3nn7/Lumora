@@ -48,7 +48,12 @@ float4 PSMain(FullscreenOut input) : SV_Target0 {
     float temperature = gFrame.grading.z;
     float tint = gFrame.grading.w;
     hdr *= float3(1.0 + 0.2 * temperature + 0.1 * tint, 1.0 - 0.2 * tint, 1.0 - 0.2 * temperature + 0.1 * tint);
-    float exposure = (gPush.flags & 16u) != 0u ? gTextures[asuint(gPush.param0)].Load(int3(0, 0, 0)).r : gPush.param0;
+    // An if, not ?: (HLSL evaluates both sides: param0's bits as a texture index would read
+    // outside the table, which software Vulkan does not survive).
+    float exposure = gPush.param0;
+    if ((gPush.flags & 16u) != 0u) {
+        exposure = gTextures[asuint(gPush.param0)].Load(int3(0, 0, 0)).r;
+    }
     float3 color = acesFilm(hdr * exposure * vignette);
     // Contrast around middle grey, then saturation, on the display-referred image.
     color = saturate((color - 0.18) * gFrame.grading.x + 0.18);

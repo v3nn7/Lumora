@@ -321,7 +321,10 @@ float3 fogColorTowards(float3 dir) {
     float3 fogDir = float3(dir.x, max(dir.y, 0.02), dir.z);
     // With an environment map the fog takes its blurred colour, so distance fades into the sky.
 #if defined(LUMORA_STAGE_FRAG)
-    return environmentEnabled() ? environmentRadiance(fogDir, gFrame.environmentParams.w) : skyGradient(fogDir);
+    if (environmentEnabled()) {  // (an if: ?: would sample the environment map without one)
+        return environmentRadiance(fogDir, gFrame.environmentParams.w);
+    }
+    return skyGradient(fogDir);
 #else
     return skyGradient(fogDir);
 #endif

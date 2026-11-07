@@ -321,7 +321,13 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
         static const float3 kCascadeTint[SHADOW_CASCADES] = {float3(1.0, 0.25, 0.25), float3(0.25, 1.0, 0.25),
                                                              float3(0.3, 0.45, 1.0), float3(1.0, 1.0, 0.25)};
         float edge;
-        uint cascade = gFrame.shadowParams.x > 1.5 ? vsmFirstLevel(s.position) % SHADOW_CASCADES : selectCascade(s.position, edge);
+        uint cascade;
+        if (gFrame.shadowParams.x > 1.5) {  // (not ?: : both sides would run)
+            cascade = vsmFirstLevel(s.position) % SHADOW_CASCADES;
+            edge = 0.0;
+        } else {
+            cascade = selectCascade(s.position, edge);
+        }
         if (cascade < SHADOW_CASCADES) {
             color *= kCascadeTint[cascade] * (edge > 0.8 ? 0.6 : 1.0);
         }

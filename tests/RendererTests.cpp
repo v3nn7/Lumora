@@ -2687,3 +2687,95 @@ TEST_F(RendererTest, HudPicturesFromProjectTexturesAndCyrillicText) {
     }
     EXPECT_GT(glyphPixels, 80) << "Cyrillic glyphs drawn";
 }
+
+TEST_F(RendererTest, SeeThroughLeavesCastCutOutShadows) {
+    // Blended leaf cards cast a shadow where their map makes them at least half opaque; glass
+    // (one opacity, no map) still casts none. Off screen, cut-out cards keep their holes.
+    test::TempDir project;
+    std::filesystem::create_directories(project.path() / "Content" / "Textures");
+    for (const auto& [name, alpha] : {std::pair("solid.png", 255), std::pair("clear.png", 0)}) {
+        std::vector<std::uint8_t> rgba(8 * 8 * 4);
+        for (std::size_t i = 0; i < 8 * 8; ++i) {
+            rgba[i * 4] = 40;
+            rgba[i * 4 + 1] = 160;
+            rgba[i * 4 + 2] = 40;
+            rgba[i * 4 + 3] = static_cast<std::uint8_t>(alpha);
+        }
+        ASSERT_NE(stbi_write_png((project.path() / "Content" / "Textures" / name).string().c_str(), 8, 8, 4, rgba.data(), 8 * 4), 0);
+    }
+    AssetLibrary assets(project.path());
+    auto scene = shadowScene();
+    auto card = [&](glm::vec3 position, float scale, const std::string& map, float opacity, float cutoff) {
+        const auto e = scene->createEntity("Card");
+        auto& mesh = scene->registry().emplace<MeshRendererComponent>(e);
+        mesh.mesh = MeshPrimitive::Plane;
+        mesh.baseColorTexture = map;
+        mesh.opacity = opacity;
+        mesh.alphaCutoff = cutoff;
+        auto& transform = scene->registry().get<TransformComponent>(e);
+        transform.position = position;
+        transform.scale = glm::vec3(scale, 1.0f, scale);
+        return e;
+    };
+    card({-3.0f, 2.0f, 0.0f}, 1.5f, "Content/Textures/solid.png", 0.9f, -1.0f);  // blended, solid map
+    card({0.0f, 2.0f, 0.0f}, 1.5f, "Content/Textures/clear.png", 0.9f, -1.0f);   // blended, clear map
+    card({3.0f, 2.0f, 0.0f}, 1.5f, "", 0.9f, -1.0f);                             // glass
+    scene->updateWorldTransforms();
+    const glm::uvec2 size(160, 120);
+    const glm::vec3 shadowOffset(0.0f, -2.0f, -2.0f / std::tan(glm::radians(60.0f)));
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 5.0f, 5.0f});
+    cam.lookAt({0.0f, 0.0f, -1.0f});
+    const CameraView view = cam.view(static_cast<float>(size.x) / static_cast<float>(size.y));
+    auto darkness = [&](const CapturedImage& image, glm::vec3 caster) {
+        const glm::ivec2 shadow = toPixel(view, caster + shadowOffset, size);
+        const glm::ivec2 lit = toPixel(view, glm::vec3(caster.x, 0.0f, 2.5f), size);
+        return luminance(pixel(image, shadow.x, shadow.y)) / std::max(luminance(pixel(image, lit.x, lit.y)), 1.0f);
+    };
+    for (const bool virtualShadows : {false, true}) {
+        RenderSettings settings;
+        settings.assets = &assets;
+        settings.blockOnAssets = true;
+        settings.virtualShadows = virtualShadows;
+        settings.virtualShadowPageBudget = 0;
+        auto image = renderer_->capture(*scene, view, {size.x, size.y}, settings);
+        ASSERT_TRUE(image.has_value()) << image.error().message;
+        EXPECT_EQ(renderer_->stats().scene.transparentObjects, 3u);
+        EXPECT_LT(darkness(*image, {-3.0f, 2.0f, 0.0f}), 0.6f) << "solid leaf, virtual " << virtualShadows;
+        EXPECT_GT(darkness(*image, {0.0f, 2.0f, 0.0f}), 0.85f) << "clear leaf, virtual " << virtualShadows;
+        EXPECT_GT(darkness(*image, {3.0f, 2.0f, 0.0f}), 0.85f) << "glass, virtual " << virtualShadows;
+    }
+
+    // A cut-out card above and behind the camera: its map still cuts its shadow.
+    auto offscreen = shadowScene();
+    const float height = 12.0f;
+    const float reach = height / std::tan(glm::radians(60.0f));
+    const auto e = offscreen->createEntity("Card");
+    auto& mesh = offscreen->registry().emplace<MeshRendererComponent>(e);
+    mesh.mesh = MeshPrimitive::Plane;
+    mesh.baseColorTexture = "Content/Textures/clear.png";
+    mesh.alphaCutoff = 0.5f;
+    auto& transform = offscreen->registry().get<TransformComponent>(e);
+    transform.position = {0.0f, height, reach};
+    transform.scale = glm::vec3(3.0f, 1.0f, 3.0f);
+    offscreen->updateWorldTransforms();
+    FlyCameraController low;
+    low.setPosition({0.0f, 4.0f, 2.0f});
+    low.lookAt({0.0f, 0.0f, 0.0f});
+    const CameraView lowView = low.view(1.0f);
+    RenderSettings settings;
+    settings.assets = &assets;
+    settings.blockOnAssets = true;
+    settings.virtualShadows = false;
+    auto shade = [&] {
+        auto image = renderer_->capture(*offscreen, lowView, {96, 96}, settings);
+        EXPECT_TRUE(image.has_value());
+        EXPECT_EQ(renderer_->stats().scene.culledObjects, 1u) << "the card itself is not visible";
+        const glm::ivec2 shadow = toPixel(lowView, {0.0f, 0.0f, 0.0f}, {96, 96});
+        const glm::ivec2 lit = toPixel(lowView, {2.5f, 0.0f, 0.0f}, {96, 96});
+        return luminance(pixel(*image, shadow.x, shadow.y)) / std::max(luminance(pixel(*image, lit.x, lit.y)), 1.0f);
+    };
+    EXPECT_GT(shade(), 0.85f) << "a clear card casts nothing";
+    mesh.baseColorTexture = "Content/Textures/solid.png";
+    EXPECT_LT(shade(), 0.6f) << "a solid one does";
+}

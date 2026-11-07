@@ -55,7 +55,9 @@ Warunek dla kompresji tekstur (1.7).
 ### 1.2 Prawdziwa przezroczystość (M): zrobione (bez załamania, które przechodzi do 2.3)
 - **Stan:** `MeshRenderer.opacity` < 1 albo glTF BLEND z częściową alfą (współczynnik < 1 lub mapa,
   w której ponad 30% widocznych tekseli jest pośrednich) daje przebieg „Transparent”; BLEND z alfą
-  0/1 (karty liści) zostaje wycięty. Bez cieni rzucanych i bez AO.
+  0/1 (karty liści) zostaje wycięty. Cień rzucają tylko powierzchnie z mapą (albo grafem):
+  wycięty tam, gdzie krycie × alfa < 0,5 (liście BLEND z miękkimi krawędziami); szkło bez mapy
+  i z transmisją cienia nie rzuca. Bez AO.
 - **Gdzie:** nowy przebieg „Transparent” po `Water`, przed `Particles`; `BlendMode::Alpha`
   (już jest), `readDepth` jak cząsteczki; sortowanie od tyłu po środku obiektu.
 - **Jak:** Mesh Renderer: tryb Opaque / Cut-out / Transparent; glTF BLEND przestaje być wycinany.

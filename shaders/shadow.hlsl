@@ -64,6 +64,28 @@ VSOutput VSMain(VSInput input, uint instance : SV_InstanceID) {
 #if defined(LUMORA_STAGE_FRAG)
 void PSMain(VSOutput input) {
     GpuObject object = gObjects[input.objectIndex];
+    // See-through (surface.y bit 1): surface.x is the opacity, which the alpha scales; the
+    // shadow is cut where the surface is less than half opaque.
+    if (((uint)object.surface.y & 2u) != 0u) {
+        float coverage = object.surface.x;
+        if (object.graph.x != NO_TEXTURE) {
+            GraphInputs g;
+            g.uv0 = input.uv;
+            g.uv1 = input.uv1;
+            g.worldPosition = input.worldPosition;
+            g.localPosition = 0.0;
+            g.normal = normalize(input.normal);
+            g.view = normalize(gFrame.cameraPositionTime.xyz - input.worldPosition);
+            runMaterialGraph(object, object.graph.x, object.graph.y, g);
+            coverage *= saturate(gGraph[GRAPH_OPACITY].x);
+        } else if (object.textures.x != NO_TEXTURE) {
+            coverage *= gTextures[object.textures.x].Sample(gSamplers[gFrame.counts.z], input.uv).a;
+        }
+        if (coverage < 0.5) {
+            discard;
+        }
+        return;
+    }
     if (object.graph.x != NO_TEXTURE) {
         // A material graph's opacity, as the opaque pass computes it.
         GraphInputs g;

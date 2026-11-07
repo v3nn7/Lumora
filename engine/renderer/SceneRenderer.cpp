@@ -1135,6 +1135,13 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                                       textures.index(*settings.assets, mrMap, TextureKind::Data, block, wanted),
                                       textures.index(*settings.assets, emissiveMap, TextureKind::Color, block, wanted),
                                       textures.index(*settings.assets, normalMap, TextureKind::Normal, block, wanted));
+        } else if (settings.assets != nullptr) {
+            // Off screen, only its shadow: the base colour's alpha still cuts out leaves (a small
+            // copy is enough; without it a tree out of view would cast solid cards).
+            const MaterialAsset* m = candidates[i].material.get();
+            const std::string& baseMap = m != nullptr ? m->baseColorTexture : candidates[i].mesh->baseColorTexture;
+            constexpr float kShadowTexels = 256.0f;
+            obj.textures.x = ctx_.textures().index(*settings.assets, baseMap, TextureKind::Color, settings.blockOnAssets, kShadowTexels);
         }
         {
             // Last frame's transform of this object (by entity, mesh and copy) for motion vectors.
@@ -1244,6 +1251,14 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             if (p.visible && opacity > 0.0f) {
                 transparents.push_back(draw);
                 transmissiveDraws = transmissiveDraws || transmissive;
+            }
+            // Blended leaves and fences: a cut-out shadow where the map (or graph) makes them at
+            // least half opaque. Glass (transmission, or one opacity without a map) casts none.
+            const bool mapped = obj.textures.x != kNoTexture || obj.graph.x != kNoTexture;
+            if (anyShadows && mapped && !transmissive && opacity > 0.0f && !candidates[i].gpuMesh->skinned()) {
+                Draw caster = draw;
+                caster.variant = static_cast<std::uint8_t>(kMasked | (twoSided ? kTwoSided : 0));
+                casters.push_back(caster);
             }
         } else {
             if (p.visible) draws.push_back(draw);

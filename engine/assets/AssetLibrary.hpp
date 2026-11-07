@@ -87,6 +87,9 @@ public:
     /// image, and images inside it) so the next request reads it again. Waits for background
     /// loads first. Returns how many cached assets were dropped.
     std::size_t invalidateFile(const std::filesystem::path& absoluteFile);
+    /// Changes whenever cached assets are dropped (invalidateFile): caches derived from them
+    /// compare it to know they are stale.
+    [[nodiscard]] std::uint64_t generation() const noexcept { return generation_.load(std::memory_order_acquire); }
 
 private:
     template <class T>
@@ -118,6 +121,7 @@ private:
     [[nodiscard]] std::function<Result<ImageData>()> textureLoader(const TextureRef& ref, std::string key);
 
     mutable std::mutex mutex_;  // guards root_ and the slot maps (never held while loading)
+    std::atomic<std::uint64_t> generation_{0};
     std::filesystem::path root_;
     SlotMap<ImportedModel> models_;
     SlotMap<ImageData> textures_;

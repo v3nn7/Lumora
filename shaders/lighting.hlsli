@@ -14,7 +14,42 @@ struct Surface {
     float3 albedo;
     float metallic;
     float roughness;         // perceptual roughness (alpha = roughness^2)
+    // Material extensions (glTF KHR_materials_*); surfaceDefaults() sets the plain material.
+    float3 specularF0;       // dielectric reflectance at normal incidence (ior, specular colour), times the specular factor
+    float clearcoat;         // strength of a clear varnish layer over the base
+    float clearcoatRoughness;
+    float3 clearcoatNormal;
+    float3 sheenColor;       // velvet / cloth retro-reflection
+    float sheenRoughness;
+    float transmission;      // share of the dielectric diffuse light that passes through instead (glass)
 };
+
+void surfaceDefaults(inout Surface s) {
+    s.specularF0 = 0.04.xxx;
+    s.clearcoat = 0.0;
+    s.clearcoatRoughness = 0.0;
+    s.clearcoatNormal = s.geometricNormal;
+    s.sheenColor = 0.0.xxx;
+    s.sheenRoughness = 0.0;
+    s.transmission = 0.0;
+}
+
+float maxComponent(float3 v) {
+    return max(v.x, max(v.y, v.z));
+}
+
+/// Charlie sheen distribution (Estevez and Kulla 2017).
+float distributionCharlie(float NdotH, float alpha) {
+    float invAlpha = 1.0 / alpha;
+    float sin2h = max(1.0 - NdotH * NdotH, 0.0078125);
+    return (2.0 + invAlpha) * pow(sin2h, invAlpha * 0.5) / (2.0 * PI);
+}
+
+/// Share of light the sheen layer reflects at this angle (directional albedo), a rough fit: the
+/// base below gets the rest.
+float sheenAlbedo(float NdotV, float roughness) {
+    return lerp(0.12, 0.3, roughness) * lerp(1.0, 0.6, NdotV);
+}
 
 float distributionGGX(float NdotH, float alpha) {
     float a2 = alpha * alpha;
@@ -93,12 +128,31 @@ float3 evaluateLight(Surface s, float3 L, float3 radiance) {
     float NdotH = saturate(dot(s.normal, H));
     float LdotH = saturate(dot(L, H));
     float alpha = s.roughness * s.roughness;
-    float3 F0 = lerp(0.04.xxx, s.albedo, s.metallic);
+    float3 F0 = lerp(s.specularF0, s.albedo, s.metallic);
     float3 F = fresnelSchlick(LdotH, F0);
     float3 specular = distributionGGX(NdotH, alpha) * visibilitySmithGGXCorrelated(NdotV, NdotL, alpha) * F;
     specular *= energyCompensation(environmentBrdf(NdotV, s.roughness), F0);
-    float3 diffuse = (1.0 - F) * (1.0 - s.metallic) * s.albedo * diffuseBurley(NdotV, NdotL, LdotH, s.roughness);
-    return (diffuse + specular) * radiance * NdotL;
+    float3 diffuse = (1.0 - F) * (1.0 - s.metallic) * (1.0 - s.transmission) * s.albedo *
+                     diffuseBurley(NdotV, NdotL, LdotH, s.roughness);
+    float3 result = (diffuse + specular) * radiance * NdotL;
+    if (maxComponent(s.sheenColor) > 0.0) {
+        // Sheen on top: Charlie distribution with Neubelt's visibility.
+        float sheenAlpha = max(s.sheenRoughness * s.sheenRoughness, 0.0049);
+        float visibility = 1.0 / (4.0 * (NdotL + NdotV - NdotL * NdotV));
+        float3 sheen = s.sheenColor * distributionCharlie(NdotH, sheenAlpha) * visibility;
+        result = result * (1.0 - maxComponent(s.sheenColor) * sheenAlbedo(NdotV, s.sheenRoughness)) + sheen * radiance * NdotL;
+    }
+    if (s.clearcoat > 0.0) {
+        // A clear coat over everything: one more GGX lobe (F0 0.04) on the coat's own normal.
+        float NdotLc = saturate(dot(s.clearcoatNormal, L));
+        float NdotVc = max(dot(s.clearcoatNormal, s.view), 1e-4);
+        float NdotHc = saturate(dot(s.clearcoatNormal, H));
+        float alphaC = max(s.clearcoatRoughness * s.clearcoatRoughness, 0.0004);
+        float Fc = fresnelSchlick(LdotH, 0.04.xxx).x * s.clearcoat;
+        float coat = distributionGGX(NdotHc, alphaC) * visibilitySmithGGXCorrelated(NdotVc, NdotLc, alphaC) * Fc;
+        result = result * (1.0 - Fc) + coat * radiance * NdotLc;
+    }
+    return result;
 }
 
 /// Smooth inverse-square falloff that reaches zero at `range`.
@@ -192,7 +246,7 @@ float3 environmentSpecular(float3 position, float3 normal, float3 view, float ro
 /// specular radiance (Fresnel, the split-sum BRDF, energy compensation, horizon occlusion).
 float3 evaluateAmbient(Surface s, out float3 specularWeight) {
     float NdotV = max(dot(s.normal, s.view), 1e-4);
-    float3 F0 = lerp(0.04.xxx, s.albedo, s.metallic);
+    float3 F0 = lerp(s.specularF0, s.albedo, s.metallic);
     float3 F = fresnelSchlickRoughness(NdotV, F0, s.roughness);
     float2 envBrdf = environmentBrdf(NdotV, s.roughness);
     float3 R = reflect(-s.view, s.normal);
@@ -214,9 +268,25 @@ float3 evaluateAmbient(Surface s, out float3 specularWeight) {
     diffuseLight = lerp(diffuseLight, baked.rgb / max(gFrame.skyZenith.w, 1e-3), baked.a);
 #endif
     float3 envSpecular = environmentSpecular(s.position, s.normal, s.view, s.roughness);
-    float3 diffuse = (1.0 - F) * (1.0 - s.metallic) * s.albedo * diffuseLight;
+    float3 diffuse = (1.0 - F) * (1.0 - s.metallic) * (1.0 - s.transmission) * s.albedo * diffuseLight;
     specularWeight = (F0 * envBrdf.x + envBrdf.y) * energyCompensation(envBrdf, F0) * horizonOcclusion(R, s.geometricNormal);
-    return (diffuse + envSpecular * specularWeight) * gFrame.skyZenith.w;
+    float3 result = diffuse + envSpecular * specularWeight;
+    if (maxComponent(s.sheenColor) > 0.0) {
+        float E = sheenAlbedo(NdotV, s.sheenRoughness);
+        float keep = 1.0 - maxComponent(s.sheenColor) * E;
+        result = result * keep + s.sheenColor * diffuseLight * E;
+        specularWeight *= keep;
+    }
+    if (s.clearcoat > 0.0) {
+        float NdotVc = max(dot(s.clearcoatNormal, s.view), 1e-4);
+        float roughnessC = max(s.clearcoatRoughness, 0.02);
+        float Fc = fresnelSchlickRoughness(NdotVc, 0.04.xxx, roughnessC).x * s.clearcoat;
+        float2 brdfC = environmentBrdf(NdotVc, roughnessC);
+        float3 coat = environmentSpecular(s.position, s.clearcoatNormal, s.view, roughnessC) * (0.04 * brdfC.x + brdfC.y) * s.clearcoat;
+        result = result * (1.0 - Fc) + coat;
+        specularWeight *= 1.0 - Fc;  // what screen-space reflections replace: the base's lobe
+    }
+    return result * gFrame.skyZenith.w;
 }
 
 float3 evaluateAmbient(Surface s) {

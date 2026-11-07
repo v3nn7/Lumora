@@ -115,6 +115,13 @@ struct GpuObject {
     glm::uvec4 textures{kNoTexture};  // bindless: base colour, metallic-roughness, emissive, normal
     glm::vec4 surface{0.0f, 0.0f, std::bit_cast<float>(kNoTexture), 1.0f};  // x alpha cutoff (0 = opaque), y two-sided, z occlusion map, w normal strength
     glm::mat4 previousWorld{1.0f};    // last frame's world matrix (motion vectors)
+    // Material extensions (glTF KHR_texture_transform, KHR_materials_*).
+    glm::vec4 uvTransformU{1.0f, 0.0f, 0.0f, 1.5f};  // xyz: u' = dot(xyz, (u, v, 1)); w: index of refraction
+    glm::vec4 uvTransformV{0.0f, 1.0f, 0.0f, 1.0f};  // xyz: v'; w: specular factor
+    glm::vec4 specularClearcoat{1.0f, 1.0f, 1.0f, 0.0f};  // rgb specular colour, w clearcoat
+    glm::vec4 sheen{0.0f};                           // rgb sheen colour, w sheen roughness
+    glm::vec4 transmission{0.0f};  // x transmission, y clearcoat roughness, z thickness (m), w attenuation distance (m, 0 = clear)
+    glm::vec4 attenuation{1.0f, 1.0f, 1.0f, 0.0f};  // rgb attenuation colour (volume)
 };
 
 struct PushConstants {
@@ -149,7 +156,9 @@ static_assert(sizeof(FrameConstants) ==
                   64 * kMaxLights);
 static_assert(sizeof(GpuProbeVolume) == 64);
 static_assert(sizeof(GpuReflectionProbe) == 64);
-static_assert(sizeof(GpuObject) == 272);
+static_assert(sizeof(GpuObject) == 368);
+static_assert(offsetof(GpuObject, uvTransformU) == 272);
+static_assert(offsetof(GpuObject, attenuation) == 352);
 static_assert(offsetof(GpuObject, previousWorld) == 208);
 static_assert(offsetof(GpuObject, surface) == 192);
 static_assert(offsetof(GpuObject, textures) == 176);

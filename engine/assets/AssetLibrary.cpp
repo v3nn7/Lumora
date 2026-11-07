@@ -104,6 +104,7 @@ std::size_t AssetLibrary::invalidateFile(const std::filesystem::path& absoluteFi
     };
     std::erase_if(models_, [&](const auto& entry) { return fromFile(entry.first); });
     std::erase_if(textures_, [&](const auto& entry) { return fromFile(entry.first); });
+    generation_.fetch_add(1, std::memory_order_acq_rel);
     return before - models_.size() - textures_.size();
 }
 

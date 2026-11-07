@@ -42,7 +42,7 @@ VSOutput VSMain(VSInput input, uint instance : SV_InstanceID) {
     VSOutput o;
     o.objectIndex = gPush.index0 + instance;
     o.position = lightClip(gObjects[o.objectIndex], input);
-    o.uv = input.uv;
+    o.uv = materialUv(gObjects[o.objectIndex], input.uv);
     return o;
 }
 

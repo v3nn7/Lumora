@@ -457,11 +457,15 @@ const SceneRenderer::ProbeVolumeGpu* SceneRenderer::probeVolume(AssetLibrary& as
 }
 
 SceneRenderer::ModelSurface SceneRenderer::modelSurface(AssetLibrary& assets, const std::string& meshAsset) {
-    if (&assets != surfaceAssets_) {
+    if (&assets != surfaceAssets_ || assets.generation() != surfaceGeneration_) {
         modelSurfaces_.clear();
         surfaceAssets_ = &assets;
+        surfaceGeneration_ = assets.generation();
     }
-    if (const auto it = modelSurfaces_.find(meshAsset); it != modelSurfaces_.end()) return it->second;
+    // By absolute path: another project (or library at the same address) has other models.
+    auto canonical = assets.canonicalKey(meshAsset);
+    const std::string& key = canonical ? *canonical : meshAsset;
+    if (const auto it = modelSurfaces_.find(key); it != modelSurfaces_.end()) return it->second;
     ModelSurface surface;
     if (auto ref = assets.resolveMeshKey(meshAsset)) {
         if (auto model = assets.model(ref->file); model && ref->index >= 0 &&
@@ -469,11 +473,22 @@ SceneRenderer::ModelSurface SceneRenderer::modelSurface(AssetLibrary& assets, co
             const int material = (*model)->meshes[static_cast<std::size_t>(ref->index)].material;
             if (material >= 0 && static_cast<std::size_t>(material) < (*model)->materials.size()) {
                 const ImportedMaterial& m = (*model)->materials[static_cast<std::size_t>(material)];
-                surface = {importedAlphaCutoff(m), m.doubleSided, m.translucent, m.translucent ? std::clamp(m.baseColor.a, 0.0f, 1.0f) : 1.0f};
+                surface.alphaCutoff = importedAlphaCutoff(m);
+                surface.twoSided = m.doubleSided;
+                surface.transparent = m.translucent;
+                surface.opacity = m.translucent ? std::clamp(m.baseColor.a, 0.0f, 1.0f) : 1.0f;
+                surface.transmissive = m.transmission > 0.0f;
+                surface.uvTransformU = glm::vec4(m.uvTransform.rowU(), std::max(m.ior, 1.0f));
+                surface.uvTransformV = glm::vec4(m.uvTransform.rowV(), std::max(m.specularFactor, 0.0f));
+                surface.specularClearcoat = glm::vec4(glm::max(m.specularColor, glm::vec3(0.0f)), std::clamp(m.clearcoat, 0.0f, 1.0f));
+                surface.sheen = glm::vec4(glm::max(m.sheenColor, glm::vec3(0.0f)), std::clamp(m.sheenRoughness, 0.0f, 1.0f));
+                surface.transmission = glm::vec4(std::clamp(m.transmission, 0.0f, 1.0f), std::clamp(m.clearcoatRoughness, 0.0f, 1.0f),
+                                                 std::max(m.thickness, 0.0f), std::max(m.attenuationDistance, 0.0f));
+                surface.attenuation = glm::vec4(glm::clamp(m.attenuationColor, glm::vec3(0.0f), glm::vec3(1.0f)), 0.0f);
             }
         }
     }
-    modelSurfaces_.emplace(meshAsset, surface);
+    modelSurfaces_.emplace(key, surface);
     return surface;
 }
 
@@ -994,6 +1009,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     // 3. Textures (serial: the cache may start uploads) and the draw lists, in scene order.
     objects.reserve(candidates.size());
     std::vector<glm::mat4> joints;  // skinning palettes of every skinned object, back to back
+    bool transmissiveDraws = false;  // see-through surfaces that need the scene behind them
     // Objects grouped by mesh (unskinned first), so copies of a mesh sit next to each other.
     std::vector<std::size_t> order(candidates.size());
     for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
@@ -1059,12 +1075,25 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         bool twoSided = look.doubleSided;
         float opacity = std::clamp(look.opacity, 0.0f, 1.0f);
         bool transparent = opacity < 1.0f;
+        bool transmissive = false;
         if (!look.meshAsset.empty() && settings.assets != nullptr) {
             const ModelSurface surface = modelSurface(*settings.assets, look.meshAsset);
             if (cutoff < 0.0f) cutoff = surface.alphaCutoff;
             twoSided = twoSided || surface.twoSided;
             transparent = transparent || surface.transparent;
             opacity *= surface.opacity;
+            if (candidates[i].material == nullptr) {  // a .lmat replaces the model's material
+                // Volume lengths are in the model's units: scale them like the object.
+                const float scale = std::cbrt(std::abs(glm::determinant(glm::mat3(obj.world))));
+                obj.uvTransformU = surface.uvTransformU;
+                obj.uvTransformV = surface.uvTransformV;
+                obj.specularClearcoat = surface.specularClearcoat;
+                obj.sheen = surface.sheen;
+                obj.transmission = surface.transmission * glm::vec4(1.0f, 1.0f, scale, scale);
+                obj.attenuation = surface.attenuation;
+                transmissive = surface.transmissive;
+                transparent = transparent || transmissive;
+            }
         }
         const bool masked = !transparent && cutoff > 0.0f && obj.textures.x != kNoTexture;
         std::uint32_t occlusion = kNoTexture;
@@ -1073,7 +1102,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         }
         // x: cutoff (opaque) or opacity (see-through); y: bit 0 two-sided, bit 1 see-through.
         obj.surface = glm::vec4(transparent ? opacity : masked ? cutoff : 0.0f,
-                                static_cast<float>((twoSided ? 1 : 0) | (transparent ? 2 : 0)),
+                                static_cast<float>((twoSided ? 1 : 0) | (transparent ? 2 : 0) | (transmissive ? 4 : 0)),
                                 std::bit_cast<float>(occlusion), look.normalStrength);
         const auto variant = static_cast<std::uint8_t>((masked ? kMasked : 0) | (twoSided ? kTwoSided : 0));
         const Draw draw{drawn,
@@ -1085,7 +1114,10 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                         state,
                         candidates[i].gpuMesh->skinned() ? std::uint8_t{0} : variant};
         if (transparent) {
-            if (p.visible && opacity > 0.0f) transparents.push_back(draw);
+            if (p.visible && opacity > 0.0f) {
+                transparents.push_back(draw);
+                transmissiveDraws = transmissiveDraws || transmissive;
+            }
         } else {
             if (p.visible) draws.push_back(draw);
             if (anyShadows) casters.push_back(draw);
@@ -1843,10 +1875,26 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     }
 
     if (!transparents.empty()) {
+        // Transmissive surfaces (glass) see the scene behind them through a copy of it.
+        RGImage background{};
+        if (transmissiveDraws) {
+            background = graph.createImage("TransmissionBackground", {ctx_.hdrFormat(), extent.width, extent.height});
+            graph.addPass(
+                "TransmissionCopy",
+                [&](PassBuilder& b) {
+                    b.copyFrom(hdr);
+                    b.copyTo(background);
+                },
+                [hdr, background](PassContext& ctx) {
+                    ctx.cmd->copyTexture(ctx.texture(background), nvrhi::TextureSlice(), ctx.texture(hdr), nvrhi::TextureSlice());
+                });
+        }
+        const std::uint32_t clampSampler = ctx_.linearClampSampler();
         graph.addRasterPass(
             "Transparent",
             [&](PassBuilder& b) {
                 b.writeColor(hdr, LoadOp::Load);
+                if (background.valid()) b.sample(background);
                 b.readDepth(depth);  // hidden behind opaque surfaces, but writes no depth
                 if (shadows && !virtualShadows) b.sample(shadowMap);
                 if (virtualShadows) {
@@ -1856,8 +1904,8 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 if (localShadows) b.sample(localAtlas);
                 if (fogVolume.valid()) b.sample(fogVolume);
             },
-            [this, stateFor, shadows, shadowMap, virtualShadows, vsmPool, vsmPageTable, localShadows, localAtlas, fogVolume,
-             debugCascades = settings.debugCascades, draws = transparents](PassContext& ctx) {
+            [this, stateFor, shadows, shadowMap, virtualShadows, vsmPool, vsmPageTable, localShadows, localAtlas, fogVolume, background,
+             clampSampler, debugCascades = settings.debugCascades, draws = transparents](PassContext& ctx) {
                 const std::uint32_t shadowIndex = virtualShadows ? ctx.bindlessIndex(vsmPool) : shadows ? ctx.bindlessIndex(shadowMap) : 0u;
                 const float pageTableIndex = std::bit_cast<float>(virtualShadows ? ctx.bindlessIndex(vsmPageTable) : 0u);
                 const float localAtlasIndex = std::bit_cast<float>(localShadows ? ctx.bindlessIndex(localAtlas) : 0u);
@@ -1884,6 +1932,11 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     pc.param0 = localAtlasIndex;
                     pc.param1 = pageTableIndex;
                     pc.param2 = std::bit_cast<float>(fogVolume.valid() ? ctx.bindlessIndex(fogVolume) : 0u);
+                    if (background.valid()) {
+                        pc.flags |= 16u;
+                        pc.param3 = std::bit_cast<float>(ctx.bindlessIndex(background));
+                        pc.index2 = clampSampler;
+                    }
                     push(ctx.cmd, pc);
                     ctx.cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount));
                 }

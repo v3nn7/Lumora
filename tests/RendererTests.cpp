@@ -2216,3 +2216,134 @@ TEST_F(RendererTest, ContactShadowsDarkenWhereObjectsMeetTheGround) {
     EXPECT_EQ(brighter, 0) << "and never light";
     EXPECT_LT(darker, 160 * 120 / 10) << "only near the objects";
 }
+
+// ---- glTF material extensions -----------------------------------------------------------------
+
+namespace {
+
+/// Renders the imported cube with `materialJson` in front of an unlit red wall, seen head on.
+std::optional<CapturedImage> renderExtensionCube(Renderer& renderer, const std::string& materialJson, const std::string& textures = "",
+                                                 bool wall = true, glm::uvec2 size = {64, 64}) {
+    test::TempDir project;
+    std::filesystem::create_directories(project.path() / "Content" / "Models");
+    test::writeCubeGltfWithMaterial(project.path() / "Content" / "Models" / "cube.gltf", materialJson, textures);
+    AssetLibrary assets(project.path());
+    auto model = assets.model(project.path() / "Content" / "Models" / "cube.gltf");
+    if (!model) return std::nullopt;
+    auto scene = std::make_unique<Scene>("Test");
+    scene->environment().fogDensity = 0.0f;
+    const auto sun = scene->createEntity("Sun");
+    scene->registry().get<TransformComponent>(sun).rotationDeg = {-30.0f, 20.0f, 0.0f};
+    scene->registry().emplace<LightComponent>(sun).intensity = 3.0f;
+    const entt::entity root = instantiateModel(*scene, **model, "Content/Models/cube.gltf", "Cube");
+    auto& rt = scene->registry().get<TransformComponent>(root);
+    rt.position = {0.0f, -1.0f, 0.0f};  // the node lifts it by 1; the node also scales it by 2
+    if (wall) {
+        const auto w = scene->createEntity("Wall");
+        auto& m = scene->registry().emplace<MeshRendererComponent>(w);
+        m.mesh = MeshPrimitive::Cube;
+        m.baseColor = glm::vec3(0.0f);
+        m.emissive = glm::vec3(1.0f, 0.0f, 0.0f);
+        m.emissiveStrength = 1.0f;
+        auto& t = scene->registry().get<TransformComponent>(w);
+        t.position = {0.0f, 0.0f, -4.0f};
+        t.scale = {20.0f, 20.0f, 0.2f};
+    }
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.0f, 5.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    RenderSettings settings;
+    settings.assets = &assets;
+    settings.blockOnAssets = true;
+    settings.bloom = false;
+    settings.ambientOcclusion = false;
+    settings.temporalAntiAliasing = false;
+    auto image = renderer.capture(*scene, cam.view(1.0f), {size.x, size.y}, settings);
+    if (!image) return std::nullopt;
+    return std::move(*image);
+}
+
+
+} // namespace
+
+TEST_F(RendererTest, TransmissiveGlassShowsTheSceneBehindTintedByItsVolume) {
+    const std::string white = R"({"name": "Glass", "pbrMetallicRoughness": {"baseColorFactor": [1, 1, 1, 1], "metallicFactor": 0, "roughnessFactor": 0.05})";
+    auto opaque = renderExtensionCube(*renderer_, white + "}");
+    ASSERT_TRUE(opaque.has_value());
+    auto glass = renderExtensionCube(*renderer_, white + R"(, "extensions": {"KHR_materials_transmission": {"transmissionFactor": 1}}})");
+    ASSERT_TRUE(glass.has_value());
+    EXPECT_EQ(renderer_->stats().scene.transparentObjects, 1u) << "drawn with the see-through surfaces";
+    auto tinted = renderExtensionCube(*renderer_, white + R"(, "extensions": {"KHR_materials_transmission": {"transmissionFactor": 1},
+        "KHR_materials_volume": {"thicknessFactor": 1, "attenuationDistance": 1, "attenuationColor": [0.05, 0.05, 1]}}})");
+    ASSERT_TRUE(tinted.has_value());
+    const auto o = pixel(*opaque, 32, 32);
+    const auto g = pixel(*glass, 32, 32);
+    const auto t = pixel(*tinted, 32, 32);
+    EXPECT_GT(o.g, 60) << "the opaque white cube hides the red wall";
+    EXPECT_GT(g.r, 120) << "the red wall shows through the glass";
+    EXPECT_GT(g.r, g.g + 60);
+    EXPECT_LT(t.r, g.r * 0.6f) << "a volume as thick as the distance that keeps 5% of red light darkens it";
+    EXPECT_GT(t.r, 3) << "but not black";
+}
+
+TEST_F(RendererTest, TextureTransformPicksPartOfTheMap) {
+    // Left half red, right half green (the sky behind is blue).
+    std::vector<unsigned char> rgba(8 * 8 * 4);
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            unsigned char* p = &rgba[static_cast<std::size_t>(y * 8 + x) * 4];
+            p[0] = x < 4 ? 230 : 10;
+            p[1] = x < 4 ? 10 : 230;
+            p[2] = 10;
+            p[3] = 255;
+        }
+    }
+    const std::string textures = R"("textures": [{"source": 0, "sampler": 0}], "samplers": [{"magFilter": 9728, "minFilter": 9728}],
+        "images": [{"uri": "data:image/png;base64,)" + test::base64(test::encodePng(8, 8, rgba)) + R"("}],)";
+    auto count = [](const CapturedImage& image) {
+        int red = 0, green = 0;
+        for (std::size_t i = 0; i < image.rgba.size(); i += 4) {
+            const int r = image.rgba[i], g = image.rgba[i + 1], b = image.rgba[i + 2];
+            if (r > g + 40 && r > b + 40) ++red;
+            if (g > r + 40 && g > b + 40) ++green;
+        }
+        return std::pair(red, green);
+    };
+    auto plain = renderExtensionCube(*renderer_, R"({"name": "Map", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}, "metallicFactor": 0}})",
+                                     textures, false);
+    auto left = renderExtensionCube(*renderer_, R"({"name": "Map", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0,
+        "extensions": {"KHR_texture_transform": {"scale": [0.45, 1]}}}, "metallicFactor": 0}})", textures, false);
+    auto right = renderExtensionCube(*renderer_, R"({"name": "Map", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0,
+        "extensions": {"KHR_texture_transform": {"offset": [0.55, 0], "scale": [0.45, 1]}}}, "metallicFactor": 0}})", textures, false);
+    ASSERT_TRUE(plain && left && right);
+    const auto [plainRed, plainGreen] = count(*plain);
+    const auto [leftRed, leftGreen] = count(*left);
+    const auto [rightRed, rightGreen] = count(*right);
+    EXPECT_GT(plainRed, 50);
+    EXPECT_GT(plainGreen, 50) << "untransformed: both halves";
+    EXPECT_GT(leftRed, plainRed);
+    EXPECT_LT(leftGreen, 5) << "scaled into the left half: red only";
+    EXPECT_LT(rightRed, 5) << "offset into the right half: green only";
+    EXPECT_GT(rightGreen, plainGreen);
+}
+
+TEST_F(RendererTest, ClearcoatSheenAndSpecularChangeTheReflection) {
+    auto render = [&](const std::string& extensions) {
+        auto image = renderExtensionCube(*renderer_, R"({"name": "Dark", "pbrMetallicRoughness": {"baseColorFactor": [0.03, 0.03, 0.03, 1],
+            "metallicFactor": 0, "roughnessFactor": 0.9})" + extensions + "}", "", false);
+        EXPECT_TRUE(image.has_value());
+        float sum = 0.0f;
+        for (std::uint32_t y = 20; y < 44; ++y) {
+            for (std::uint32_t x = 20; x < 44; ++x) sum += luminance(pixel(*image, x, y));
+        }
+        return sum / (24.0f * 24.0f);
+    };
+    const float plain = render("");
+    const float coated = render(R"(, "extensions": {"KHR_materials_clearcoat": {"clearcoatFactor": 1, "clearcoatRoughnessFactor": 0.05}})");
+    const float velvet = render(R"(, "extensions": {"KHR_materials_sheen": {"sheenColorFactor": [1, 1, 1], "sheenRoughnessFactor": 0.5}})");
+    const float noSpecular = render(R"(, "extensions": {"KHR_materials_specular": {"specularFactor": 0}})");
+    EXPECT_GT(coated, plain + 2.0f) << "a clear coat reflects the sky";
+    EXPECT_GT(velvet, plain + 2.0f) << "sheen brightens the dark cloth";
+    EXPECT_LT(noSpecular, plain - 0.5f) << "no dielectric reflection at all";
+}

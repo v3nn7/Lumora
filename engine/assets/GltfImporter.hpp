@@ -14,6 +14,19 @@
 
 namespace lumora {
 
+/// KHR_texture_transform: uv' = offset + rotate(rotation) * (scale * uv), rotation in radians
+/// counter-clockwise in UV space.
+struct TextureTransform {
+    glm::vec2 offset{0.0f};
+    float rotation = 0.0f;
+    glm::vec2 scale{1.0f};
+    bool operator==(const TextureTransform&) const = default;
+    [[nodiscard]] bool identity() const { return *this == TextureTransform{}; }
+    /// Rows of the 2x3 matrix: u' = dot(rowU, (u, v, 1)), v' = dot(rowV, (u, v, 1)).
+    [[nodiscard]] glm::vec3 rowU() const;
+    [[nodiscard]] glm::vec3 rowV() const;
+};
+
 /// glTF metallic-roughness material. Texture fields index ImportedModel::images (-1 = none).
 struct ImportedMaterial {
     std::string name;
@@ -40,6 +53,22 @@ struct ImportedMaterial {
     /// BLEND with partial alpha (the factor's, or a map where much of the coverage is neither
     /// clear nor solid): blended over what is behind instead of cut out.
     bool translucent = false;
+
+    // ---- Extensions (factors only; their own texture maps are not read yet) ----
+    /// KHR_texture_transform of the material's maps: one for all of them (the base colour
+    /// map's, or the first map that has one).
+    TextureTransform uvTransform;
+    float ior = 1.5f;                    // KHR_materials_ior
+    float specularFactor = 1.0f;         // KHR_materials_specular: strength of the dielectric reflection
+    glm::vec3 specularColor{1.0f};       //   ... and its tint at normal incidence
+    float clearcoat = 0.0f;              // KHR_materials_clearcoat: a clear varnish layer
+    float clearcoatRoughness = 0.0f;
+    glm::vec3 sheenColor{0.0f};          // KHR_materials_sheen: velvet, cloth
+    float sheenRoughness = 0.0f;
+    float transmission = 0.0f;           // KHR_materials_transmission: light through (glass)
+    float thickness = 0.0f;              // KHR_materials_volume: wall thickness (model units)
+    float attenuationDistance = 0.0f;    //   distance light travels to be tinted by attenuationColor; 0 = clear
+    glm::vec3 attenuationColor{1.0f};
 };
 
 /// Still-encoded image (PNG/JPEG) taken from the model: embedded in a .glb buffer, a data URI,

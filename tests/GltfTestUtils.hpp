@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -108,6 +109,33 @@ inline void writeCubeGltf(const std::filesystem::path& file, bool externalBuffer
 }})",
                                        material, total, uri, n * 12, normalOffset, n * 12, indexOffset,
                                        cube.indices.size() * 2, uvOffset, n * 8, n, n, cube.indices.size(), n);
+}
+
+/// The cube of writeCubeGltf with another material: `materialJson` is the material object
+/// (glTF JSON), `texturesJson` optional "textures"/"images" entries (with a trailing comma).
+inline void writeCubeGltfWithMaterial(const std::filesystem::path& file, const std::string& materialJson,
+                                      const std::string& texturesJson = "", const std::string& extensionsUsed = "") {
+    writeCubeGltf(file, false);
+    std::ifstream in(file);
+    std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    const std::size_t begin = json.find(R"("materials": [)");
+    const std::size_t end = json.find("}}],", begin) + 4;
+    json.replace(begin, end - begin, R"("materials": [)" + materialJson + "]," + texturesJson);
+    if (!extensionsUsed.empty()) json.insert(json.find('{') + 1, R"("extensionsUsed": [)" + extensionsUsed + "],");
+    std::ofstream(file) << json;
+}
+
+/// PNG (RGBA8) of the given pixels, encoded in memory.
+inline std::vector<unsigned char> encodePng(int width, int height, const std::vector<unsigned char>& rgba) {
+    std::vector<unsigned char> png;
+    stbi_write_png_to_func(
+        [](void* context, void* data, int size) {
+            auto* out = static_cast<std::vector<unsigned char>*>(context);
+            out->insert(out->end(), static_cast<unsigned char*>(data), static_cast<unsigned char*>(data) + size);
+        },
+        &png, width, height, 4, rgba.data(), width * 4);
+    return png;
 }
 
 } // namespace lumora::test

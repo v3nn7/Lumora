@@ -11,6 +11,7 @@
 #include <limits>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <cmath>
 #include <cstdlib>
 #include <cctype>
 #include <cstring>
@@ -233,7 +234,81 @@ int imageIndexOf(const cgltf_data& data, const cgltf_texture_view& view, std::ve
     return static_cast<int>(cgltf_image_index(&data, image));
 }
 
+TextureTransform transformOf(const cgltf_texture_transform& t) {
+    TextureTransform out;
+    out.offset = {t.offset[0], t.offset[1]};
+    out.rotation = t.rotation;
+    out.scale = {t.scale[0], t.scale[1]};
+    return out;
+}
+
+/// KHR_materials_* factors and the material's texture transform.
+void materialExtensions(const cgltf_material& src, ImportedMaterial& mat, std::vector<std::string>& warnings) {
+    // One UV transform for every map: the base colour map's, or the first map that has one.
+    std::vector<const cgltf_texture_view*> views = {&src.pbr_metallic_roughness.base_color_texture,
+                                                    &src.pbr_metallic_roughness.metallic_roughness_texture,
+                                                    &src.normal_texture, &src.occlusion_texture, &src.emissive_texture};
+    bool found = false;
+    for (const cgltf_texture_view* view : views) {
+        if (view->texture == nullptr || !view->has_transform) continue;
+        const TextureTransform t = transformOf(view->transform);
+        if (!found) {
+            mat.uvTransform = t;
+            found = true;
+        } else if (!(t == mat.uvTransform)) {
+            warnings.push_back(std::format("material '{}': maps with different texture transforms (the first is used)", mat.name));
+            break;
+        }
+    }
+    bool ignoredMaps = false;
+    auto hasMap = [&](const cgltf_texture_view& view) { ignoredMaps = ignoredMaps || view.texture != nullptr; };
+    if (src.has_ior) mat.ior = src.ior.ior;
+    if (src.has_specular) {
+        mat.specularFactor = src.specular.specular_factor;
+        mat.specularColor = {src.specular.specular_color_factor[0], src.specular.specular_color_factor[1],
+                             src.specular.specular_color_factor[2]};
+        hasMap(src.specular.specular_texture);
+        hasMap(src.specular.specular_color_texture);
+    }
+    if (src.has_clearcoat) {
+        mat.clearcoat = src.clearcoat.clearcoat_factor;
+        mat.clearcoatRoughness = src.clearcoat.clearcoat_roughness_factor;
+        hasMap(src.clearcoat.clearcoat_texture);
+        hasMap(src.clearcoat.clearcoat_roughness_texture);
+        hasMap(src.clearcoat.clearcoat_normal_texture);
+    }
+    if (src.has_sheen) {
+        mat.sheenColor = {src.sheen.sheen_color_factor[0], src.sheen.sheen_color_factor[1], src.sheen.sheen_color_factor[2]};
+        mat.sheenRoughness = src.sheen.sheen_roughness_factor;
+        hasMap(src.sheen.sheen_color_texture);
+        hasMap(src.sheen.sheen_roughness_texture);
+    }
+    if (src.has_transmission) {
+        mat.transmission = src.transmission.transmission_factor;
+        hasMap(src.transmission.transmission_texture);
+    }
+    if (src.has_volume) {
+        mat.thickness = src.volume.thickness_factor;
+        mat.attenuationDistance = std::isfinite(src.volume.attenuation_distance) ? src.volume.attenuation_distance : 0.0f;
+        mat.attenuationColor = {src.volume.attenuation_color[0], src.volume.attenuation_color[1], src.volume.attenuation_color[2]};
+        hasMap(src.volume.thickness_texture);
+    }
+    if (ignoredMaps) {
+        warnings.push_back(std::format("material '{}': maps of material extensions are not read (their factors are)", mat.name));
+    }
+}
+
 } // namespace
+
+glm::vec3 TextureTransform::rowU() const {
+    const float c = std::cos(rotation), s = std::sin(rotation);
+    return {c * scale.x, s * scale.y, offset.x};
+}
+
+glm::vec3 TextureTransform::rowV() const {
+    const float c = std::cos(rotation), s = std::sin(rotation);
+    return {-s * scale.x, c * scale.y, offset.y};
+}
 
 float findPaddedBackground(const ImageData& image, std::vector<std::uint8_t>* outMask) {
     const std::uint32_t w = image.width, h = image.height;
@@ -449,6 +524,7 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
                                                                    : ImportedMaterial::AlphaMode::Opaque;
         mat.alphaCutoff = src.alpha_cutoff;
         mat.doubleSided = src.double_sided != 0;
+        materialExtensions(src, mat, model.warnings);
         model.materials.push_back(std::move(mat));
     }
 

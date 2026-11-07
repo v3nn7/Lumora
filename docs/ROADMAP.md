@@ -164,6 +164,12 @@ Rozmycie ruchu (z prędkości), automatyczna ekspozycja (histogram, compute), le
 - **Sprawdzenie:** testy importu z małych plików w `tests/data`; jednostki FBX (cm) jak dla SketchUpa.
 
 ### 2.3 Rozszerzenia glTF (M)
+- **Stan: materiały zrobione, drugi zestaw UV i morph targets w toku.** `KHR_texture_transform` (jedna
+  transformacja na materiał, z mapy base colour), `KHR_materials_ior`, `specular`, `clearcoat`
+  (druga warstwa GGX na normalnej geometrii), `sheen` (Charlie + Neubelt, przybliżone albedo),
+  `transmission` + `volume` (kopia sceny przed przebiegiem Transparent, załamany promień przez
+  grubość, rozmycie po szorstkości, pochłanianie Beera), `emissive_strength`. Nowe pola w
+  `GpuObject` (6 x vec4). Czytane są współczynniki; mapy rozszerzeń (np. `clearcoatTexture`) jeszcze nie.
 `KHR_texture_transform`, `KHR_materials_clearcoat`, `sheen`, `specular`, `ior`, `transmission`
 i `volume` (z 1.2), drugi zestaw UV, morph targets (dziś pomijane). Nowe pola w `GpuObject`
 (bufor rozszerzeń materiałów zamiast wpychania w `surface`).

@@ -156,10 +156,19 @@ private:
         bool twoSided = false;
         bool transparent = false;  // glTF BLEND with partial alpha
         float opacity = 1.0f;      // the base colour factor's alpha (see-through materials)
+        bool transmissive = false; // KHR_materials_transmission: drawn over a copy of the scene
+        // GpuObject's material extension fields (thickness and attenuation distance in model units).
+        glm::vec4 uvTransformU{1.0f, 0.0f, 0.0f, 1.5f};
+        glm::vec4 uvTransformV{0.0f, 1.0f, 0.0f, 1.0f};
+        glm::vec4 specularClearcoat{1.0f, 1.0f, 1.0f, 0.0f};
+        glm::vec4 sheen{0.0f};
+        glm::vec4 transmission{0.0f};
+        glm::vec4 attenuation{1.0f, 1.0f, 1.0f, 0.0f};
     };
     [[nodiscard]] ModelSurface modelSurface(AssetLibrary& assets, const std::string& meshAsset);
     std::unordered_map<std::string, ModelSurface> modelSurfaces_;
     const AssetLibrary* surfaceAssets_ = nullptr;
+    std::uint64_t surfaceGeneration_ = 0;
     [[nodiscard]] const struct GpuMesh* meshFor(const MeshRendererComponent& mesh, AssetLibrary* assets, bool block);
     /// Pipelines that draw into the output image, one per output format.
     nvrhi::IGraphicsPipeline* outputPipeline(std::unordered_map<int, nvrhi::GraphicsPipelineHandle>& cache,

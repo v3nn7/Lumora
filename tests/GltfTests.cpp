@@ -550,3 +550,53 @@ TEST(GltfMaterials, BlendWithPartialAlphaIsSeeThroughAndLeafCardsStayCutOut) {
     for (int i = 0; i < 16; ++i) image.rgba[static_cast<std::size_t>(i * 4 + 3)] = 90;
     EXPECT_FLOAT_EQ(partialAlphaShare(image), 1.0f);
 }
+
+TEST(GltfMaterials, ExtensionsAndTextureTransform) {
+    test::TempDir dir;
+    const std::string material = R"({"name": "Fancy",
+      "pbrMetallicRoughness": {"baseColorFactor": [1, 1, 1, 1], "baseColorTexture": {"index": 0,
+        "extensions": {"KHR_texture_transform": {"offset": [0.25, 0.5], "rotation": 1.5707963, "scale": [2, 3]}}}},
+      "extensions": {
+        "KHR_materials_ior": {"ior": 1.33},
+        "KHR_materials_specular": {"specularFactor": 0.5, "specularColorFactor": [1, 0.5, 0.25]},
+        "KHR_materials_clearcoat": {"clearcoatFactor": 0.8, "clearcoatRoughnessFactor": 0.1},
+        "KHR_materials_sheen": {"sheenColorFactor": [0.2, 0.3, 0.4], "sheenRoughnessFactor": 0.6},
+        "KHR_materials_transmission": {"transmissionFactor": 0.9},
+        "KHR_materials_volume": {"thicknessFactor": 0.05, "attenuationDistance": 0.2, "attenuationColor": [0.9, 0.5, 0.1]}}})";
+    const std::string textures = R"("textures": [{"source": 0}], "images": [{"uri": "data:image/png;base64,)" +
+                                 test::base64(test::solidPng(2, 2, 255, 255, 255)) + R"("}],)";
+    test::writeCubeGltfWithMaterial(dir.path() / "fancy.gltf", material, textures,
+                                    R"("KHR_texture_transform", "KHR_materials_ior", "KHR_materials_specular", "KHR_materials_clearcoat", "KHR_materials_sheen", "KHR_materials_transmission", "KHR_materials_volume")");
+    auto model = importGltf(dir.path() / "fancy.gltf");
+    ASSERT_TRUE(model.has_value()) << model.error().message;
+    ASSERT_EQ(model->materials.size(), 1u);
+    const ImportedMaterial& m = model->materials[0];
+    EXPECT_FLOAT_EQ(m.ior, 1.33f);
+    EXPECT_FLOAT_EQ(m.specularFactor, 0.5f);
+    EXPECT_FLOAT_EQ(m.specularColor.g, 0.5f);
+    EXPECT_FLOAT_EQ(m.clearcoat, 0.8f);
+    EXPECT_FLOAT_EQ(m.clearcoatRoughness, 0.1f);
+    EXPECT_FLOAT_EQ(m.sheenColor.b, 0.4f);
+    EXPECT_FLOAT_EQ(m.sheenRoughness, 0.6f);
+    EXPECT_FLOAT_EQ(m.transmission, 0.9f);
+    EXPECT_FLOAT_EQ(m.thickness, 0.05f);
+    EXPECT_FLOAT_EQ(m.attenuationDistance, 0.2f);
+    EXPECT_FLOAT_EQ(m.attenuationColor.b, 0.1f);
+    EXPECT_FLOAT_EQ(m.uvTransform.scale.y, 3.0f);
+    // The specification's example: offset (0, 1), a quarter turn and half scale shows the
+    // lower-left quadrant: (0, 0) -> (0, 1), (1, 0) -> (0, 0.5), (0, 1) -> (0.5, 1).
+    TextureTransform t;
+    t.offset = {0.0f, 1.0f};
+    t.rotation = 1.5707963f;
+    t.scale = {0.5f, 0.5f};
+    auto apply = [&](glm::vec2 uv) {
+        const glm::vec3 p(uv, 1.0f);
+        return glm::vec2(glm::dot(t.rowU(), p), glm::dot(t.rowV(), p));
+    };
+    EXPECT_NEAR(apply({0, 0}).y, 1.0f, 1e-5f);
+    EXPECT_NEAR(apply({1, 0}).x, 0.0f, 1e-5f);
+    EXPECT_NEAR(apply({1, 0}).y, 0.5f, 1e-5f);
+    EXPECT_NEAR(apply({0, 1}).x, 0.5f, 1e-5f);
+    EXPECT_NEAR(apply({0, 1}).y, 1.0f, 1e-5f);
+    EXPECT_TRUE(TextureTransform{}.identity());
+}

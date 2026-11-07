@@ -42,7 +42,7 @@ VSOutput VSMain(VSInput input, uint instance : SV_InstanceID) {
     o.position = toTarget(o.current);
     o.previous = mul(gFrame.previousViewProjection, mul(object.previousWorld, float4(position, 1.0)));
 #if defined(LUMORA_MASKED)
-    o.uv = input.uv;
+    o.uv = materialUv(object, input.uv);
     o.objectIndex = objectIndex;
 #endif
     return o;

@@ -39,7 +39,7 @@ VSOutput VSMain(VSInput input, uint instance : SV_InstanceID) {
     o.position = toTarget(mul(gFrame.viewProjection, world));
     o.worldPosition = world.xyz;
     o.normal = mul((float3x3)object.normalMatrix, normal);
-    o.uv = input.uv;
+    o.uv = materialUv(object, input.uv);
     o.tangent = float4(mul((float3x3)object.world, tangent), input.tangent.w);
     o.objectIndex = objectIndex;
     return o;
@@ -105,6 +105,41 @@ float4 sampleMaterial(uint textureIndex, float2 uv) {
     return gTextures[textureIndex].Sample(gSamplers[gFrame.counts.z], uv);
 }
 
+/// Radiance arriving through a transmissive surface: the scene behind, where the refracted ray
+/// leaves a volume of the material's thickness (thin walls: straight through), blurred by the
+/// roughness and absorbed along the way (Beer-Lambert towards the attenuation colour).
+float3 transmittedLight(Surface s, GpuObject object, float ior) {
+    float thickness = object.transmission.z;
+    float3 refracted = refract(-s.view, s.normal, 1.0 / max(ior, 1.0));
+    if (dot(refracted, refracted) < 1e-6) {
+        refracted = -s.view;
+    }
+    float3 exitPoint = s.position + normalize(refracted) * thickness;
+    float4 clip = mul(gFrame.viewProjection, float4(exitPoint, 1.0));
+    float2 uv = clip.xy / max(clip.w, 1e-4) * 0.5 + 0.5;  // NDC y points down the image here
+    Texture2D scene = gTextures[asuint(gPush.param3)];
+    SamplerState clampSampler = gSamplers[gPush.index2];
+    // Rough glass: a small disk of taps, wider with roughness (the copy has no mip chain).
+    float radius = s.roughness * s.roughness * 0.04;
+    float3 sum = scene.SampleLevel(clampSampler, uv, 0.0).rgb;
+    float weight = 1.0;
+    if (radius > 1e-4) {
+        static const float2 kTaps[6] = {float2(1.0, 0.0), float2(0.5, 0.866), float2(-0.5, 0.866), float2(-1.0, 0.0),
+                                        float2(-0.5, -0.866), float2(0.5, -0.866)};
+        float2 aspect = float2(gFrame.viewportSize.y * gFrame.viewportSize.z, 1.0);  // height / width
+        for (int i = 0; i < 6; ++i) {
+            sum += scene.SampleLevel(clampSampler, uv + kTaps[i] * radius * aspect, 0.0).rgb;
+            weight += 1.0;
+        }
+    }
+    float3 transmitted = sum / weight;
+    float distance = object.transmission.w;
+    if (distance > 0.0 && thickness > 0.0) {
+        transmitted *= pow(max(object.attenuation.rgb, 1e-4.xxx), thickness / distance);
+    }
+    return transmitted;
+}
+
 #if defined(LUMORA_REFLECTIONS)
 // The opaque pass for screen-space reflections also writes what they need per pixel.
 struct PSOutput {
@@ -168,6 +203,17 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     }
     // Derivatives in uniform control flow: the normal-map branch above depends only on the draw.
     s.roughness = antialiasedRoughness(clamp(s.roughness, 0.02, 1.0), ddx(s.normal), ddy(s.normal));
+    // Material extensions: index of refraction and specular tint (F0), clear coat, sheen, transmission.
+    surfaceDefaults(s);
+    float iorRatio = (object.uvTransformU.w - 1.0) / max(object.uvTransformU.w + 1.0, 1e-4);
+    s.specularF0 = min(iorRatio * iorRatio * object.specularClearcoat.rgb, 1.0.xxx) * object.uvTransformV.w;
+    s.clearcoat = saturate(object.specularClearcoat.w);
+    s.clearcoatRoughness = saturate(object.transmission.y);
+    s.sheenColor = max(object.sheen.rgb, 0.0.xxx);
+    s.sheenRoughness = saturate(object.sheen.w);
+    // Transmission (surface.y bit 2): drawn with the see-through surfaces, over a copy of the scene.
+    const bool transmissive = ((uint)object.surface.y & 4u) != 0u;
+    s.transmission = transmissive ? saturate(object.transmission.x) * (1.0 - s.metallic) : 0.0;
 
     float3 specularWeight;
     float3 color = evaluateAmbient(s, specularWeight);
@@ -215,6 +261,14 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
                 color += evaluateLight(s, toLight / max(distance, 1e-4), radiance);
             }
         }
+    }
+    if (transmissive && (gPush.flags & 16u) != 0u) {
+        // Light from behind, refracted through the surface (the scene copied before the
+        // see-through pass, param3; clamp sampler index2), tinted by the base colour and the volume.
+        float NdotV = max(dot(s.normal, s.view), 1e-4);
+        float3 F = fresnelSchlickRoughness(NdotV, s.specularF0, s.roughness);
+        color += transmittedLight(s, object, object.uvTransformU.w) * s.albedo * (1.0 - F) * s.transmission;
+        alpha = 1.0;
     }
     float3 emissive = object.emissiveRoughness.rgb;
     if (object.textures.z != NO_TEXTURE) {

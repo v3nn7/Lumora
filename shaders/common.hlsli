@@ -89,7 +89,20 @@ struct GpuObject {
     float4 surface;             // x alpha cutoff (0 = opaque; below it the base colour's alpha cuts a hole), y two-sided,
                                 // z occlusion map (asuint, NO_TEXTURE = none), w normal map strength
     column_major float4x4 previousWorld;  // last frame's world matrix (motion vectors)
+    // Material extensions (glTF KHR_texture_transform, KHR_materials_*).
+    float4 uvTransformU;       // xyz: u' = dot(xyz, (u, v, 1)); w: index of refraction
+    float4 uvTransformV;       // xyz: v'; w: specular factor
+    float4 specularClearcoat;  // rgb specular colour, w clearcoat
+    float4 sheen;              // rgb sheen colour, w sheen roughness
+    float4 transmission;       // x transmission, y clearcoat roughness, z thickness (m), w attenuation distance (m, 0 = clear)
+    float4 attenuation;        // rgb attenuation colour (volume)
 };
+
+/// The material's texture coordinates (KHR_texture_transform).
+float2 materialUv(GpuObject object, float2 uv) {
+    float3 p = float3(uv, 1.0);
+    return float2(dot(object.uvTransformU.xyz, p), dot(object.uvTransformV.xyz, p));
+}
 
 static const uint NO_TEXTURE = 0xFFFFFFFFu;
 

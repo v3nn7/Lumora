@@ -17,7 +17,8 @@ struct ImageData {
     std::vector<std::uint8_t> rgba;
 };
 
-/// Decodes PNG, JPEG, TGA or BMP from memory. Images larger than 16384 px per side are rejected.
+/// Decodes PNG, JPEG, TGA, BMP, WebP or KTX2 (Basis Universal ETC1S/UASTC, top mip level) from
+/// memory. Images larger than 16384 px per side are rejected.
 [[nodiscard]] Result<ImageData> decodeImage(std::span<const std::byte> encoded);
 [[nodiscard]] Result<ImageData> loadImageFile(const std::filesystem::path& file);
 [[nodiscard]] bool isImageFile(const std::filesystem::path& file);
@@ -29,7 +30,7 @@ struct HdrImage {
     std::vector<float> rgb;
 };
 
-/// Loads a Radiance .hdr file (equirectangular environment maps).
+/// Loads a Radiance .hdr or OpenEXR .exr file (equirectangular environment maps).
 [[nodiscard]] Result<HdrImage> loadHdrFile(const std::filesystem::path& file);
 [[nodiscard]] bool isHdrFile(const std::filesystem::path& file);
 /// Writes a Radiance .hdr file (RGBE, uncompressed scanlines), atomically.

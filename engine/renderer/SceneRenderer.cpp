@@ -547,9 +547,9 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     if (volumetricFog) {
         fc.fogVolume = glm::uvec4(1u, froxels);
         // Slices jittered along the ray from frame to frame when TAA blends the frames.
-        const float jitter = settings.temporalAntiAliasing ? std::fmod(static_cast<float>(taaFrame_) * 0.618034f, 1.0f) : 0.5f;
+        const float sliceJitter = settings.temporalAntiAliasing ? std::fmod(static_cast<float>(taaFrame_) * 0.618034f, 1.0f) : 0.5f;
         fc.fogVolumeParams = glm::vec4(std::clamp(env.volumetricFogDistance, 5.0f, 2000.0f),
-                                       std::clamp(env.fogAnisotropy, 0.0f, 0.95f), jitter, 0.0f);
+                                       std::clamp(env.fogAnisotropy, 0.0f, 0.95f), sliceJitter, 0.0f);
         fc.fogAlbedo = glm::vec4(glm::max(env.fogColor, glm::vec3(0.0f)), 1.0f);
         stats.volumetricFog = true;
     }

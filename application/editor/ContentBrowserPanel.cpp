@@ -44,7 +44,7 @@ bool hasSuffix(const QFileInfo& info, std::initializer_list<const char*> suffixe
 bool isModel(const QFileInfo& info) { return hasSuffix(info, {"glb", "gltf"}); }
 bool isPrefab(const QFileInfo& info) { return hasSuffix(info, {"lprefab"}); }
 /// Equirectangular HDR environment: dropping or opening one makes it the scene's sky.
-bool isHdr(const QFileInfo& info) { return hasSuffix(info, {"hdr"}); }
+bool isHdr(const QFileInfo& info) { return hasSuffix(info, {"hdr", "exr"}); }
 bool isMaterial(const QFileInfo& info) { return hasSuffix(info, {"lmat"}); }
 bool isCode(const QFileInfo& info) {
     return hasSuffix(info, {"cpp", "hpp", "h", "cc", "cxx", "inl", "txt", "md", "json", "lumora", "lscene", "lprefab", "lua",
@@ -53,7 +53,7 @@ bool isCode(const QFileInfo& info) {
 /// Files the browser can bring into the project.
 bool isImportable(const QFileInfo& info) {
     return isModel(info) || isPrefab(info) || isHdr(info) || isMaterial(info) ||
-           hasSuffix(info, {"png", "jpg", "jpeg", "tga", "bmp", "wav", "flac", "mp3", "cpp", "hpp", "h", "lua", "lgraph", "lanim"});
+           hasSuffix(info, {"png", "jpg", "jpeg", "tga", "bmp", "webp", "ktx2", "wav", "flac", "mp3", "cpp", "hpp", "h", "lua", "lgraph", "lanim"});
 }
 
 class AssetIconProvider final : public QFileIconProvider {
@@ -497,7 +497,7 @@ void ContentBrowserPanel::moveInto(const QStringList& files, const QString& fold
 void ContentBrowserPanel::importFiles() {
     const QStringList files = QFileDialog::getOpenFileNames(
         this, tr("Import into %1").arg(QDir(root_).relativeFilePath(current_)), QString(),
-        tr("Assets (*.glb *.gltf *.png *.jpg *.jpeg *.tga *.bmp *.hdr *.wav *.flac *.mp3 *.lprefab);;All files (*)"));
+        tr("Assets (*.glb *.gltf *.png *.jpg *.jpeg *.tga *.bmp *.webp *.ktx2 *.hdr *.exr *.wav *.flac *.mp3 *.lprefab);;All files (*)"));
     if (!files.isEmpty()) emit importRequested(files, current_);
 }
 

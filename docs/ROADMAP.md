@@ -111,7 +111,7 @@ Warunek dla kompresji tekstur (1.7).
 - **Stan: zrobione z zastrzeżeniami.** `stb_dxt`: BC1 (kolor/dane), BC3 (kolor z alfą), BC5 (normalne,
   z odtwarzane w shaderze); cache `Saved/TextureCache/*.ltex`. Streaming: mipy od rozmiaru na ekranie,
   start z ≤256 texeli, ≤48 MB wgrywania na klatkę, budżet 1,5 GB (zrzucanie nieużywanych, potem
-  najdrobniejszych mipów). Brakuje: BC7 (nowa biblioteka, np. bc7enc), KTX2/Basis (2.1), zwalniania
+  najdrobniejszych mipów). Brakuje: BC7 (nowa biblioteka, np. bc7enc), zwalniania
   pełnych łańcuchów z RAM (dziś trzymane w pamięci).
 - **Kompresja:** BC7 (kolor), BC5 (normalne), BC4 (maski) kodowane przy imporcie do pamięci
   podręcznej w `Saved/`, plus wczytywanie KTX2/Basis (2.1). Na webie: transkodowanie Basis.
@@ -139,6 +139,12 @@ Rozmycie ruchu (z prędkości), automatyczna ekspozycja (histogram, compute), le
 ## Faza 2: zasoby i materiały
 
 ### 2.1 Formaty obrazów: KTX2/Basis, WebP, EXR (M)
+- **Stan: zrobione.** `decodeImage` rozpoznaje WebP (libwebp 1.6.0, tylko dekoder) i KTX2 z Basis
+  ETC1S/UASTC (transkoder Basis Universal 2.50 z zstd, najwyższy poziom do RGBA8, potem jak każda
+  tekstura: mipy i BC w `TextureCache`). `loadHdrFile` czyta też OpenEXR (tinyexr 1.0.13, wspólny
+  miniz z instalatorem). glTF: `EXT_texture_webp`, `KHR_texture_basisu` (gdy brak obrazu PNG/JPEG).
+  Edytor: filtry plików, miniatury WebP/KTX2 przez dekodery silnika. Brakuje: KTX2 HDR (UASTC HDR)
+  i transkodowania KTX2 prosto do BC (dziś przez RGBA8 i ponowne kodowanie).
 - **Gdzie:** `engine/assets/Image.cpp` (`decodeImage`), `GltfImporter.cpp` (`imageIndexOf`
   dziś pomija KTX2/WebP z ostrzeżeniem), `KHR_texture_basisu`, `EXT_texture_webp`.
 - **Biblioteki:** libwebp (BSD), basis_universal transcoder (Apache-2.0), tinyexr (BSD).

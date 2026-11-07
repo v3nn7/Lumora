@@ -112,7 +112,21 @@ FetchContent_Declare(lua
     GIT_REPOSITORY https://github.com/lua/lua.git
     GIT_TAG 1ab3208a1fceb12fca8f24ba57d6e13c5bff15e3)
 
-FetchContent_MakeAvailable(glm EnTT nlohmann_json cgltf stb JoltPhysics miniaudio nvrhi recastnavigation)
+# libwebp 1.6.0 (BSD): WebP decoding (EXT_texture_webp, .webp textures). Only the decoder
+# library is built (EXCLUDE_FROM_ALL; the tools and encoder are not).
+FetchContent_Declare(libwebp
+    URL https://github.com/webmproject/libwebp/archive/refs/tags/v1.6.0.tar.gz
+    URL_HASH SHA256=93a852c2b3efafee3723efd4636de855b46f9fe1efddd607e1f42f60fc8f2136
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    EXCLUDE_FROM_ALL
+    SYSTEM)
+foreach(opt WEBP_BUILD_ANIM_UTILS WEBP_BUILD_CWEBP WEBP_BUILD_DWEBP WEBP_BUILD_GIF2WEBP WEBP_BUILD_IMG2WEBP
+            WEBP_BUILD_VWEBP WEBP_BUILD_WEBPINFO WEBP_BUILD_LIBWEBPMUX WEBP_BUILD_WEBPMUX WEBP_BUILD_EXTRAS
+            WEBP_BUILD_WEBP_JS WEBP_BUILD_FUZZTEST)
+    set(${opt} OFF CACHE INTERNAL "")
+endforeach()
+
+FetchContent_MakeAvailable(glm EnTT nlohmann_json cgltf stb JoltPhysics miniaudio nvrhi recastnavigation libwebp)
 FetchContent_GetProperties(lua)
 if(NOT lua_POPULATED)
     FetchContent_Populate(lua)
@@ -144,6 +158,10 @@ add_library(miniaudio INTERFACE)
 target_include_directories(miniaudio SYSTEM INTERFACE ${miniaudio_SOURCE_DIR})
 add_library(cgltf INTERFACE)
 target_include_directories(cgltf SYSTEM INTERFACE ${cgltf_SOURCE_DIR})
+add_library(lumora_webp INTERFACE)  # <webp/decode.h>
+target_include_directories(lumora_webp SYSTEM INTERFACE ${libwebp_SOURCE_DIR}/src)
+target_link_libraries(lumora_webp INTERFACE webpdecoder)
+set_target_properties(webpdecoder PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(LUMORA_BUILD_TESTS)
     FetchContent_Declare(googletest
@@ -156,3 +174,89 @@ if(LUMORA_BUILD_TESTS)
     set(gtest_force_shared_crt ON CACHE INTERNAL "")
     FetchContent_MakeAvailable(googletest)
 endif()
+
+# Single files fetched one by one from a pinned tag, each hash-verified, into
+# <build>/_deps/<name>-src (for projects whose archive is far larger than the few files used).
+function(lumora_fetch_files name base_url)
+    set(dir ${FETCHCONTENT_BASE_DIR}/${name}-src)
+    set(args ${ARGN})
+    list(LENGTH args count)
+    math(EXPR last "${count} - 1")
+    foreach(i RANGE 0 ${last} 2)
+        math(EXPR j "${i} + 1")
+        list(GET args ${i} file)
+        list(GET args ${j} hash)
+        file(DOWNLOAD ${base_url}/${file} ${dir}/${file} EXPECTED_HASH SHA256=${hash} TLS_VERIFY ON STATUS status)
+        list(GET status 0 code)
+        if(NOT code EQUAL 0)
+            message(FATAL_ERROR "Downloading ${base_url}/${file} failed: ${status}")
+        endif()
+    endforeach()
+    set(${name}_SOURCE_DIR ${dir} PARENT_SCOPE)
+endfunction()
+
+# miniz 3.0.2 (MIT): deflate/inflate and ZIP reading (EXR files, the editor installer).
+FetchContent_Declare(miniz
+    URL https://github.com/richgel999/miniz/releases/download/3.0.2/miniz-3.0.2.zip
+    URL_HASH SHA256=ada38db0b703a56d3dd6d57bf84a9c5d664921d870d8fea4db153979fb5332c5
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(miniz)  # no usable CMake project: the amalgamated source only
+add_library(lumora_miniz STATIC ${miniz_SOURCE_DIR}/miniz.c)
+target_include_directories(lumora_miniz SYSTEM PUBLIC ${miniz_SOURCE_DIR})
+target_compile_definitions(lumora_miniz PUBLIC MINIZ_NO_STDIO MINIZ_NO_TIME MINIZ_NO_ZLIB_COMPATIBLE_NAMES)
+set_target_properties(lumora_miniz PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# Basis Universal 2.50 transcoder (Apache-2.0) with its Zstandard decoder (BSD): KTX2 textures
+# (KHR_texture_basisu). The encoder is not needed.
+lumora_fetch_files(basisu https://raw.githubusercontent.com/BinomialLLC/basis_universal/v2_50
+    LICENSE 065fcf48d6af21c0b75e23be5ed5753aee75c892e1c2cf178fa6736305614a5c
+    transcoder/basisu_astc_cfgs.inl 2f56d16cc37ddb6a5f361be42e3ab32ecbeefd94fd287d5bd46c15e0e1fdb34e
+    transcoder/basisu_astc_hdr_core.h 4d1e2b68275c7f402623ab0824722d7e8d6e85adc2fc747a44c07e5321b366d4
+    transcoder/basisu_astc_helpers.h f698c23506c0e59f3bd4cb645bd3b4d071b06f1112a0cf6a0de19a19cff837f8
+    transcoder/basisu_containers.h 84a17dcb701dd22a44381ae226e3e9cdc9d361e74efc640d0ccb8bbbb081ee41
+    transcoder/basisu_containers_impl.h 9810baeca8b39497101997cf309c0cee153f096af21f1eb8e12c142410f5ef2a
+    transcoder/basisu_dds_transcoder.inl 18f731ebe27b311efda2a576b3bc76f1e1b541b25e9a790a9759f76effc61833
+    transcoder/basisu_etc1_mods.inl ddf9efd40f07209c914f4051b94bbe1821915ae61b6ca39d61aafd0126c6dd0d
+    transcoder/basisu_file_headers.h 5988f2d27e41a3f36ef5a2e350675dd30bd1ee2c70853e42a1d796a74d8178a9
+    transcoder/basisu.h 2724dd59acbd332d43dde5f15a9b546ed851c45c7c2acbcdcab4a288c58628e0
+    transcoder/basisu_idct.h 0b218ce8a9f72036c1e531387d2a168b950a2af2d5a40204f08a5ec381a2e4ee
+    transcoder/basisu_transcoder.cpp 244cf0da60941c0311feed5e9c01b9225d6ca796292391d808a4fa3cf9e406f2
+    transcoder/basisu_transcoder.h d60e4d56c7dbc392ec476e484cc5030046ecd378c554a5ffa898ccd0e1ec1b08
+    transcoder/basisu_transcoder_internal.h 9e12e4543d2872c4c0beb91bf9438d5bed1205d52358fd15671b747d8485369f
+    transcoder/basisu_transcoder_tables_astc_0_255.inc f41acb498be64349c48600e965664f4bec1161781169e3ec3411827c490ef4f8
+    transcoder/basisu_transcoder_tables_astc.inc 7dd41c648d3ed8e7d511eb4af865669c4dd50b8ecead62a68fca471138c46e1a
+    transcoder/basisu_transcoder_tables_atc_55.inc 4a510a20bffc3738d85d41e44633d44145931aa5734affb390c7836ec8b5dabb
+    transcoder/basisu_transcoder_tables_atc_56.inc 94714b54f0c13c2f3ba5481fbfb40b974892048d59ab68419b369222f0a68075
+    transcoder/basisu_transcoder_tables_bc7_m5_alpha.inc 4d713b839594f429d95f329d60f8ad495e932619111b5dfddffb688e3634b495
+    transcoder/basisu_transcoder_tables_bc7_m5_color.inc e6f63d3ebce0ac84d801ec54614b6a4eeda3be3e994f3abbfc732377cfe5a531
+    transcoder/basisu_transcoder_tables_dxt1_5.inc 500e640b5e6858fd10194eb4845670eb36d3ef9dc117a017632c1104ba3eb9d5
+    transcoder/basisu_transcoder_tables_dxt1_6.inc 3d203465f9097845eddb821943d312bf8cffb04d8f5ce09c18d4c6df40519ed3
+    transcoder/basisu_transcoder_tables_pvrtc2_45.inc 780711642098a91239ee37b3f9110469ee1c7da8dd9e440a43c7ba70f992ff9d
+    transcoder/basisu_transcoder_tables_pvrtc2_alpha_33.inc 250d389235c0213757266441f72aee37cbe138a3c2a3f58b590ed53d6fb746fa
+    transcoder/basisu_transcoder_uastc.h 8796f8e755b868c56967e3d4d53089c2aaac7e1f345b03be1e975016fcbaf11e
+    transcoder/basisu_xbc7_decoder.h 7487d5c43fe2ff97aba5a3cee87cfcdcb433f003b72c47927d4d4aeebde7b2ea
+    transcoder/basisu_xbc7_decoder.inl 485b6c4b9297047430ea8124319501d58389d96da38642f59dafd974d88d65d1
+    zstd/LICENSE 2c1a7fa704df8f3a606f6fc010b8b5aaebf403f3aeec339a12048f1ba7331a0b
+    zstd/zstddeclib.c 3a007442219d631e3748113518dd723d577647c8c00ca3f70371d0c2f7bda5a8
+    zstd/zstd.h 9b4bc8245565c98ccfc61c07749928b57e7c0f6fddb0530c4f6aa1971893d88b
+    zstd/zstd_errors.h 66a8c3f71d12ea6e797e4f622f31f3f8f81c41b36f48cad4f5de7d8bfb6aac0a)
+add_library(lumora_basisu STATIC ${basisu_SOURCE_DIR}/transcoder/basisu_transcoder.cpp ${basisu_SOURCE_DIR}/zstd/zstddeclib.c)
+target_include_directories(lumora_basisu SYSTEM PUBLIC ${basisu_SOURCE_DIR}/transcoder)
+# KTX2 with Zstandard supercompression; no .basis-only paths need anything else.
+target_compile_definitions(lumora_basisu PUBLIC BASISD_SUPPORT_KTX2=1 BASISD_SUPPORT_KTX2_ZSTD=1)
+set_target_properties(lumora_basisu PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    target_compile_options(lumora_basisu PRIVATE /W0)
+else()
+    target_compile_options(lumora_basisu PRIVATE -w)
+endif()
+
+# tinyexr 1.0.13 (BSD): OpenEXR environment maps; compiled in engine/assets/ExrImpl.cpp, inflating
+# with miniz.
+lumora_fetch_files(tinyexr https://raw.githubusercontent.com/syoyo/tinyexr/v1.0.13
+    tinyexr.h 56e041e8ca7e76748d1730790b11c5f5daa5fe03c18cf371ded1e672bec49dbb
+    exr_reader.hh 9e0bfef0487b9c3082165b2a637c75ef91d9fcc4aa55a5f32eb97f77db19f99b
+    streamreader.hh 81f2d1502930ca9ca9957e7607c2a7924d3ef2fe4b08b1a4001245dc6d3fefb6)
+add_library(lumora_tinyexr INTERFACE)
+target_include_directories(lumora_tinyexr SYSTEM INTERFACE ${tinyexr_SOURCE_DIR})
+target_link_libraries(lumora_tinyexr INTERFACE lumora_miniz)

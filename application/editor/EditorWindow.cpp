@@ -1422,7 +1422,7 @@ std::optional<std::string> EditorWindow::pickAudioAsset(QWidget* parent) {
 std::optional<std::string> EditorWindow::pickHdrAsset(QWidget* parent) {
     const QString file = QFileDialog::getOpenFileName(parent, tr("Choose HDR Environment"),
                                                       app::toQString(project_.contentDir()),
-                                                      tr("Radiance HDR, equirectangular (*.hdr)"));
+                                                      tr("HDR image, equirectangular (*.hdr *.exr)"));
     if (file.isEmpty()) return std::nullopt;
     std::filesystem::path path = std::filesystem::absolute(app::toPath(file));
     if (project_.relativePath(path).starts_with("..")) {
@@ -1443,7 +1443,7 @@ std::optional<std::string> EditorWindow::pickHdrAsset(QWidget* parent) {
 std::optional<std::string> EditorWindow::pickTextureAsset(QWidget* parent) {
     const QString file = QFileDialog::getOpenFileName(
         parent, tr("Choose Texture"), app::toQString(project_.contentDir()),
-        tr("Images (*.png *.jpg *.jpeg *.tga *.bmp);;Images inside a glTF model (*.glb *.gltf)"));
+        tr("Images (*.png *.jpg *.jpeg *.tga *.bmp *.webp *.ktx2);;Images inside a glTF model (*.glb *.gltf)"));
     if (file.isEmpty()) return std::nullopt;
     std::filesystem::path path = std::filesystem::absolute(app::toPath(file));
     const bool model = isModelFile(path);

@@ -1,5 +1,7 @@
 #include "editor/Thumbnails.hpp"
 
+#include "assets/Image.hpp"
+
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -20,7 +22,22 @@ constexpr int kPreviewSize = 128;
 
 bool isImage(const QString& s) {
     return s == QLatin1String("png") || s == QLatin1String("jpg") || s == QLatin1String("jpeg") ||
-           s == QLatin1String("bmp") || s == QLatin1String("tga") || s == QLatin1String("gif") || s == QLatin1String("webp");
+           s == QLatin1String("bmp") || s == QLatin1String("tga") || s == QLatin1String("gif") || s == QLatin1String("webp") ||
+           s == QLatin1String("ktx2");
+}
+
+/// A preview of an image file: Qt's readers, or the engine's decoders (WebP without Qt's plugin, KTX2).
+QImage readPreview(const QString& path) {
+    QImageReader reader(path);
+    const QSize size = reader.size();
+    if (size.isValid()) reader.setScaledSize(size.scaled(kPreviewSize, kPreviewSize, Qt::KeepAspectRatio));
+    QImage image = reader.read();
+    if (!image.isNull()) return image;
+    auto decoded = loadImageFile(std::filesystem::path(path.toStdU16String()));
+    if (!decoded) return {};
+    const QImage full(decoded->rgba.data(), static_cast<int>(decoded->width), static_cast<int>(decoded->height),
+                      static_cast<qsizetype>(decoded->width) * 4, QImage::Format_RGBA8888);
+    return full.scaled(kPreviewSize, kPreviewSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);  // a copy
 }
 bool isRendered(const QString& s) {
     return s == QLatin1String("glb") || s == QLatin1String("gltf") || s == QLatin1String("lprefab") ||
@@ -32,7 +49,7 @@ QColor typeColor(const QString& s) {
     if (s == QLatin1String("h") || s == QLatin1String("hpp") || s == QLatin1String("inl")) return {0x9b, 0x6b, 0xe3};
     if (s == QLatin1String("glb") || s == QLatin1String("gltf")) return {0xe8, 0x8a, 0x3c};
     if (isImage(s)) return {0x3f, 0xb6, 0x75};
-    if (s == QLatin1String("hdr")) return {0xe0, 0xb3, 0x3a};
+    if (s == QLatin1String("hdr") || s == QLatin1String("exr")) return {0xe0, 0xb3, 0x3a};
     if (s == QLatin1String("wav") || s == QLatin1String("mp3") || s == QLatin1String("flac") || s == QLatin1String("ogg")) {
         return {0xe0, 0x5e, 0x9a};
     }
@@ -169,12 +186,7 @@ void ThumbnailCache::invalidate(const QString& file) {
 
 QImage ThumbnailCache::makePreview(const QString& path) {
     const QFileInfo info(path);
-    if (isImage(info.suffix().toLower())) {
-        QImageReader reader(path);
-        const QSize size = reader.size();
-        if (size.isValid()) reader.setScaledSize(size.scaled(kPreviewSize, kPreviewSize, Qt::KeepAspectRatio));
-        return reader.read();
-    }
+    if (isImage(info.suffix().toLower())) return readPreview(path);
     return renderer_ ? renderer_(path) : QImage();
 }
 
@@ -192,10 +204,7 @@ void ThumbnailCache::processOne(bool wait) {
         decoding_.insert(path);
         QPointer<ThumbnailCache> self(this);
         QThreadPool::globalInstance()->start([self, path, stamp] {
-            QImageReader reader(path);
-            const QSize size = reader.size();
-            if (size.isValid()) reader.setScaledSize(size.scaled(kPreviewSize, kPreviewSize, Qt::KeepAspectRatio));
-            const QImage image = reader.read();
+            const QImage image = readPreview(path);
             if (self.isNull()) return;
             QMetaObject::invokeMethod(self.data(), [self, path, stamp, image] {
                 if (self) self->finish(path, stamp, image);

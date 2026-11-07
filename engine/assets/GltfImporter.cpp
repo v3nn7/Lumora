@@ -219,12 +219,18 @@ int imageIndexOf(const cgltf_data& data, const cgltf_texture_view& view, std::ve
         warnings.push_back(std::format("material '{}': texture uses UV set {} (only set 0 is supported)", material,
                                        view.texcoord));
     }
-    if (view.texture->image == nullptr) {
-        warnings.push_back(std::format("material '{}': texture without a PNG/JPEG image (e.g. KTX2/WebP) skipped",
-                                       material));
+    // The core image (PNG/JPEG) when there is one: it is usually the lossless original. Otherwise
+    // the EXT_texture_webp or KHR_texture_basisu (KTX2) source.
+    const cgltf_texture& texture = *view.texture;
+    const cgltf_image* image = texture.image != nullptr ? texture.image
+                               : texture.has_webp   ? texture.webp_image
+                               : texture.has_basisu ? texture.basisu_image
+                                                    : nullptr;
+    if (image == nullptr) {
+        warnings.push_back(std::format("material '{}': texture without an image skipped", material));
         return -1;
     }
-    return static_cast<int>(cgltf_image_index(&data, view.texture->image));
+    return static_cast<int>(cgltf_image_index(&data, image));
 }
 
 } // namespace

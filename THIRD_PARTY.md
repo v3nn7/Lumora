@@ -20,7 +20,11 @@ licences compatible with it. Versions are pinned (and hash-verified) in `cmake/`
 | Vulkan-Headers 1.4.352 (incl. vulkan.hpp) | Vulkan API declarations | Apache-2.0 or MIT |
 | Recast & Detour 1.6.0 | navigation meshes, path finding, crowds | zlib |
 | Lua 5.4.7 | Lua behaviours (scripting language) | MIT |
-| miniz | ZIP extraction (editor installer) | MIT |
+| miniz 3.0.2 | ZIP extraction (editor installer), EXR decompression | MIT |
+| libwebp 1.6.0 (decoder) | WebP textures | BSD-3-Clause |
+| Basis Universal 2.50 (transcoder) | KTX2 / Basis textures | Apache-2.0 |
+| Zstandard (decoder, bundled with Basis Universal) | KTX2 supercompression | BSD-3-Clause |
+| tinyexr 1.0.13 | OpenEXR environment maps | BSD-3-Clause |
 | Monocypher | Ed25519 signature checks (editor installer), XChaCha20-Poly1305 (session datagrams) | BSD-2-Clause or CC0 |
 | micro-ecc | ECDSA P-256 for the session host's TLS certificate | BSD-2-Clause |
 | wayland-protocols (pointer-constraints, relative-pointer XML) | Wayland pointer lock | MIT |

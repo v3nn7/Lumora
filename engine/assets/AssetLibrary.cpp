@@ -64,7 +64,7 @@ Result<AssetLibrary::TextureRef> AssetLibrary::resolveTextureKey(std::string_vie
     if (hash == std::string_view::npos) {
         auto path = resolveRelative(key, key);
         if (!path) return std::unexpected(path.error());
-        if (!isImageFile(*path)) return makeError("'{}' is not a supported image (png, jpg, tga, bmp)", key);
+        if (!isImageFile(*path)) return makeError("'{}' is not a supported image (png, jpg, tga, bmp, webp, ktx2)", key);
         return TextureRef{*path, -1};
     }
     const std::string_view suffix = key.substr(hash + 1);

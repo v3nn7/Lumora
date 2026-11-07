@@ -3,23 +3,14 @@
 include(FetchContent)
 set(CMAKE_AUTOMOC ON)
 
-# miniz: ZIP reading/inflate (single C file, MIT).
-FetchContent_Declare(miniz
-    URL https://github.com/richgel999/miniz/releases/download/3.0.2/miniz-3.0.2.zip
-    URL_HASH SHA256=ada38db0b703a56d3dd6d57bf84a9c5d664921d870d8fea4db153979fb5332c5
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 # Monocypher: Ed25519 signature checks (public domain / BSD).
 FetchContent_Declare(monocypher
     URL https://github.com/LoupVaillant/Monocypher/archive/refs/tags/4.0.2.tar.gz
     URL_HASH SHA256=bc1ca30b1b2654e4e7daf2492c0d204200e55137f23fda6b7142fd7d523bd6b4
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-FetchContent_MakeAvailable(miniz monocypher)  # neither ships a usable CMake project: sources only
+FetchContent_MakeAvailable(monocypher)  # sources only (miniz: cmake/LumoraDependencies.cmake)
 
 enable_language(C)
-add_library(lumora_miniz STATIC ${miniz_SOURCE_DIR}/miniz.c)
-target_include_directories(lumora_miniz SYSTEM PUBLIC ${miniz_SOURCE_DIR})
-target_compile_definitions(lumora_miniz PUBLIC MINIZ_NO_STDIO MINIZ_NO_TIME MINIZ_NO_ZLIB_COMPATIBLE_NAMES)
-set_target_properties(lumora_miniz PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(lumora_monocypher STATIC
     ${monocypher_SOURCE_DIR}/src/monocypher.c

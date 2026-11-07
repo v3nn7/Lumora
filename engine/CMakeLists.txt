@@ -37,8 +37,11 @@ lumora_engine_module(assets
         assets/AssetImport.cpp
         assets/Image.cpp
         assets/StbImpl.cpp
+        assets/ExrImpl.cpp
         assets/Material.cpp
     DEPS lumora_core glm::glm cgltf stb nlohmann_json::nlohmann_json)
+target_link_libraries(lumora_assets PRIVATE lumora_webp lumora_basisu lumora_tinyexr)
+set_source_files_properties(assets/ExrImpl.cpp PROPERTIES COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/W0,-w>)
 
 lumora_engine_module(scene
     SOURCES

@@ -6,6 +6,8 @@
 #include "scene/Scene.hpp"
 
 #include <gtest/gtest.h>
+
+#include <clocale>
 #include <nlohmann/json.hpp>
 
 #include <fstream>
@@ -190,4 +192,21 @@ TEST(AnimatorStateMachine, TransitionsFollowParametersTriggersAndExitTime) {
     EXPECT_FALSE(AnimatorStateMachine::parse(json::parse(R"({"states": []})")).has_value());
     EXPECT_FALSE(AnimatorStateMachine::parse(json::parse(
         R"({"states": [{"name": "A"}], "transitions": [{"from": "A", "to": "B"}]})")).has_value());
+}
+
+TEST(VisualScript, TextToNumbersIgnoresTheProcessLocale) {
+    // A decimal-comma locale (Polish) must not change how "2.5" or "1,0.5,2" read.
+    const char* previous = std::setlocale(LC_NUMERIC, nullptr);
+    const std::string saved = previous != nullptr ? previous : "C";
+    const bool comma = std::setlocale(LC_NUMERIC, "pl_PL.UTF-8") != nullptr || std::setlocale(LC_NUMERIC, "de_DE.UTF-8") != nullptr;
+    EXPECT_DOUBLE_EQ(visual::Value::ofString(" 2.5").asNumber(), 2.5);
+    EXPECT_DOUBLE_EQ(visual::Value::ofString("abc").asNumber(), 0.0);
+    const auto v = visual::Value::ofString("1, 0.5,2").asVec3();
+    EXPECT_FLOAT_EQ(v.x, 1.0f);
+    EXPECT_FLOAT_EQ(v.y, 0.5f);
+    EXPECT_FLOAT_EQ(v.z, 2.0f);
+    const auto bad = visual::Value::ofString("1 2 3").asVec3();
+    EXPECT_FLOAT_EQ(bad.x, 0.0f) << "commas separate the components";
+    std::setlocale(LC_NUMERIC, saved.c_str());
+    if (!comma) GTEST_SKIP() << "no decimal-comma locale installed to test with";
 }

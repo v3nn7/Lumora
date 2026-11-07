@@ -3,6 +3,7 @@
 #include "runtime/ScriptNames.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -46,9 +47,14 @@ double Value::asNumber() const {
     case PinType::Bool: return number;
     case PinType::Vec3: return vec.length();
     case PinType::String: {
-        char* end = nullptr;
-        const double n = std::strtod(text.c_str(), &end);
-        return end != text.c_str() ? n : 0.0;
+        // Locale-independent (strtod reads "2.5" as 2 in a Polish locale).
+        const char* p = text.data();
+        const char* end = p + text.size();
+        while (p < end && (*p == ' ' || *p == '\t')) ++p;
+        if (p < end && *p == '+') ++p;
+        double n = 0.0;
+        const auto [next, ec] = std::from_chars(p, end, n);
+        return ec == std::errc{} ? n : 0.0;
     }
     case PinType::Entity: return entity == kNoEntity ? -1.0 : static_cast<double>(entity);
     default: return number;
@@ -67,9 +73,23 @@ bool Value::asBool() const {
 Vec3 Value::asVec3() const {
     if (type == PinType::Vec3) return vec;
     if (type == PinType::String) {
-        Vec3 v;
-        if (std::sscanf(text.c_str(), "%f , %f , %f", &v.x, &v.y, &v.z) == 3) return v;
-        return {};
+        // "x, y, z" (commas, optional spaces), independent of the process locale (a Polish
+        // locale reads "1,5" as one number with sscanf).
+        float parts[3] = {0.0f, 0.0f, 0.0f};
+        const char* p = text.data();
+        const char* end = p + text.size();
+        for (int i = 0; i < 3; ++i) {
+            while (p < end && (*p == ' ' || *p == '\t')) ++p;
+            const auto [next, ec] = std::from_chars(p, end, parts[i]);
+            if (ec != std::errc{}) return {};
+            p = next;
+            while (p < end && (*p == ' ' || *p == '\t')) ++p;
+            if (i < 2) {
+                if (p >= end || *p != ',') return {};
+                ++p;
+            }
+        }
+        return {parts[0], parts[1], parts[2]};
     }
     const auto n = static_cast<float>(asNumber());
     return {n, n, n};

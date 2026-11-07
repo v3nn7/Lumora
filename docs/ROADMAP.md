@@ -129,6 +129,8 @@ Warunek dla kompresji tekstur (1.7).
 - **Sprawdzenie:** zestaw testów `RendererTest` na obu backendach w CI (Windows).
 
 ### 1.9 Pozostałe ulepszenia obrazu (M)
+- **Stan: zrobione** poza bloomem: rozmycie ruchu, automatyczna ekspozycja, cienie kontaktowe, GTAO
+  (w miejscu SSAO). Bloom już jest łańcuchem downsample/upsample z ważeniem energii; bez zmian.
 Rozmycie ruchu (z prędkości), automatyczna ekspozycja (histogram, compute), lepszy bloom
 (fizyczny), cienie kontaktowe w przestrzeni ekranu, SSAO zastąpione GTAO.
 

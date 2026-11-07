@@ -1,8 +1,12 @@
-// Screen-space ambient occlusion from the depth prepass.
+// Screen-space ambient occlusion from the depth prepass: ground-truth ambient occlusion (GTAO,
+// Jimenez et al. 2016).
 //
-// PSOcclusion (half resolution): view-space position and normal reconstructed from depth, 12
-//   samples in the normal-oriented hemisphere (radius in metres, rotated per pixel with
-//   interleaved gradient noise), each compared against the depth buffer with a range check.
+// PSOcclusion (half resolution): view-space position and normal reconstructed from depth. In 3
+//   slices around the view direction (turned per pixel with interleaved gradient noise), the
+//   highest horizon on each side is found by marching the depth buffer within the radius
+//   (metres); the visible part of the cosine-weighted hemisphere between the two horizons is
+//   integrated exactly for the normal projected into the slice. Unlike counting samples, this
+//   gives the physically right amount of darkening and no self-occlusion on flat surfaces.
 // PSBlur (full resolution): depth-aware 3x3 filter of the half-resolution result, so the noise
 //   disappears without bleeding occlusion across silhouettes.
 //
@@ -66,34 +70,57 @@ float PSOcclusion(FullscreenOut input) : SV_Target0 {
         n = -n;  // face the camera
     }
 
-    float radius = gPush.param0;
-    float bias = gPush.param2;
-    float angle = noise(input.position.xy) * 6.2831853;
-    float3 helper = abs(n.y) < 0.9 ? float3(0, 1, 0) : float3(1, 0, 0);
-    float3 t = normalize(cross(helper, n));
-    float3 b = cross(n, t);
-    float cs = cos(angle);
-    float sn = sin(angle);
-    float3 rt = t * cs + b * sn;
-    float3 rb = -t * sn + b * cs;
-
-    const int kSamples = 12;
-    float occlusion = 0.0;
-    [unroll] for (int i = 0; i < kSamples; ++i) {
-        // Fibonacci spiral over the hemisphere, more samples near the centre.
-        float fi = (float(i) + 0.5) / kSamples;
-        float phi = float(i) * 2.39996323;
-        float r = sqrt(fi);
-        float3 dir = rt * (cos(phi) * r) + rb * (sin(phi) * r) + n * sqrt(1.0 - fi);
-        float scale = lerp(0.15, 1.0, fi * fi);
-        float3 s = p + dir * (radius * scale);
-        float2 sp = projectToPixel(s);
-        float sceneDistance = viewDistance(depthAt(int2(sp)));
-        float sampleDistance = -s.z;
-        float range = saturate(radius / max(abs(-p.z - sceneDistance), 1e-4));
-        occlusion += (sceneDistance < sampleDistance - bias ? 1.0 : 0.0) * range;
+    const float radius = gPush.param0;
+    const float3 V = normalize(-p);
+    // The radius on screen, in full-resolution pixels.
+    const float pixelsPerMetre = abs(gFrame.projection[1][1]) * 0.5 * gFrame.viewportSize.y / max(-p.z, 1e-3);
+    const float screenRadius = min(radius * pixelsPerMetre, 96.0);
+    if (screenRadius < 1.5) {
+        return 1.0;  // far away: smaller than a pixel
     }
-    float ao = 1.0 - occlusion / kSamples;
+    const int kSlices = 3;
+    const int kSteps = 6;
+    const float noiseAngle = noise(input.position.xy);
+    const float noiseStep = noise(input.position.yx + 17.0);
+    float visibility = 0.0;
+    [unroll] for (int slice = 0; slice < kSlices; ++slice) {
+        float phi = (float(slice) + noiseAngle) * (3.14159265 / float(kSlices));
+        float2 omega = float2(cos(phi), sin(phi));
+        // The slice's direction in view space (from the reconstruction, so screen and view axes agree).
+        float3 along = viewPosition(pixel + omega, depth) - p;
+        float3 direction = normalize(along - V * dot(along, V));
+        float3 axis = normalize(cross(direction, V));
+        float3 projected = n - axis * dot(n, axis);
+        float projectedLength = length(projected);
+        float cosN = saturate(dot(projected, V) / max(projectedLength, 1e-4));
+        float nAngle = (dot(projected, direction) >= 0.0 ? 1.0 : -1.0) * acos(cosN);  // towards +direction: positive
+        // Highest horizon on each side (cosine against the view direction).
+        float horizonCos[2] = {-1.0, -1.0};
+        [unroll] for (int side = 0; side < 2; ++side) {
+            float sign = side == 0 ? -1.0 : 1.0;
+            [unroll] for (int step = 0; step < kSteps; ++step) {
+                float t = (float(step) + noiseStep) / float(kSteps);
+                float2 offset = omega * sign * max(t * t * screenRadius, 1.0 + float(step));
+                float2 samplePixel = pixel + offset;
+                float3 s = viewPosition(samplePixel, depthAt(int2(samplePixel)));
+                float3 delta = s - p;
+                float lengthSq = dot(delta, delta);
+                float cosH = dot(delta, V) * rsqrt(max(lengthSq, 1e-8));
+                // Far samples fade back towards the lowest horizon (no occlusion from across the room).
+                float falloff = saturate(1.0 - lengthSq / (radius * radius));
+                horizonCos[side] = max(horizonCos[side], lerp(-1.0, cosH, falloff));
+            }
+        }
+        float h0 = -acos(clamp(horizonCos[0], -1.0, 1.0));
+        float h1 = acos(clamp(horizonCos[1], -1.0, 1.0));
+        h0 = nAngle + max(h0 - nAngle, -1.5707963);
+        h1 = nAngle + min(h1 - nAngle, 1.5707963);
+        float sinN = sin(nAngle);
+        float arc0 = -cos(2.0 * h0 - nAngle) + cosN + 2.0 * h0 * sinN;
+        float arc1 = -cos(2.0 * h1 - nAngle) + cosN + 2.0 * h1 * sinN;
+        visibility += projectedLength * 0.25 * (arc0 + arc1);
+    }
+    float ao = visibility / float(kSlices);
     return pow(saturate(ao), gPush.param1);
 }
 

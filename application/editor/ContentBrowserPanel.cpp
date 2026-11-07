@@ -41,7 +41,7 @@ bool hasSuffix(const QFileInfo& info, std::initializer_list<const char*> suffixe
     }
     return false;
 }
-bool isModel(const QFileInfo& info) { return hasSuffix(info, {"glb", "gltf"}); }
+bool isModel(const QFileInfo& info) { return hasSuffix(info, {"glb", "gltf", "fbx", "obj"}); }
 bool isPrefab(const QFileInfo& info) { return hasSuffix(info, {"lprefab"}); }
 /// Equirectangular HDR environment: dropping or opening one makes it the scene's sky.
 bool isHdr(const QFileInfo& info) { return hasSuffix(info, {"hdr", "exr"}); }
@@ -497,7 +497,7 @@ void ContentBrowserPanel::moveInto(const QStringList& files, const QString& fold
 void ContentBrowserPanel::importFiles() {
     const QStringList files = QFileDialog::getOpenFileNames(
         this, tr("Import into %1").arg(QDir(root_).relativeFilePath(current_)), QString(),
-        tr("Assets (*.glb *.gltf *.png *.jpg *.jpeg *.tga *.bmp *.webp *.ktx2 *.hdr *.exr *.wav *.flac *.mp3 *.lprefab);;All files (*)"));
+        tr("Assets (*.glb *.gltf *.fbx *.obj *.png *.jpg *.jpeg *.tga *.bmp *.webp *.ktx2 *.hdr *.exr *.wav *.flac *.mp3 *.lprefab);;All files (*)"));
     if (!files.isEmpty()) emit importRequested(files, current_);
 }
 

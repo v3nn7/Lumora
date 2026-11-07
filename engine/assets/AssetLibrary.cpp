@@ -1,5 +1,7 @@
 #include "assets/AssetLibrary.hpp"
 
+#include "assets/AssetImport.hpp"
+
 #include "core/JobSystem.hpp"
 #include "core/Log.hpp"
 #include "core/Timer.hpp"
@@ -187,7 +189,7 @@ AssetRequest<T> AssetLibrary::request(const std::shared_ptr<Slot<T>>& s, std::fu
 std::function<Result<ImportedModel>()> AssetLibrary::modelLoader(const std::filesystem::path& file) {
     return [file] {
         Stopwatch timer;
-        auto loaded = importGltf(file);
+        auto loaded = importModel(file);
         if (!loaded) {
             log::error("Assets", "{}", loaded.error().message);
             return loaded;

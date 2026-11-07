@@ -333,6 +333,92 @@ float importedAlphaCutoff(const ImportedMaterial& m) {
     return cutoff;
 }
 
+void finalizeImportedModel(ImportedModel& model) {
+    // Base colour maps with transparency (PNG colour type 4/6, or a tRNS chunk), without decoding.
+    auto pngHasAlpha = [](const std::vector<std::byte>& png) {
+        static constexpr unsigned char kSignature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+        if (png.size() < 33 || std::memcmp(png.data(), kSignature, 8) != 0) return false;
+        const auto byte = [&](std::size_t i) { return static_cast<unsigned char>(png[i]); };
+        const unsigned colorType = byte(25);
+        if (colorType == 4 || colorType == 6) return true;
+        for (std::size_t at = 8; at + 8 <= png.size();) {  // chunks up to the image data
+            const std::size_t length = (std::size_t{byte(at)} << 24) | (std::size_t{byte(at + 1)} << 16) |
+                                       (std::size_t{byte(at + 2)} << 8) | byte(at + 3);
+            const std::string type(reinterpret_cast<const char*>(png.data()) + at + 4, 4);
+            if (type == "tRNS") return true;
+            if (type == "IDAT" || type == "IEND") return false;
+            at += 12 + length;
+        }
+        return false;
+    };
+    // Foliage maps that lost their alpha (common in SketchUp models): cut out the background
+    // (white, or the flat streaks exporters pad with). Only for leaf-like names and only when
+    // the map's border is background, so walls, snow or paper keep their colour.
+    auto foliageName = [](std::string text) {
+        for (char& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (const char* word : {"leaf", "leaves", "foliage", "grass", "plant", "tree", "branch", "fern", "bush", "ivy",
+                                 "flower", "hedge", "palm", "needle", "shrub", "twig", "vine"}) {
+            if (text.find(word) != std::string::npos) return true;
+        }
+        return false;
+    };
+    auto paddedBackground = [](const std::vector<std::byte>& encoded) {
+        auto decoded = decodeImage(encoded);
+        if (!decoded) return false;
+        const float share = findPaddedBackground(*decoded);
+        return share > 0.05f && share < 0.95f;  // some background, and something left
+    };
+    for (ImportedMaterial& mat : model.materials) {
+        if (mat.baseColorTexture < 0 || static_cast<std::size_t>(mat.baseColorTexture) >= model.images.size()) continue;
+        ImportedImage& image = model.images[static_cast<std::size_t>(mat.baseColorTexture)];
+        mat.baseColorHasAlpha = pngHasAlpha(image.encoded);
+        if (!mat.baseColorHasAlpha && mat.alphaMode == ImportedMaterial::AlphaMode::Opaque &&
+            (foliageName(mat.name) || foliageName(image.name)) && paddedBackground(image.encoded)) {
+            image.cutOutBackground = true;
+            mat.baseColorHasAlpha = true;  // cut out like a map with alpha
+            model.warnings.push_back(std::format("material '{}': leaf map without alpha, background cut out", mat.name));
+        }
+    }
+    // BLEND: see-through only where the alpha is really partial; leaf cards stay cut out.
+    for (ImportedMaterial& mat : model.materials) {
+        if (mat.alphaMode != ImportedMaterial::AlphaMode::Blend) continue;
+        mat.translucent = mat.baseColor.a < 0.999f;
+        if (!mat.translucent && mat.baseColorHasAlpha && !model.images[static_cast<std::size_t>(mat.baseColorTexture)].cutOutBackground) {
+            auto decoded = decodeImage(model.images[static_cast<std::size_t>(mat.baseColorTexture)].encoded);
+            mat.translucent = decoded && partialAlphaShare(*decoded) > 0.3f;
+        }
+    }
+
+    // Extent of the whole model.
+    {
+        std::vector<glm::mat4> world(model.nodes.size());
+        bool any = false;
+        glm::vec3 lo(std::numeric_limits<float>::max()), hi(std::numeric_limits<float>::lowest());
+        for (std::size_t i = 0; i < model.nodes.size(); ++i) {
+            const ImportedNode& n = model.nodes[i];
+            const glm::mat4 local = glm::translate(glm::mat4(1.0f), n.translation) * glm::mat4_cast(n.rotation) *
+                                    glm::scale(glm::mat4(1.0f), n.scale);
+            world[i] = n.parent >= 0 ? world[static_cast<std::size_t>(n.parent)] * local : local;
+            if (n.mesh < 0 || static_cast<std::size_t>(n.mesh) >= model.meshParts.size()) continue;
+            for (int part : model.meshParts[static_cast<std::size_t>(n.mesh)]) {
+                if (part < 0 || static_cast<std::size_t>(part) >= model.meshes.size()) continue;
+                const Aabb& b = model.meshes[static_cast<std::size_t>(part)].data.bounds;
+                for (int c = 0; c < 8; ++c) {
+                    const glm::vec3 corner((c & 1) ? b.max.x : b.min.x, (c & 2) ? b.max.y : b.min.y, (c & 4) ? b.max.z : b.min.z);
+                    const glm::vec3 p(world[i] * glm::vec4(corner, 1.0f));
+                    lo = glm::min(lo, p);
+                    hi = glm::max(hi, p);
+                    any = true;
+                }
+            }
+        }
+        if (any) {
+            model.boundsMin = lo;
+            model.boundsMax = hi;
+        }
+    }
+}
+
 Result<ImportedModel> importGltf(const std::filesystem::path& file) {
     auto parsed = parse(file, true);
     if (!parsed) return std::unexpected(parsed.error());
@@ -460,88 +546,10 @@ Result<ImportedModel> importGltf(const std::filesystem::path& file) {
     };
     for (const cgltf_node* root : roots) visit(visit, root, -1);
 
-    // Base colour maps with transparency (PNG colour type 4/6, or a tRNS chunk), without decoding.
-    auto pngHasAlpha = [](const std::vector<std::byte>& png) {
-        static constexpr unsigned char kSignature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
-        if (png.size() < 33 || std::memcmp(png.data(), kSignature, 8) != 0) return false;
-        const auto byte = [&](std::size_t i) { return static_cast<unsigned char>(png[i]); };
-        const unsigned colorType = byte(25);
-        if (colorType == 4 || colorType == 6) return true;
-        for (std::size_t at = 8; at + 8 <= png.size();) {  // chunks up to the image data
-            const std::size_t length = (std::size_t{byte(at)} << 24) | (std::size_t{byte(at + 1)} << 16) |
-                                       (std::size_t{byte(at + 2)} << 8) | byte(at + 3);
-            const std::string type(reinterpret_cast<const char*>(png.data()) + at + 4, 4);
-            if (type == "tRNS") return true;
-            if (type == "IDAT" || type == "IEND") return false;
-            at += 12 + length;
-        }
-        return false;
-    };
-    // Foliage maps that lost their alpha (common in SketchUp models): cut out the background
-    // (white, or the flat streaks exporters pad with). Only for leaf-like names and only when
-    // the map's border is background, so walls, snow or paper keep their colour.
-    auto foliageName = [](std::string text) {
-        for (char& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        for (const char* word : {"leaf", "leaves", "foliage", "grass", "plant", "tree", "branch", "fern", "bush", "ivy",
-                                 "flower", "hedge", "palm", "needle", "shrub", "twig", "vine"}) {
-            if (text.find(word) != std::string::npos) return true;
-        }
-        return false;
-    };
-    auto paddedBackground = [](const std::vector<std::byte>& encoded) {
-        auto decoded = decodeImage(encoded);
-        if (!decoded) return false;
-        const float share = findPaddedBackground(*decoded);
-        return share > 0.05f && share < 0.95f;  // some background, and something left
-    };
-    for (ImportedMaterial& mat : model.materials) {
-        if (mat.baseColorTexture < 0 || static_cast<std::size_t>(mat.baseColorTexture) >= model.images.size()) continue;
-        ImportedImage& image = model.images[static_cast<std::size_t>(mat.baseColorTexture)];
-        mat.baseColorHasAlpha = pngHasAlpha(image.encoded);
-        if (!mat.baseColorHasAlpha && mat.alphaMode == ImportedMaterial::AlphaMode::Opaque &&
-            (foliageName(mat.name) || foliageName(image.name)) && paddedBackground(image.encoded)) {
-            image.cutOutBackground = true;
-            mat.baseColorHasAlpha = true;  // cut out like a map with alpha
-            model.warnings.push_back(std::format("material '{}': leaf map without alpha, background cut out", mat.name));
-        }
-    }
-    // BLEND: see-through only where the alpha is really partial; leaf cards stay cut out.
-    for (ImportedMaterial& mat : model.materials) {
-        if (mat.alphaMode != ImportedMaterial::AlphaMode::Blend) continue;
-        mat.translucent = mat.baseColor.a < 0.999f;
-        if (!mat.translucent && mat.baseColorHasAlpha && !model.images[static_cast<std::size_t>(mat.baseColorTexture)].cutOutBackground) {
-            auto decoded = decodeImage(model.images[static_cast<std::size_t>(mat.baseColorTexture)].encoded);
-            mat.translucent = decoded && partialAlphaShare(*decoded) > 0.3f;
-        }
-    }
+    finalizeImportedModel(model);
 
-    // Extent of the whole model, and the units it really uses.
+    // The units it really uses.
     {
-        std::vector<glm::mat4> world(model.nodes.size());
-        bool any = false;
-        glm::vec3 lo(std::numeric_limits<float>::max()), hi(std::numeric_limits<float>::lowest());
-        for (std::size_t i = 0; i < model.nodes.size(); ++i) {
-            const ImportedNode& n = model.nodes[i];
-            const glm::mat4 local = glm::translate(glm::mat4(1.0f), n.translation) * glm::mat4_cast(n.rotation) *
-                                    glm::scale(glm::mat4(1.0f), n.scale);
-            world[i] = n.parent >= 0 ? world[static_cast<std::size_t>(n.parent)] * local : local;
-            if (n.mesh < 0 || static_cast<std::size_t>(n.mesh) >= model.meshParts.size()) continue;
-            for (int part : model.meshParts[static_cast<std::size_t>(n.mesh)]) {
-                if (part < 0 || static_cast<std::size_t>(part) >= model.meshes.size()) continue;
-                const Aabb& b = model.meshes[static_cast<std::size_t>(part)].data.bounds;
-                for (int c = 0; c < 8; ++c) {
-                    const glm::vec3 corner((c & 1) ? b.max.x : b.min.x, (c & 2) ? b.max.y : b.min.y, (c & 4) ? b.max.z : b.min.z);
-                    const glm::vec3 p(world[i] * glm::vec4(corner, 1.0f));
-                    lo = glm::min(lo, p);
-                    hi = glm::max(hi, p);
-                    any = true;
-                }
-            }
-        }
-        if (any) {
-            model.boundsMin = lo;
-            model.boundsMax = hi;
-        }
         // SketchUp works in inches; its Collada (and models converted from it, e.g. on Sketchfab)
         // keep those numbers as metres.
         const std::string generator = data.asset.generator != nullptr ? data.asset.generator : "";

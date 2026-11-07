@@ -219,8 +219,8 @@ EditorWindow::EditorWindow(app::AppContext& app, Project project, QWidget* paren
     client_->onAcceptsDrop = [](const QList<QUrl>& urls) {
         return std::ranges::any_of(urls, [](const QUrl& url) {
             const QString suffix = QFileInfo(url.toLocalFile()).suffix().toLower();
-            return url.isLocalFile() && (suffix == QLatin1String("lmat") || suffix == QLatin1String("glb") ||
-                                         suffix == QLatin1String("gltf") || suffix == QLatin1String("lprefab") ||
+            return url.isLocalFile() && (suffix == QLatin1String("lmat") || isModelFile(app::toPath(url.toLocalFile())) ||
+                                         suffix == QLatin1String("lprefab") ||
                                          suffix == QLatin1String("hdr") || isScriptFile(url.toLocalFile()));
         });
     };
@@ -867,7 +867,7 @@ void EditorWindow::newScene() {
 
 void EditorWindow::importModelDialog() {
     const QStringList files = QFileDialog::getOpenFileNames(this, tr("Import Model"), QString(),
-                                                            tr("glTF 2.0 models (*.glb *.gltf)"));
+                                                            tr("Models (*.glb *.gltf *.fbx *.obj)"));
     if (!files.isEmpty()) importModels(files, app::toQString(project_.contentDir() / "Models"));
 }
 
@@ -1044,7 +1044,7 @@ entt::entity EditorWindow::addModelToScene(const QString& absolutePath, std::opt
 
 std::optional<std::string> EditorWindow::pickMeshAsset(QWidget* parent) {
     QString file = QFileDialog::getOpenFileName(parent, tr("Choose Mesh"), app::toQString(project_.contentDir()),
-                                                tr("glTF 2.0 models (*.glb *.gltf)"));
+                                                tr("Models (*.glb *.gltf *.fbx *.obj)"));
     if (file.isEmpty()) return std::nullopt;
     std::filesystem::path path = std::filesystem::absolute(app::toPath(file));
     std::string relative = project_.relativePath(path);
@@ -1443,7 +1443,7 @@ std::optional<std::string> EditorWindow::pickHdrAsset(QWidget* parent) {
 std::optional<std::string> EditorWindow::pickTextureAsset(QWidget* parent) {
     const QString file = QFileDialog::getOpenFileName(
         parent, tr("Choose Texture"), app::toQString(project_.contentDir()),
-        tr("Images (*.png *.jpg *.jpeg *.tga *.bmp *.webp *.ktx2);;Images inside a glTF model (*.glb *.gltf)"));
+        tr("Images (*.png *.jpg *.jpeg *.tga *.bmp *.webp *.ktx2);;Images inside a model (*.glb *.gltf *.fbx *.obj)"));
     if (file.isEmpty()) return std::nullopt;
     std::filesystem::path path = std::filesystem::absolute(app::toPath(file));
     const bool model = isModelFile(path);

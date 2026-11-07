@@ -150,6 +150,14 @@ Rozmycie ruchu (z prędkości), automatyczna ekspozycja (histogram, compute), le
 - **Biblioteki:** libwebp (BSD), basis_universal transcoder (Apache-2.0), tinyexr (BSD).
 
 ### 2.2 Import OBJ i FBX (M)
+- **Stan: zrobione.** Oba formaty przez ufbx 0.23.1 (czyta też OBJ z `.mtl`, więc bez tinyobjloadera):
+  `FbxImporter.cpp` wypełnia `ImportedModel` jak glTF (siatki dzielone per materiał, węzły, skiny z
+  `geometry_to_bone` jako inverse bind, stosy animacji wypiekane do kluczy liniowych 30/s). Osie na
+  +Y (korzeń z obrotem, gdy plik ma Z w górę), jednostki w `unitScale` (FBX w cm: 0,01). Tekstury
+  osadzone albo szukane obok modelu (ścieżki z cudzego dysku po nazwie). Wspólne `finalizeImportedModel`
+  (alfa, przezroczystość, granice), `importModel`/`modelDependencies` wybierają format; import kopiuje
+  `.mtl` i mapy, sesja współpracy dociąga je od hosta. Brakuje: osobnych map roughness/metalness
+  (FBX), materiałów per instancja węzła, morph targetów.
 - **Gdzie:** `engine/assets/AssetImport.cpp` (`isModelFile` dziś tylko .glb/.gltf), nowe
   `ObjImporter.cpp` i `FbxImporter.cpp` wypełniające ten sam `ImportedModel`.
 - **Biblioteki:** tinyobjloader (MIT), ufbx (MIT, jeden plik; materiały, szkielety, animacje).

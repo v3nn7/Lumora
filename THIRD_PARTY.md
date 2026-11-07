@@ -25,6 +25,7 @@ licences compatible with it. Versions are pinned (and hash-verified) in `cmake/`
 | Basis Universal 2.50 (transcoder) | KTX2 / Basis textures | Apache-2.0 |
 | Zstandard (decoder, bundled with Basis Universal) | KTX2 supercompression | BSD-3-Clause |
 | tinyexr 1.0.13 | OpenEXR environment maps | BSD-3-Clause |
+| ufbx 0.23.1 | FBX and OBJ import | MIT or public domain |
 | Monocypher | Ed25519 signature checks (editor installer), XChaCha20-Poly1305 (session datagrams) | BSD-2-Clause or CC0 |
 | micro-ecc | ECDSA P-256 for the session host's TLS certificate | BSD-2-Clause |
 | wayland-protocols (pointer-constraints, relative-pointer XML) | Wayland pointer lock | MIT |

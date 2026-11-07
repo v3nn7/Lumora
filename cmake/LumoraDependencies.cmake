@@ -260,3 +260,18 @@ lumora_fetch_files(tinyexr https://raw.githubusercontent.com/syoyo/tinyexr/v1.0.
 add_library(lumora_tinyexr INTERFACE)
 target_include_directories(lumora_tinyexr SYSTEM INTERFACE ${tinyexr_SOURCE_DIR})
 target_link_libraries(lumora_tinyexr INTERFACE lumora_miniz)
+
+# ufbx 0.23.1 (MIT or public domain): FBX and Wavefront OBJ (+ MTL) import. One C file.
+lumora_fetch_files(ufbx https://raw.githubusercontent.com/ufbx/ufbx/v0.23.1
+    LICENSE 0dd48ebadf52273c736256325c8f078c03c8bb4facee22a4122de0ad3f615391
+    ufbx.h f787be529af577efc04f3e3e735844a08556718dbb613d1211c2b313d72895dc
+    ufbx.c 4a956c26a708e40d82ecb0aeaee54da709d5ba7c144c9642174970059bda7e1d)
+add_library(lumora_ufbx STATIC ${ufbx_SOURCE_DIR}/ufbx.c)
+target_include_directories(lumora_ufbx SYSTEM PUBLIC ${ufbx_SOURCE_DIR})
+set_target_properties(lumora_ufbx PROPERTIES POSITION_INDEPENDENT_CODE ON C_STANDARD 99)
+if(MSVC)
+    target_compile_options(lumora_ufbx PRIVATE /W0)
+else()
+    target_compile_options(lumora_ufbx PRIVATE -w)
+    target_link_libraries(lumora_ufbx PRIVATE m)
+endif()

@@ -40,14 +40,17 @@ QImage readPreview(const QString& path) {
     return full.scaled(kPreviewSize, kPreviewSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);  // a copy
 }
 bool isRendered(const QString& s) {
-    return s == QLatin1String("glb") || s == QLatin1String("gltf") || s == QLatin1String("lprefab") ||
+    return s == QLatin1String("glb") || s == QLatin1String("gltf") || s == QLatin1String("fbx") || s == QLatin1String("obj") ||
+           s == QLatin1String("lprefab") ||
            s == QLatin1String("lmat");
 }
 
 QColor typeColor(const QString& s) {
     if (s == QLatin1String("cpp") || s == QLatin1String("cc") || s == QLatin1String("cxx")) return {0x4f, 0x86, 0xe8};
     if (s == QLatin1String("h") || s == QLatin1String("hpp") || s == QLatin1String("inl")) return {0x9b, 0x6b, 0xe3};
-    if (s == QLatin1String("glb") || s == QLatin1String("gltf")) return {0xe8, 0x8a, 0x3c};
+    if (s == QLatin1String("glb") || s == QLatin1String("gltf") || s == QLatin1String("fbx") || s == QLatin1String("obj")) {
+        return {0xe8, 0x8a, 0x3c};
+    }
     if (isImage(s)) return {0x3f, 0xb6, 0x75};
     if (s == QLatin1String("hdr") || s == QLatin1String("exr")) return {0xe0, 0xb3, 0x3a};
     if (s == QLatin1String("wav") || s == QLatin1String("mp3") || s == QLatin1String("flac") || s == QLatin1String("ogg")) {

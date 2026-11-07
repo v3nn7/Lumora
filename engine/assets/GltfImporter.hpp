@@ -113,7 +113,7 @@ struct NodePose {
 /// (indexed like ImportedModel::nodes); properties no channel animates are left untouched.
 void sampleAnimation(const ImportedAnimation& animation, float time, std::vector<NodePose>& poses);
 
-/// A loaded glTF 2.0 asset (.gltf with external or embedded buffers, or .glb).
+/// A loaded model: glTF 2.0 (.gltf with external or embedded buffers, or .glb), FBX or OBJ.
 /// Coordinate conventions match Lumora (right-handed, +Y up, metres, CCW front faces).
 struct ImportedModel {
     std::vector<ImportedMesh> meshes;  // [0, glTF mesh count): first material of each glTF mesh
@@ -134,6 +134,11 @@ struct ImportedModel {
 };
 
 [[nodiscard]] Result<ImportedModel> importGltf(const std::filesystem::path& file);
+
+/// What every importer does once meshes, materials, images and nodes are filled in: base colour
+/// maps with alpha (and leaf maps without it) cut out, BLEND materials see-through when their
+/// alpha really is partial, and the model's bounds.
+void finalizeImportedModel(ImportedModel& model);
 
 /// The alpha cutoff a model's material asks for: its MASK cutoff, 0.5 for BLEND or a base map
 /// with transparency, 0 = opaque.

@@ -1,5 +1,6 @@
 #include "assets/AssetImport.hpp"
 
+#include "assets/FbxImporter.hpp"
 #include "assets/GltfImporter.hpp"
 
 #include <algorithm>
@@ -9,10 +10,36 @@
 
 namespace lumora {
 
-bool isModelFile(const std::filesystem::path& file) {
+namespace {
+
+std::string lowerExtension(const std::filesystem::path& file) {
     std::string ext = file.extension().string();
     std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return ext;
+}
+
+bool isGltf(const std::filesystem::path& file) {
+    const std::string ext = lowerExtension(file);
     return ext == ".glb" || ext == ".gltf";
+}
+
+} // namespace
+
+bool isModelFile(const std::filesystem::path& file) {
+    const std::string ext = lowerExtension(file);
+    return ext == ".glb" || ext == ".gltf" || ext == ".fbx" || ext == ".obj";
+}
+
+Result<ImportedModel> importModel(const std::filesystem::path& file) {
+    if (isGltf(file)) return importGltf(file);
+    if (isModelFile(file)) return importFbx(file);
+    return makeError("'{}' is not a model (.gltf, .glb, .fbx, .obj)", file.filename().string());
+}
+
+Result<std::vector<std::filesystem::path>> modelDependencies(const std::filesystem::path& file) {
+    if (isGltf(file)) return gltfDependencies(file);
+    if (isModelFile(file)) return fbxDependencies(file);
+    return makeError("'{}' is not a model (.gltf, .glb, .fbx, .obj)", file.filename().string());
 }
 
 Result<std::filesystem::path> importFile(const std::filesystem::path& source,
@@ -38,10 +65,10 @@ Result<std::filesystem::path> importModelFile(const std::filesystem::path& sourc
         return makeError("'{}' is not a file", source.string());
     }
     if (!isModelFile(source)) {
-        return makeError("'{}' is not a glTF model (.gltf/.glb)", source.filename().string());
+        return makeError("'{}' is not a model (.gltf, .glb, .fbx, .obj)", source.filename().string());
     }
     // Validate before copying anything.
-    auto deps = gltfDependencies(source);
+    auto deps = modelDependencies(source);
     if (!deps) return std::unexpected(deps.error());
 
     std::filesystem::create_directories(destinationDir, ec);

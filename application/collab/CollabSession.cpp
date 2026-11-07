@@ -2,6 +2,7 @@
 
 #include "collab/CollabClient.hpp"
 #include "collab/Protocol.hpp"
+#include "assets/FbxImporter.hpp"
 #include "core/Log.hpp"
 #include "scene/SceneSerializer.hpp"
 
@@ -126,6 +127,15 @@ void CollabSession::onAssetReceived(const QString& path) {
             }
             requestMissing(deps);
         }
+    } else if (const QString suffix = QFileInfo(path).suffix().toLower();
+               suffix == QLatin1String("fbx") || suffix == QLatin1String("obj") || suffix == QLatin1String("mtl")) {
+        // FBX and OBJ read textures (and an OBJ its .mtl, which names more) from next to them.
+        const QString folder = QFileInfo(path).path();
+        std::vector<std::string> deps;
+        for (const std::filesystem::path& dep : fbxReferences(std::filesystem::path(QDir(root_).filePath(path).toStdU16String()))) {
+            deps.push_back(QDir::cleanPath(folder + QLatin1Char('/') + QString::fromStdU16String(dep.generic_u16string())).toStdString());
+        }
+        requestMissing(deps);
     }
     emit assetsArrived();
 }

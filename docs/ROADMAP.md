@@ -216,6 +216,16 @@ i `volume` (z 1.2), drugi zestaw UV, morph targets (dziś pomijane). Nowe pola w
 ## Faza 3: gameplay i narzędzia
 
 ### 3.1 UI gry (L)
+- **Stan: zrobione.** Obrazki w HUD (tekstury projektu, paczki według tekstury), tekst z pól
+  odległości SDF tworzonych na żądanie (wbudowany DejaVu Sans: łacina z rozszerzeniami, greka,
+  cyrylica; czcionki projektu .ttf/.otf; brakujące znaki z wbudowanej), przycinanie w HUD.
+  Dokumenty UI `.lui` (`runtime/UiDocument`, `UiScreens`): drzewo widżetów z kotwicami, kolumnami,
+  wierszami, siatką, przewijaniem i tekstami `@klucz` z lokalizacji; skrypty (ABI 5: C++, Lua, węzły)
+  otwierają je i pytają o widżety po nazwie. Edytor UI (dok „UI Editor”): drzewo, płótno w wybranej
+  rozdzielczości z przeciąganiem i uchwytem rozmiaru, presety kotwic zachowujące położenie, cofanie,
+  zapis. Wiązania: Lua `audioBus`, węzły UI Checkbox / UI Slider, parametry i stan animatora, szyny audio.
+  Brakuje: CJK we wbudowanej czcionce (działa z czcionką projektu), przeładowania otwartego `.lui`
+  w działającej grze po zapisie.
 Jest: `runtime/GameUi` (przycisk, pole wyboru, suwak, panel, etykieta, nawigacja padem),
 `runtime/GameMenu`. Brakuje:
 - **Obrazki** w HUD: `HudCanvas::images` z indeksem tekstury bindless; potok HUD ma już tryb

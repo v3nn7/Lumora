@@ -1214,3 +1214,78 @@ TEST(SceneIcons, LightsCamerasAndSoundsGetIconsThatPickTheirEntity) {
     icons.build(scene, {0.0f, 0.0f, 0.2f}, {}, 2.0f, close);
     EXPECT_EQ(close.sprites.size(), 2u) << "only the camera's, the lamp is too close";
 }
+
+#include "editor/UiEditorPanel.hpp"
+#include "runtime/UiDocument.hpp"
+
+TEST_F(EditorUiTest, UiEditorBuildsMovesAnchorsAndSavesDocuments) {
+    editor::EditorWindow* editor = openEditor();
+    ASSERT_NE(editor, nullptr);
+    auto* browser = editor->findChild<editor::ContentBrowserPanel*>();
+    auto* panel = editor->findChild<editor::UiEditorPanel*>();
+    ASSERT_NE(browser, nullptr);
+    ASSERT_NE(panel, nullptr);
+    const QString ui = app::toQString(editor->project().contentDir() / "UI");
+    QDir().mkpath(ui);
+    browser->navigate(ui);
+    const QString file = browser->createUiDocument(QStringLiteral("MainMenu"));
+    ASSERT_FALSE(file.isEmpty());
+    processEvents();
+    EXPECT_EQ(panel->file(), file) << "opened in the UI Editor";
+
+    // A panel with a column of two buttons.
+    const QString menu = panel->addWidget(UiWidget::Type::Panel, QStringLiteral(""));
+    ASSERT_EQ(menu, QStringLiteral("0"));
+    panel->editSelected([](UiWidget& w) {
+        w.name = "Menu";
+        w.layout = UiWidget::Layout::Vertical;
+    });
+    const QString play = panel->addWidget(UiWidget::Type::Button, menu);
+    const QString quit = panel->addWidget(UiWidget::Type::Button, menu);
+    EXPECT_EQ(play, QStringLiteral("0/0"));
+    EXPECT_EQ(quit, QStringLiteral("0/1"));
+    EXPECT_EQ(panel->document().root.children[0].children[1].name, "Button2") << "unique names";
+    EXPECT_EQ(panel->moveInParent(quit, -1), QStringLiteral("0/0"));
+    EXPECT_EQ(panel->document().root.children[0].children[0].name, "Button2");
+
+    // Dragging the panel moves it; anchoring it to the centre keeps it where it is.
+    panel->select(menu);
+    const glm::vec4 before = [&] {
+        for (const UiPlaced& p : panel->layout()) {
+            if (p.path == "0") return p.rect;
+        }
+        return glm::vec4(0.0f);
+    }();
+    panel->moveWidget(menu, {100.0f, 50.0f});
+    panel->setAnchors(menu, {0.5f, 0.5f}, {0.5f, 0.5f});
+    glm::vec4 after(0.0f);
+    for (const UiPlaced& p : panel->layout()) {
+        if (p.path == "0") after = p.rect;
+    }
+    EXPECT_EQ(after, before + glm::vec4(100.0f, 50.0f, 0.0f, 0.0f));
+    EXPECT_EQ(panel->document().root.children[0].anchorMin, glm::vec2(0.5f));
+    // At another resolution the centred panel stays centred.
+    panel->setResolution({1920.0f, 1080.0f});
+    for (const UiPlaced& p : panel->layout()) {
+        if (p.path == "0") {
+            EXPECT_NEAR(p.rect.x + p.rect.z * 0.5f - 960.0f, after.x + after.z * 0.5f - 640.0f, 0.01f);
+        }
+    }
+    panel->setResolution({1280.0f, 720.0f});
+    EXPECT_FALSE(panel->canvasImage().isNull());
+
+    // Undo and redo, then save and read the file back.
+    panel->undo();
+    EXPECT_EQ(panel->document().root.children[0].anchorMin, glm::vec2(0.0f));
+    panel->redo();
+    EXPECT_EQ(panel->document().root.children[0].anchorMin, glm::vec2(0.5f));
+    EXPECT_TRUE(panel->isDirty());
+    ASSERT_TRUE(panel->save());
+    EXPECT_FALSE(panel->isDirty());
+    auto saved = loadUiDocument(app::toPath(file));
+    ASSERT_TRUE(saved.has_value()) << saved.error().message;
+    EXPECT_EQ(uiToJson(*saved), uiToJson(panel->document()));
+    EXPECT_TRUE(panel->removeWidget(QStringLiteral("0/1")));
+    EXPECT_EQ(panel->document().root.children[0].children.size(), 1u);
+    EXPECT_FALSE(panel->removeWidget(QString()));
+}

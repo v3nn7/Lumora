@@ -1,6 +1,7 @@
 #include "editor/ContentBrowserPanel.hpp"
 
 #include "assets/MaterialGraph.hpp"
+#include "runtime/UiDocument.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -278,6 +279,8 @@ void ContentBrowserPanel::activate(const QString& path) {
         emit addModelRequested(path);
     } else if (isHdr(info)) {
         emit importRequested({path}, current_);
+    } else if (info.suffix() == QLatin1String("lui")) {
+        emit openUiRequested(path);
     } else if (info.suffix() == QLatin1String("lmgraph")) {
         emit openMaterialGraphRequested(path);
     } else if (isMaterial(info)) {
@@ -298,6 +301,7 @@ void ContentBrowserPanel::populateNewMenu(QMenu& menu) {
     menu.addAction(app::theme::icon(QStringLiteral("scene")), tr("Scene…"), this, &ContentBrowserPanel::newScene);
     menu.addAction(app::theme::icon(QStringLiteral("sphere")), tr("Material…"), this, &ContentBrowserPanel::newMaterial);
     menu.addAction(app::theme::icon(QStringLiteral("sphere")), tr("Material Graph…"), this, &ContentBrowserPanel::newMaterialGraph);
+    menu.addAction(app::theme::icon(QStringLiteral("ui")), tr("UI Document…"), this, &ContentBrowserPanel::newUiDocument);
     menu.addAction(app::theme::icon(QStringLiteral("animation")), tr("Timeline…"), this, &ContentBrowserPanel::newTimeline);
     menu.addAction(app::theme::icon(QStringLiteral("hierarchy")), tr("Visual Script…"), this, &ContentBrowserPanel::newVisualScript);
     menu.addAction(app::theme::icon(QStringLiteral("code")), tr("Lua Script…"), this, &ContentBrowserPanel::newLuaScript);
@@ -496,6 +500,22 @@ QString ContentBrowserPanel::createMaterialGraph(QString name) {
     const QString path = QDir(current_).filePath(name);
     if (!writeNewFile(path, QByteArray::fromStdString(defaultMaterialGraph().dump(2) + "\n"))) return {};
     emit openMaterialGraphRequested(path);
+    return path;
+}
+
+void ContentBrowserPanel::newUiDocument() {
+    const QString name = askFileName(this, tr("New UI Document"), tr("Screen name"), tr("MainMenu"), QStringLiteral(".lui"));
+    if (name.isEmpty()) return;
+    if (createUiDocument(name).isEmpty()) {
+        QMessageBox::warning(this, tr("New UI Document"), tr("Could not create %1 (does it exist already?).").arg(name));
+    }
+}
+
+QString ContentBrowserPanel::createUiDocument(QString name) {
+    if (!name.endsWith(QLatin1String(".lui"))) name += QStringLiteral(".lui");
+    const QString path = QDir(current_).filePath(name);
+    if (!writeNewFile(path, QByteArray::fromStdString(uiToJson(defaultUiDocument()).dump(2) + "\n"))) return {};
+    emit openUiRequested(path);
     return path;
 }
 

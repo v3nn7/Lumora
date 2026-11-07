@@ -204,6 +204,8 @@ private:
     QDockWidget* graphDock_ = nullptr;
     class GraphEditorPanel* materialGraph_ = nullptr;  // material graphs (.lmgraph)
     QDockWidget* materialGraphDock_ = nullptr;
+    class UiEditorPanel* uiEditor_ = nullptr;  // game UI documents (.lui)
+    QDockWidget* uiEditorDock_ = nullptr;
     QByteArray defaultLayout_;
 
     QAction* newScene_ = nullptr;

@@ -12,6 +12,7 @@
 #include "editor/ConsolePanel.hpp"
 #include "editor/TimelinePanel.hpp"
 #include "editor/GraphEditorPanel.hpp"
+#include "editor/UiEditorPanel.hpp"
 #include "runtime/VisualScript.hpp"
 #include "editor/CodeEditorPanel.hpp"
 #include "editor/ContentBrowserPanel.hpp"
@@ -494,6 +495,14 @@ void EditorWindow::buildDocks() {
         }
         if (!others.isEmpty()) importModels(others, {});
     });
+    auto pickAsset = [this](QWidget* parent, const FieldDesc& field) -> std::optional<std::string> {
+        // UI Editor fields
+        if (field.id == "Picture") return pickTextureAsset(parent);
+        if (field.id.starts_with("Font")) return pickContentFile(parent, tr("Choose Font"), tr("Fonts (*.ttf *.otf)"));
+        return std::nullopt;
+    };
+    uiEditor_ = new UiEditorPanel(app::toQString(project_.rootDir()), pickAsset);
+    uiEditorDock_ = makeDock(this, tr("UI Editor"), QStringLiteral("dock.uiEditor"), QStringLiteral("ui"), uiEditor_);
     inspector_ = new InspectorPanel(ctx_, [this](QWidget* parent, const FieldDesc& field) {
                      if (field.id == "skyHdr") return pickHdrAsset(parent);
                      if (field.id == "audioClip") return pickAudioAsset(parent);
@@ -552,6 +561,8 @@ void EditorWindow::buildDocks() {
     tabifyDockWidget(contentDock, graphDock_);
     addDockWidget(Qt::BottomDockWidgetArea, materialGraphDock_);
     tabifyDockWidget(contentDock, materialGraphDock_);
+    addDockWidget(Qt::BottomDockWidgetArea, uiEditorDock_);
+    tabifyDockWidget(contentDock, uiEditorDock_);
     contentDock->raise();
     resizeDocks({hierarchy, inspector}, {280, 360}, Qt::Horizontal);
     resizeDocks({contentDock}, {230}, Qt::Vertical);
@@ -594,6 +605,14 @@ void EditorWindow::buildDocks() {
         if (materialGraph_->open(path)) revealDock(materialGraphDock_);
     };
     connect(content, &ContentBrowserPanel::openMaterialGraphRequested, this, openMaterialGraph);
+    connect(content, &ContentBrowserPanel::openUiRequested, this, [this](const QString& path) {
+        if (uiEditor_->isDirty() &&
+            QMessageBox::question(this, tr("UI Editor"), tr("Save the changes to %1?").arg(QFileInfo(uiEditor_->file()).fileName())) ==
+                QMessageBox::Yes) {
+            uiEditor_->save();
+        }
+        if (uiEditor_->open(path)) revealDock(uiEditorDock_);
+    });
     connect(inspector_, &InspectorPanel::openMaterialGraphRequested, this, openMaterialGraph);
     connect(content, &ContentBrowserPanel::assetSelected, inspector_, &InspectorPanel::showAsset);
     connect(content, &ContentBrowserPanel::applyMaterialRequested, this, [this](const QString& path) {
@@ -1545,6 +1564,13 @@ bool EditorWindow::maybeSave() {
             QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
         if (answer == QMessageBox::Cancel) return false;
         if (answer == QMessageBox::Save && !graph_->save()) return false;
+    }
+    if (uiEditor_ != nullptr && uiEditor_->isDirty()) {
+        const auto answer = QMessageBox::warning(
+            this, tr("Unsaved UI document"), tr("Save changes to '%1'?").arg(QFileInfo(uiEditor_->file()).fileName()),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+        if (answer == QMessageBox::Cancel) return false;
+        if (answer == QMessageBox::Save && !uiEditor_->save()) return false;
     }
     if (!ctx_.isDirty()) return true;
     const auto answer = QMessageBox::warning(

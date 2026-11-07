@@ -312,6 +312,7 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     taa_ = ctx_.createComputePipeline("taa.comp");
     vsmMark_ = ctx_.createComputePipeline("vsm.mark.comp");
     motionBlur_ = ctx_.createComputePipeline("motion.blur.comp");
+    contactShadows_ = ctx_.createComputePipeline("contact.shadows.comp");
     exposureHistogram_ = ctx_.createComputePipeline("exposure.histogram.comp");
     exposureAdapt_ = ctx_.createComputePipeline("exposure.adapt.comp");
     fogInject_ = ctx_.createComputePipeline("fog.inject.comp", "CSInject");
@@ -1583,6 +1584,32 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         stats.ambientOcclusion = true;
     }
 
+    // Contact shadows towards the sun (contact_shadows.hlsl), read by the opaque pass.
+    RGImage contact{};
+    if (settings.contactShadows && haveSun && contactShadows_ && !draws.empty() && extent.width >= 8 && extent.height >= 8) {
+        contact = graph.createImage("ContactShadows", {kAoFormat, extent.width, extent.height, true});
+        nvrhi::IDescriptorTable* bindlessTable = ctx_.bindless().table();
+        graph.addComputePass(
+            "ContactShadows",
+            [&](PassBuilder& b) {
+                b.writeStorage(contact);
+                b.sample(depth);
+            },
+            // The jitter changes between frames only when TAA blends them (captures stay repeatable).
+            [this, contact, depth, bindlessTable, extent, length = std::max(settings.contactShadowLength, 0.01f),
+             frame = settings.temporalAntiAliasing ? taaFrame_ : 0u](PassContext& ctx) {
+                ctx.cmd->setComputeState(nvrhi::ComputeState().setPipeline(contactShadows_).addBindingSet(ctx.frameBindings())
+                                             .addBindingSet(bindlessTable).addBindingSet(ctx.storageBindings()));
+                PushConstants pc;
+                pc.index0 = ctx.bindlessIndex(depth);
+                pc.param0 = length;
+                pc.param1 = static_cast<float>(frame % 1024u);
+                push(ctx.cmd, pc);
+                ctx.cmd->dispatch((extent.width + 7) / 8, (extent.height + 7) / 8, 1);
+            });
+        stats.contactShadows = true;
+    }
+
     RGImage fogVolume{};  // integrated volumetric fog, read by the passes that apply fog
     if (volumetricFog) {
         const RGImage injected = graph.createImage("FogInjected", {kSurfaceFormat, froxels.x, froxels.y, true, froxels.z});
@@ -1660,10 +1687,11 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             if (localShadows) b.sample(localAtlas);
             if (ambientOcclusion) b.sample(ao);
             if (fogVolume.valid()) b.sample(fogVolume);
+            if (contact.valid()) b.sample(contact);
             b.recordInParallel(parallelOpaque);
         },
         [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, shadows, shadowMap, virtualShadows, vsmPool, vsmPageTable, localShadows, localAtlas, ambientOcclusion, ao,
-         fogVolume, debugCascades = settings.debugCascades,
+         fogVolume, contact, debugCascades = settings.debugCascades,
          draws = std::move(draws)](PassContext& ctx) {
             if (draws.empty()) return;
             const std::uint32_t shadowIndex = virtualShadows ? ctx.bindlessIndex(vsmPool) : shadows ? ctx.bindlessIndex(shadowMap) : 0u;
@@ -1671,8 +1699,9 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             const std::uint32_t aoIndex = ambientOcclusion ? ctx.bindlessIndex(ao) : 0u;
             const float localAtlasIndex = std::bit_cast<float>(localShadows ? ctx.bindlessIndex(localAtlas) : 0u);
             const float fogIndex = std::bit_cast<float>(fogVolume.valid() ? ctx.bindlessIndex(fogVolume) : 0u);
-            const std::uint32_t flags =
-                (shadows ? 1u : 0u) | (shadows && debugCascades ? 2u : 0u) | (ambientOcclusion ? 4u : 0u);
+            const float contactIndex = std::bit_cast<float>(contact.valid() ? ctx.bindlessIndex(contact) : 0u);
+            const std::uint32_t flags = (shadows ? 1u : 0u) | (shadows && debugCascades ? 2u : 0u) | (ambientOcclusion ? 4u : 0u) |
+                                        (contact.valid() ? 8u : 0u);
             // Draws are sorted by mesh, so each chunk rebinds buffers only where meshes change.
             ctx.recordParallel(draws.size(), 64, [&](nvrhi::ICommandList* cmd, std::size_t begin, std::size_t end) {
                 nvrhi::GraphicsState state = stateFor(opaque_, ctx);
@@ -1695,6 +1724,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                     pc.param0 = localAtlasIndex;
                     pc.param1 = pageTableIndex;
                     pc.param2 = fogIndex;
+                    pc.param3 = contactIndex;
                     push(cmd, pc);
                     cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount).setInstanceCount(d.count));
                 }

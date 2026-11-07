@@ -57,6 +57,10 @@ struct RenderSettings {
     /// Passes with at least this many draws record on several threads (secondary command
     /// buffers); fewer are cheaper to record on one. 0 = always, UINT32_MAX = never.
     std::uint32_t parallelRecordingMinDraws = 256;
+    /// Screen-space contact shadows: short rays towards the sun through the depth buffer, for the
+    /// small shadows the shadow map is too coarse for.
+    bool contactShadows = true;
+    float contactShadowLength = 0.3f;  // metres at 10 m from the camera (scales with distance)
     /// Screen-space ambient occlusion: darkens ambient light where geometry meets.
     bool ambientOcclusion = true;
     float aoRadius = 0.6f;     // metres
@@ -103,6 +107,7 @@ struct SceneDrawStats {
     bool volumetricFog = false;               // froxel fog injected and integrated this frame
     bool autoExposure = false;                // exposure measured and adapted on the GPU
     bool motionBlur = false;
+    bool contactShadows = false;
     bool virtualPagesFromSurfaces = false;    // the VSM's fine pages came from GPU requests
     std::uint32_t localShadowTiles = 0;       // spot / point light shadow tiles in use
     std::uint32_t localShadowTilesDrawn = 0;  // of those, drawn this frame (the rest cached)
@@ -180,6 +185,7 @@ private:
     // by entity) and two history images that swap every frame.
     nvrhi::ComputePipelineHandle taa_;
     nvrhi::ComputePipelineHandle motionBlur_;
+    nvrhi::ComputePipelineHandle contactShadows_;
     nvrhi::ComputePipelineHandle exposureHistogram_;
     nvrhi::ComputePipelineHandle exposureAdapt_;
     nvrhi::TextureHandle exposure_;  // R32F 1x1: the adapted exposure, kept across frames

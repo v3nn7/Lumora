@@ -11,6 +11,7 @@ lumora_add_shader(LUMORA_SHADER_FILES SOURCE depth.hlsl    STAGE vert ENTRY VSMa
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE depth.hlsl    STAGE frag ENTRY PSMain OUTPUT depth.frag.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE depth_skinned.hlsl STAGE frag ENTRY PSMain OUTPUT depth.skinned.frag.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE taa.hlsl       STAGE comp ENTRY CSMain OUTPUT taa.comp.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE contact_shadows.hlsl STAGE comp ENTRY CSMain OUTPUT contact.shadows.comp.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE motion_blur.hlsl STAGE comp ENTRY CSMain OUTPUT motion.blur.comp.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE exposure_histogram.hlsl STAGE comp ENTRY CSMain OUTPUT exposure.histogram.comp.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE exposure_adapt.hlsl STAGE comp ENTRY CSMain OUTPUT exposure.adapt.comp.spv)

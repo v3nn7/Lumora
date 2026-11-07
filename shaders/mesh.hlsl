@@ -186,6 +186,10 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
         float3 radiance = light.colorIntensity.rgb * light.colorIntensity.w;
         if (i == gFrame.counts.y) {
             radiance *= sunShadow(s.position, geometricNormal, -light.directionType.xyz, dpdx, dpdy);
+            if ((gPush.flags & 8u) != 0u) {
+                // Screen-space contact shadows (param3): what the shadow map is too coarse for.
+                radiance *= gTextures[asuint(gPush.param3)].Load(int3(int2(input.position.xy), 0)).r;
+            }
         }
         color += evaluateLight(s, -light.directionType.xyz, radiance);
     }

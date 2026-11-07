@@ -2180,3 +2180,39 @@ TEST_F(RendererTest, MotionBlurSmearsMovingObjectsOnly) {
     // (Consecutive TAA frames differ a little anyway: compare how much edge there is.)
     EXPECT_NEAR(partialPixels(*still), partialPixels(*reference), 8) << "a still image stays sharp";
 }
+
+TEST_F(RendererTest, ContactShadowsDarkenWhereObjectsMeetTheGround) {
+    auto scene = shadowScene();
+    for (int i = 0; i < 5; ++i) {
+        const auto e = addCube(*scene, {-2.0f + static_cast<float>(i), 0.15f, 0.0f});
+        scene->registry().get<TransformComponent>(e).scale = glm::vec3(0.3f);
+    }
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 1.5f, 3.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const CameraView view = cam.view(4.0f / 3.0f);
+    RenderSettings s;
+    s.bloom = false;
+    s.virtualShadows = false;    // coarse cascades: what contact shadows are for
+    s.shadowResolution = 256;
+    s.contactShadows = false;
+    auto without = renderer_->capture(*scene, view, {160, 120}, s);
+    ASSERT_TRUE(without.has_value());
+    EXPECT_FALSE(renderer_->stats().scene.contactShadows);
+    s.contactShadows = true;
+    auto with = renderer_->capture(*scene, view, {160, 120}, s);
+    ASSERT_TRUE(with.has_value());
+    EXPECT_TRUE(renderer_->stats().scene.contactShadows);
+    int darker = 0, brighter = 0;
+    for (std::uint32_t y = 0; y < 120; ++y) {
+        for (std::uint32_t x = 0; x < 160; ++x) {
+            const float a = luminance(pixel(*without, x, y)), b = luminance(pixel(*with, x, y));
+            darker += b < a - 8.0f ? 1 : 0;
+            brighter += b > a + 8.0f ? 1 : 0;
+        }
+    }
+    EXPECT_GT(darker, 20) << "contact shadows add shade";
+    EXPECT_EQ(brighter, 0) << "and never light";
+    EXPECT_LT(darker, 160 * 120 / 10) << "only near the objects";
+}

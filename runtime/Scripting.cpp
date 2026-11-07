@@ -10,6 +10,7 @@
 #include "runtime/TimelineSystem.hpp"
 #include "runtime/Navigation.hpp"
 #include "runtime/PhysicsWorld.hpp"
+#include "runtime/net/NetSession.hpp"
 #include "assets/Material.hpp"
 #include "scene/DebugDraw.hpp"
 #include "scene/Hud.hpp"
@@ -21,6 +22,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <charconv>
 #include <format>
 #include <system_error>
@@ -219,8 +221,10 @@ int apiRaycast(void* c, const float* origin, const float* direction, float maxDi
 script::Entity apiClone(void* c, script::Entity source) {
     const entt::entity e = liveEntity(c, source);
     if (e == entt::null) return script::kNoEntity;
-    const entt::entity copy = context(c).scene->duplicateEntity(e);
-    context(c).scene->updateWorldTransforms();  // physics creates the clone's body from its world pose
+    Scene& scene = *context(c).scene;
+    const entt::entity copy = scene.duplicateEntity(e);
+    if (copy != entt::null) scene.registry().emplace_or_replace<net::SpawnOrigin>(copy, std::string(), scene.uuidOf(e));
+    scene.updateWorldTransforms();  // physics creates the clone's body from its world pose
     return copy == entt::null ? script::kNoEntity : static_cast<script::Entity>(entt::to_integral(copy));
 }
 
@@ -265,6 +269,8 @@ script::Entity apiSpawn(void* c, const char* prefab, const float* xyz) {
         log::warn("Script", "spawn {}: {}", prefab, root.error().message);
         return script::kNoEntity;
     }
+    // (Network games make the same entity on every machine.)
+    ctx.scene->registry().emplace_or_replace<net::SpawnOrigin>(*root, std::string(prefab), Uuid());
     if (xyz != nullptr) {
         ctx.scene->registry().get<TransformComponent>(*root).position = glm::vec3(xyz[0], xyz[1], xyz[2]);
         ctx.scene->updateWorldTransforms();
@@ -713,6 +719,104 @@ float apiAudioBus(void* c, const char* bus, int command, float value) {
     }
 }
 
+// ---- ABI 6: network games -------------------------------------------------------------------
+
+int apiNetwork(void* c, int command, const char* text, const char* text2, int number, char* out, int capacity) {
+    net::NetSession* n = context(c).net;
+    if (n == nullptr) return command == 8 ? copyOut("", out, capacity) : 0;
+    const std::string first = text != nullptr ? text : "";
+    const std::string second = text2 != nullptr ? text2 : "";
+    switch (command) {
+        case 0: {
+            const auto port = static_cast<std::uint16_t>(number > 0 && number < 65536 ? number : net::kDefaultPort);
+            auto hosted = n->host(port, second);
+            if (!hosted) log::error("Net", "cannot host a game: {}", hosted.error().message);
+            return hosted ? 1 : 0;
+        }
+        case 1: {
+            auto joined = n->join(first, second);
+            if (!joined) log::error("Net", "cannot join {}: {}", first, joined.error().message);
+            return joined ? 1 : 0;
+        }
+        case 2: n->leave(); return 1;
+        case 3:
+            switch (n->role()) {
+                case net::NetRole::Offline: return 0;
+                case net::NetRole::Connecting: return 1;
+                case net::NetRole::Host: return 2;
+                case net::NetRole::Client: return 3;
+            }
+            return 0;
+        case 4: return static_cast<int>(n->localPeer());
+        case 5: return static_cast<int>(n->peers().size());
+        case 6: {
+            const auto list = n->peers();
+            return number >= 0 && static_cast<std::size_t>(number) < list.size() ? static_cast<int>(list[static_cast<std::size_t>(number)]) : -1;
+        }
+        case 7: return static_cast<int>(std::lround(n->roundTrip() * 1000.0));
+        case 8: return copyOut(n->lastError(), out, capacity);
+        default: return 0;
+    }
+}
+
+/// kNoEntity is the whole game (entt::null); anything else must be alive.
+bool netTarget(void* c, script::Entity entity, entt::entity& out) {
+    if (entity == script::kNoEntity) {
+        out = entt::null;
+        return true;
+    }
+    out = liveEntity(c, entity);
+    return out != entt::null;
+}
+
+int apiRpc(void* c, script::Entity entity, const char* name, const char* data, int size, int target) {
+    net::NetSession* n = context(c).net;
+    entt::entity e = entt::null;
+    if (n == nullptr || name == nullptr || target < 0 || target > 3 || !netTarget(c, entity, e)) return 0;
+    std::string body = data != nullptr && size > 0 ? std::string(data, static_cast<std::size_t>(size)) : std::string();
+    return n->rpc(e, name, std::move(body), static_cast<net::RpcTarget>(target)) ? 1 : 0;
+}
+
+int apiNetEntity(void* c, script::Entity entity, int command, int value) {
+    net::NetSession* n = context(c).net;
+    const entt::entity e = liveEntity(c, entity);
+    if (e == entt::null) return command == 0 ? -1 : 0;
+    switch (command) {
+        case 0: {
+            const auto owner = n != nullptr ? n->owner(e) : std::nullopt;
+            return owner ? static_cast<int>(*owner) : -1;
+        }
+        case 1: return n != nullptr && value >= 0 && n->setOwner(e, static_cast<net::PeerId>(value)) ? 1 : 0;
+        case 2: return n == nullptr || n->hasAuthority(e) ? 1 : 0;
+        case 3: return n != nullptr && n->networked(e) ? 1 : 0;
+        default: return 0;
+    }
+}
+
+int apiNetValue(void* c, script::Entity entity, int command, const char* key, const char* text, double number, char* out,
+                int capacity, double* outNumber) {
+    net::NetSession* n = context(c).net;
+    entt::entity e = entt::null;
+    if (n == nullptr || key == nullptr || !netTarget(c, entity, e)) return command == 3 ? -1 : 0;
+    switch (command) {
+        case 0: return n->setValue(e, key, {false, number, {}}) ? 1 : 0;
+        case 2: return n->setValue(e, key, {true, 0.0, text != nullptr ? text : ""}) ? 1 : 0;
+        case 1: {
+            const net::NetValue* v = n->value(e, key);
+            if (v == nullptr || v->isText) return 0;
+            if (outNumber != nullptr) *outNumber = v->number;
+            return 1;
+        }
+        case 3: {
+            const net::NetValue* v = n->value(e, key);
+            if (v == nullptr) return -1;
+            return copyOut(v->isText ? v->text : std::format("{}", v->number), out, capacity);
+        }
+        case 4: return n->value(e, key) != nullptr ? 1 : 0;
+        default: return 0;
+    }
+}
+
 } // namespace
 
 // ---- ScriptModule ------------------------------------------------------------------------------
@@ -747,10 +851,11 @@ Result<std::shared_ptr<ScriptModule>> ScriptModule::load(const std::filesystem::
     module->update = reinterpret_cast<UpdateFn>(symbol(module->handle_, "lumora_script_update"));
     module->destroy = reinterpret_cast<DestroyFn>(symbol(module->handle_, "lumora_script_destroy"));
     module->collision = reinterpret_cast<CollisionFn>(symbol(module->handle_, "lumora_script_collision"));
+    module->network = reinterpret_cast<NetworkFn>(symbol(module->handle_, "lumora_script_network"));
     module->lastError = reinterpret_cast<ErrorFn>(symbol(module->handle_, "lumora_script_last_error"));
     if (abi == nullptr || count == nullptr || name == nullptr || module->create == nullptr || module->start == nullptr ||
         module->update == nullptr || module->destroy == nullptr || module->lastError == nullptr ||
-        module->collision == nullptr) {
+        module->collision == nullptr || module->network == nullptr) {
         return makeError("{} is not a Lumora game library (entry points missing)", library.string());
     }
     if (abi() != LUMORA_SCRIPT_ABI) {
@@ -835,6 +940,10 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.drawImage = apiDrawImage;
     api_.drawTextFont = apiDrawTextFont;
     api_.uiDocument = apiUiDocument;
+    api_.network = apiNetwork;
+    api_.rpc = apiRpc;
+    api_.netEntity = apiNetEntity;
+    api_.netValue = apiNetValue;
 }
 
 
@@ -890,6 +999,17 @@ bool ScriptRunner::callCollision(Instance& instance, std::uint64_t other) {
         case Kind::Lua: return instance.lua->collision(other);
         case Kind::Graph: return instance.graph->collision(other);
         case Kind::Native: return module_->collision(instance.object, other) == 0;
+    }
+    return false;
+}
+
+bool ScriptRunner::callNetwork(Instance& instance, const net::NetScriptEvent& event) {
+    switch (instance.kind) {
+        case Kind::Lua: return instance.lua->network(event);
+        case Kind::Graph: return instance.graph->network(event);
+        case Kind::Native:
+            return module_->network(instance.object, static_cast<int>(event.kind), static_cast<int>(event.peer),
+                                    event.name.c_str(), event.data.data(), static_cast<std::uint32_t>(event.data.size())) == 0;
     }
     return false;
 }
@@ -1040,6 +1160,28 @@ void ScriptRunner::dispatchCollisions(const std::vector<std::pair<entt::entity, 
         notify(b, a);
     }
     finishStep();  // collision handlers may destroy or clone too
+}
+
+void ScriptRunner::dispatchNetwork(const net::NetScriptEvent& event) {
+    if (!created_) createInstances();  // (events can come before the first update)
+    const bool targeted = event.kind == net::NetScriptEvent::Kind::Rpc && event.entity != entt::null;
+    const auto target = static_cast<std::uint64_t>(entt::to_integral(event.entity));
+    const char* phase = event.kind == net::NetScriptEvent::Kind::Rpc ? "onRpc" : "a network event";
+    for (std::size_t i = 0; i < instances_.size();) {
+        Instance& instance = instances_[i];
+        if ((targeted && instance.entity != target) || !scene_.registry().valid(toEntity(instance.entity))) {
+            ++i;
+            continue;
+        }
+        if (!callNetwork(instance, event)) {
+            reportFailure(instance, phase);
+            release(instance);
+            instances_.erase(instances_.begin() + static_cast<std::ptrdiff_t>(i));
+        } else {
+            ++i;
+        }
+    }
+    finishStep();  // handlers may destroy or clone too
 }
 
 void ScriptRunner::destroyInstances() {

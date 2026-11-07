@@ -1,5 +1,7 @@
 #include "runtime/net/Transport.hpp"
 
+#include "runtime/net/Bytes.hpp"
+
 #include "core/Log.hpp"
 
 #include <monocypher.h>
@@ -45,45 +47,8 @@ void randomBytes(std::span<std::uint8_t> out) {
 
 bool newer(std::uint16_t a, std::uint16_t b) { return static_cast<std::int16_t>(static_cast<std::uint16_t>(a - b)) > 0; }
 
-struct Writer {
-    std::vector<std::byte>& out;
-    void u8(std::uint8_t v) { out.push_back(static_cast<std::byte>(v)); }
-    void u16(std::uint16_t v) {
-        u8(static_cast<std::uint8_t>(v));
-        u8(static_cast<std::uint8_t>(v >> 8));
-    }
-    void u32(std::uint32_t v) {
-        u16(static_cast<std::uint16_t>(v));
-        u16(static_cast<std::uint16_t>(v >> 16));
-    }
-    void bytes(std::span<const std::byte> b) { out.insert(out.end(), b.begin(), b.end()); }
-    void bytes(std::span<const std::uint8_t> b) { bytes(std::as_bytes(b)); }
-};
-
-struct Reader {
-    std::span<const std::byte> data;
-    std::size_t at = 0;
-    bool ok = true;
-    bool need(std::size_t n) {
-        if (at + n > data.size()) ok = false;
-        return ok;
-    }
-    std::uint8_t u8() { return need(1) ? static_cast<std::uint8_t>(data[at++]) : 0; }
-    std::uint16_t u16() {
-        const std::uint16_t lo = u8();
-        return static_cast<std::uint16_t>(lo | (u8() << 8));
-    }
-    std::uint32_t u32() {
-        const std::uint32_t lo = u16();
-        return lo | (static_cast<std::uint32_t>(u16()) << 16);
-    }
-    std::span<const std::byte> bytes(std::size_t n) {
-        if (!need(n)) return {};
-        const auto s = data.subspan(at, n);
-        at += n;
-        return s;
-    }
-};
+using Writer = ByteWriter;
+using Reader = ByteReader;
 
 void writeHeader(Writer& w, PacketType type) {
     w.bytes(std::span<const std::uint8_t>(kMagic));

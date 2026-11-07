@@ -1,5 +1,7 @@
 #include "runtime/LuaScript.hpp"
 
+#include "runtime/net/NetSession.hpp"
+
 #include "runtime/ScriptNames.hpp"
 
 extern "C" {
@@ -406,6 +408,68 @@ int lNames(lua_State* L) {
     return 4;
 }
 
+int lNetwork(lua_State* L) {
+    const int command = static_cast<int>(luaL_checkinteger(L, 1));
+    const char* text = luaL_optstring(L, 2, "");
+    const char* text2 = luaL_optstring(L, 3, "");
+    const int number = static_cast<int>(luaL_optinteger(L, 4, 0));
+    if (command == 8) {
+        const int length = api(L).network(ctx(L), 8, text, text2, number, nullptr, 0);
+        std::string out(static_cast<std::size_t>(std::max(length, 0)) + 1, '\0');
+        api(L).network(ctx(L), 8, text, text2, number, out.data(), length + 1);
+        lua_pushlstring(L, out.data(), static_cast<std::size_t>(std::max(length, 0)));
+        return 1;
+    }
+    lua_pushinteger(L, api(L).network(ctx(L), command, text, text2, number, nullptr, 0));
+    return 1;
+}
+int lRpc(lua_State* L) {
+    const Entity e = checkEntity(L, 1);
+    const char* name = luaL_checkstring(L, 2);
+    std::size_t size = 0;
+    const char* data = lua_isnoneornil(L, 3) ? "" : luaL_tolstring(L, 3, &size);
+    const int target = static_cast<int>(luaL_optinteger(L, 4, 1));
+    return pushBool(L, api(L).rpc(ctx(L), e, name, data, static_cast<int>(size), target) != 0);
+}
+int lNetEntity(lua_State* L) {
+    lua_pushinteger(L, api(L).netEntity(ctx(L), checkEntity(L, 1), static_cast<int>(luaL_checkinteger(L, 2)),
+                                        static_cast<int>(luaL_optinteger(L, 3, 0))));
+    return 1;
+}
+int lNetValue(lua_State* L) {
+    const Entity e = checkEntity(L, 1);
+    const int command = static_cast<int>(luaL_checkinteger(L, 2));
+    const char* key = luaL_checkstring(L, 3);
+    switch (command) {
+        case 0: return pushBool(L, api(L).netValue(ctx(L), e, 0, key, nullptr, luaL_checknumber(L, 4), nullptr, 0, nullptr) != 0);
+        case 2: {
+            const char* text = luaL_tolstring(L, 4, nullptr);
+            return pushBool(L, api(L).netValue(ctx(L), e, 2, key, text, 0.0, nullptr, 0, nullptr) != 0);
+        }
+        case 1: {
+            double value = 0.0;
+            if (api(L).netValue(ctx(L), e, 1, key, nullptr, 0.0, nullptr, 0, &value) == 0) {
+                lua_pushnil(L);
+            } else {
+                lua_pushnumber(L, value);
+            }
+            return 1;
+        }
+        case 3: {
+            const int length = api(L).netValue(ctx(L), e, 3, key, nullptr, 0.0, nullptr, 0, nullptr);
+            if (length < 0) {
+                lua_pushnil(L);
+                return 1;
+            }
+            std::string out(static_cast<std::size_t>(length) + 1, '\0');
+            api(L).netValue(ctx(L), e, 3, key, nullptr, 0.0, out.data(), length + 1, nullptr);
+            lua_pushlstring(L, out.data(), static_cast<std::size_t>(length));
+            return 1;
+        }
+        default: return pushBool(L, api(L).netValue(ctx(L), e, 4, key, nullptr, 0.0, nullptr, 0, nullptr) != 0);
+    }
+}
+
 const luaL_Reg kEngine[] = {
     {"log", lLog}, {"find", lFind}, {"findAll", lFindAll}, {"name", lName},
     {"getTransform", lGetTransform}, {"setTransform", lSetTransform}, {"keyDown", lKeyDown}, {"time", lTime},
@@ -420,7 +484,8 @@ const luaL_Reg kEngine[] = {
     {"findPath", lFindPath}, {"navigation", lNavigation}, {"input", lInput}, {"saveNumber", lSaveNumber},
     {"loadNumber", lLoadNumber}, {"saveText", lSaveText}, {"loadText", lLoadText}, {"save", lSave},
     {"vehicle", lVehicle}, {"vehicleSpeed", lVehicleSpeed}, {"ragdoll", lRagdoll}, {"localize", lLocalize},
-    {"gameMenu", lGameMenu}, {"timeline", lTimeline}, {"names", lNames}, {nullptr, nullptr},
+    {"gameMenu", lGameMenu}, {"timeline", lTimeline}, {"names", lNames}, {"network", lNetwork}, {"rpc", lRpc},
+    {"netEntity", lNetEntity}, {"netValue", lNetValue}, {nullptr, nullptr},
 };
 
 // ---- Sandbox ----------------------------------------------------------------------------------
@@ -683,6 +748,38 @@ bool LuaInstance::start() { return call("start", 0, 0.0); }
 bool LuaInstance::update(float dt) {
     if (!call("_tick", 1, dt)) return false;
     return call("update", 1, dt);
+}
+
+bool LuaInstance::network(const net::NetScriptEvent& event) {
+    static constexpr const char* kMethods[] = {"onRpc", "onPlayerJoined", "onPlayerLeft", "onConnected", "onDisconnected"};
+    lua_State* L = host_.L_;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref_);
+    lua_getfield(L, -1, kMethods[static_cast<int>(event.kind)]);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 2);
+        return true;  // the behaviour does not define it
+    }
+    lua_insert(L, -2);  // method, self
+    int args = 1;
+    switch (event.kind) {
+        case net::NetScriptEvent::Kind::Rpc:
+            lua_pushlstring(L, event.name.data(), event.name.size());
+            lua_pushlstring(L, event.data.data(), event.data.size());
+            lua_pushinteger(L, static_cast<lua_Integer>(event.peer));
+            args += 3;
+            break;
+        case net::NetScriptEvent::Kind::PeerJoined:
+        case net::NetScriptEvent::Kind::PeerLeft:
+            lua_pushinteger(L, static_cast<lua_Integer>(event.peer));
+            ++args;
+            break;
+        case net::NetScriptEvent::Kind::Connected: break;
+        case net::NetScriptEvent::Kind::Disconnected:
+            lua_pushlstring(L, event.data.data(), event.data.size());
+            ++args;
+            break;
+    }
+    return host_.protectedCall(args, 0, error_);
 }
 
 bool LuaInstance::collision(Entity other) {

@@ -24,6 +24,7 @@ std::string categoryOf(std::string_view id) {
         {"Ragdoll", "Physics"},        {"Vehicle", "Physics"},       {"Animator", "Animation"},
         {"Skin", "Animation"},         {"ModelNode", "Animation"},   {"NavAgent", "Navigation"},
         {"AudioSource", "Audio"},      {"Script", "Scripting"},    {"Timeline", "Animation"},
+        {"NetworkIdentity", "Networking"},
     };
     for (const auto& [component, category] : kCategories) {
         if (component == id) return std::string(category);
@@ -424,6 +425,14 @@ ComponentRegistry makeBuiltin() {
             R::field(&OscillatorComponent::offset, "offset", "Offset", FieldKind::Vec3),
             ranged(R::field(&OscillatorComponent::period, "period", "Period (s)", FieldKind::Float), 0.05f, 600.0f, 0.1f),
             ranged(R::field(&OscillatorComponent::phase, "phase", "Phase", FieldKind::Float), 0.0f, 1.0f, 0.01f),
+        };
+        reg.add(std::move(d));
+    }
+    {
+        auto d = R::describe<NetworkIdentityComponent>("NetworkIdentity", "Network Identity");
+        d.fields = {
+            R::field(&NetworkIdentityComponent::syncTransform, "syncTransform", "Sync Transform", FieldKind::Bool),
+            R::field(&NetworkIdentityComponent::interpolate, "interpolate", "Interpolate", FieldKind::Bool),
         };
         reg.add(std::move(d));
     }

@@ -311,6 +311,15 @@ struct ScriptComponent {
     std::string parameters;  // "speed=4, jump=6": numbers the behaviour reads with param()
 };
 
+/// Shares the entity between the players of a network game (runtime/net/NetSession.hpp): its
+/// transform goes from whoever has authority over it (the host, or the client that owns it) to
+/// everyone else, smoothed on arrival; behaviours call RPCs on it and share values through it.
+/// Children may carry their own.
+struct NetworkIdentityComponent {
+    bool syncTransform = true;
+    bool interpolate = true;  // smooth (a little behind) or jump to every update
+};
+
 /// Plays a sound file (project-relative WAV, FLAC or MP3) while the simulation runs, in 3D at the
 /// entity (spatial) or flat. Scripts start and stop it with playSound() / stopSound().
 /// Mixer groups every sound plays through (all of them below Master).

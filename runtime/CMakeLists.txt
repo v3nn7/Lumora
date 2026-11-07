@@ -18,7 +18,8 @@ add_library(lumora_runtime ${LUMORA_MODULE_TYPE}
     LuaScript.cpp
     VisualScript.cpp
     net/Socket.cpp
-    net/Transport.cpp)
+    net/Transport.cpp
+    net/NetSession.cpp)
 # The Lua API prelude is compiled into the module.
 set(lua_prelude_inc ${CMAKE_CURRENT_BINARY_DIR}/generated/LuaPrelude.inc)
 add_custom_command(OUTPUT ${lua_prelude_inc}

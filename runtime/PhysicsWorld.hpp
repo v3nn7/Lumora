@@ -37,6 +37,9 @@ public:
     [[nodiscard]] std::size_t terrainCount() const;
 
     [[nodiscard]] std::size_t bodyCount() const;
+    /// Builds the entity's body again from its components (after its Rigid Body changed, e.g. a
+    /// network game made it kinematic). Nothing happens if it has none yet.
+    void refreshBody(entt::entity entity);
     void setGravity(const glm::vec3& gravity);
     /// Linear velocity of a dynamic body (zero if the entity has none).
     [[nodiscard]] glm::vec3 linearVelocity(entt::entity entity) const;

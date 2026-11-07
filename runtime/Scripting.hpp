@@ -30,6 +30,10 @@ namespace visual {
 class Graph;
 class GraphInstance;
 }
+namespace net {
+class NetSession;
+struct NetScriptEvent;
+}
 class AudioWorld;
 class InputState;
 struct HudCanvas;
@@ -61,12 +65,14 @@ public:
     using UpdateFn = int (*)(void*, float);
     using DestroyFn = void (*)(void*);
     using CollisionFn = int (*)(void*, script::Entity);
+    using NetworkFn = int (*)(void*, int, int, const char*, const char*, std::uint32_t);
     using ErrorFn = const char* (*)();
     CreateFn create = nullptr;
     StepFn start = nullptr;
     UpdateFn update = nullptr;
     DestroyFn destroy = nullptr;
     CollisionFn collision = nullptr;
+    NetworkFn network = nullptr;
     ErrorFn lastError = nullptr;
 
 private:
@@ -98,6 +104,9 @@ public:
     void update(float dt, double simulatedSeconds);
     /// Calls onCollision on both entities of each pair that has a behaviour.
     void dispatchCollisions(const std::vector<std::pair<entt::entity, entt::entity>>& pairs);
+    /// Network games: an RPC (to the behaviours of its entity, or all of them) or a player event
+    /// (to every behaviour).
+    void dispatchNetwork(const net::NetScriptEvent& event);
     void reload(std::shared_ptr<ScriptModule> module);
     void setPhysics(PhysicsWorld* physics) noexcept { context_.physics = physics; }
     void setAudio(AudioWorld* audio) noexcept { context_.audio = audio; }
@@ -111,6 +120,7 @@ public:
     void setNavigation(class NavigationWorld* navigation) noexcept { context_.navigation = navigation; }
     void setLocalization(class Localization* localization) noexcept { context_.localization = localization; }
     void setTimelines(class TimelineSystem* timelines) noexcept { context_.timelines = timelines; }
+    void setNetwork(net::NetSession* network) noexcept { context_.net = network; }
     /// 1 if a behaviour asked for the game menu since the last call, 2 for its settings page, else 0.
     [[nodiscard]] int takeMenuRequest() noexcept { return std::exchange(context_.menuRequested, 0); }
     void setMenuOpen(bool open) noexcept { context_.menuOpen = open; }
@@ -141,6 +151,7 @@ public:
         class NavigationWorld* navigation = nullptr;
         class Localization* localization = nullptr;
         class TimelineSystem* timelines = nullptr;
+        net::NetSession* net = nullptr;
         int menuRequested = 0;  // 1 openGameMenu(), 2 openGameSettings(); handled by the host
         bool menuOpen = false;       // set by the host
         double time = 0.0;
@@ -164,6 +175,7 @@ private:
     bool callStart(Instance& instance);
     bool callUpdate(Instance& instance, float dt);
     bool callCollision(Instance& instance, std::uint64_t other);
+    bool callNetwork(Instance& instance, const net::NetScriptEvent& event);
     void release(Instance& instance);  // destroys the behaviour object
     [[nodiscard]] std::string errorOf(const Instance& instance) const;
     void startFrom(std::size_t first);   // start() on instances_[first..], dropping failures

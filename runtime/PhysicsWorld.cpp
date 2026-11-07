@@ -1026,6 +1026,18 @@ std::vector<std::pair<entt::entity, entt::entity>> PhysicsWorld::takeContacts() 
     return std::exchange(impl_->contacts.pairs, {});
 }
 
+void PhysicsWorld::refreshBody(entt::entity entity) {
+    const auto it = impl_->bodies.find(entity);
+    if (it == impl_->bodies.end()) return;
+    impl_->releaseConstraintsOf(entity);
+    impl_->removeBody(it->second);
+    impl_->bodies.erase(it);
+    if (impl_->scene.registry().valid(entity) && impl_->scene.registry().all_of<ColliderComponent>(entity)) {
+        impl_->scene.updateWorldTransforms();
+        impl_->createBody(entity);
+    }
+}
+
 void PhysicsWorld::step(float dt) {
     Scene& scene = impl_->scene;
     impl_->syncBodies();

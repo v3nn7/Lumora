@@ -26,6 +26,9 @@ class SaveData;
 class NavigationWorld;
 class Localization;
 class TimelineSystem;
+namespace net {
+class NetSession;
+}
 
 /// Drives gameplay systems at a fixed timestep, decoupled from the render frame rate.
 /// Given the same sequence of step counts the result is deterministic.
@@ -90,6 +93,9 @@ public:
     [[nodiscard]] int takeGameMenuRequest();
     /// Tells behaviours whether the host's game menu is open (gameMenuOpen()).
     void setGameMenuOpen(bool open);
+    /// The network game (runtime/net/NetSession.hpp): offline until a behaviour (or the host
+    /// application) hosts or joins one.
+    [[nodiscard]] net::NetSession& network() noexcept { return *net_; }
     /// Behaviour instances currently running (0 before the first step).
     [[nodiscard]] std::size_t scriptInstances() const noexcept;
 
@@ -113,6 +119,7 @@ private:
     std::filesystem::path projectRoot_;
     HudCanvas hud_;
     DebugDraw debug_;
+    std::unique_ptr<net::NetSession> net_;    // before the behaviours: it calls them, never the other way at teardown
     std::unique_ptr<ScriptRunner> scripts_;  // last: behaviours may still reference physics and audio
 };
 

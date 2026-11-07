@@ -40,6 +40,9 @@ public:
     [[nodiscard]] bool isValid(entt::entity entity) const { return registry_.valid(entity); }
     [[nodiscard]] entt::entity findByUuid(Uuid id) const;
     [[nodiscard]] Uuid uuidOf(entt::entity entity) const;
+    /// Gives an entity another UUID (network games: a client's copy takes the host's). False if
+    /// the UUID is invalid or another entity has it.
+    bool changeUuid(entt::entity entity, Uuid id);
     [[nodiscard]] const std::string& nameOf(entt::entity entity) const;
     void rename(entt::entity entity, std::string name);
     [[nodiscard]] std::size_t entityCount() const noexcept { return uuidMap_.size(); }

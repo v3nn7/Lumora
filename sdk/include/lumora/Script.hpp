@@ -39,7 +39,7 @@
 #include <string_view>
 #include <vector>
 
-#define LUMORA_SCRIPT_ABI 5u
+#define LUMORA_SCRIPT_ABI 6u
 
 namespace lumora::script {
 
@@ -78,6 +78,16 @@ enum class GamepadButton : int {
 };
 /// Sticks -1..1 (x right, y down), triggers 0..1.
 enum class GamepadAxis : int { LeftX, LeftY, RightX, RightY, LeftTrigger, RightTrigger };
+
+/// Network games (Behaviour::hostGame / joinGame).
+enum class NetworkState : int { Offline, Joining, Host, Client };
+/// Who runs an RPC.
+enum class RpcTarget : int {
+    Host,    // the host
+    All,     // every player, the caller too
+    Others,  // every player but the caller
+    Owner,   // whoever owns the entity (the host when nobody does)
+};
 
 /// Result of Behaviour::raycast.
 struct RayHit {
@@ -171,6 +181,23 @@ struct EngineApi {
     // its length). 0 when there is no such widget.
     int (*uiDocument)(void* context, int command, const char* path, const char* name, float* value, const char* text,
                       char* out, int capacity);
+    // ABI 6
+    // Network games. command: 0 host (number = port, 0 = 7778; text2 = password), 1 join (text =
+    // address, text2 = password), 2 leave, 3 state (NetworkState), 4 this player's id, 5 how
+    // many others play, 6 the id of other player `number`, 7 round trip (ms), 8 why the last
+    // game ended or did not start (into out; returns its length).
+    int (*network)(void* context, int command, const char* text, const char* text2, int number, char* out, int capacity);
+    // Calls `name` with `size` bytes of data on the entity's behaviours (kNoEntity: on every
+    // behaviour) where `target` (RpcTarget) says; 1 if it goes out.
+    int (*rpc)(void* context, Entity entity, const char* name, const char* data, int size, int target);
+    // command: 0 owner (-1: not shared), 1 give it to player `value` (hosts), 2 has authority
+    // here (1/0), 3 shared over the network (1/0)
+    int (*netEntity)(void* context, Entity entity, int command, int value);
+    // Values shared with every player (entity kNoEntity: the game's, set by the host): 0 set
+    // number, 1 get number (1 if it exists), 2 set text, 3 get text (its length, -1 if none),
+    // 4 exists. Setting needs authority over the entity.
+    int (*netValue)(void* context, Entity entity, int command, const char* key, const char* text, double number,
+                    char* out, int capacity, double* outNumber);
 };
 
 class Behaviour;
@@ -199,6 +226,19 @@ public:
     virtual void update(float dt) { (void)dt; }
     /// This entity's body started touching another one (needs Collider components).
     virtual void onCollision(Entity other) { (void)other; }
+    /// Network games: an RPC called on this entity (or on the whole game) arrived; `sender` is
+    /// the player who called it (the host is 0).
+    virtual void onRpc(std::string_view name, std::string_view data, int sender) {
+        (void)name;
+        (void)data;
+        (void)sender;
+    }
+    /// Another player joined or left the game (told on every machine).
+    virtual void onPlayerJoined(int player) { (void)player; }
+    virtual void onPlayerLeft(int player) { (void)player; }
+    /// Clients: the connection to the host is up, or it ended (`reason`).
+    virtual void onConnected() {}
+    virtual void onDisconnected(std::string_view reason) { (void)reason; }
 
 protected:
     [[nodiscard]] Entity entity() const { return entity_; }
@@ -639,6 +679,91 @@ protected:
     void log(std::string_view message) const { api_->log(api_->context, 0, std::string(message).c_str()); }
     void warn(std::string_view message) const { api_->log(api_->context, 1, std::string(message).c_str()); }
 
+    // Network games: one player hosts (port 7778 by default; others join its address, on a
+    // LAN or through a tunnel like playit.gg), the rest join. Entities with a Network Identity
+    // component are shared; their owner moves them (hasAuthority()).
+    bool hostGame(int port = 0, std::string_view password = {}) const {
+        return api_->network(api_->context, 0, "", std::string(password).c_str(), port, nullptr, 0) != 0;
+    }
+    /// "192.168.1.20:7778" or a tunnel's address; onConnected() or onDisconnected() follows.
+    bool joinGame(std::string_view address, std::string_view password = {}) const {
+        return api_->network(api_->context, 1, std::string(address).c_str(), std::string(password).c_str(), 0, nullptr,
+                             0) != 0;
+    }
+    void leaveGame() const { api_->network(api_->context, 2, "", "", 0, nullptr, 0); }
+    [[nodiscard]] NetworkState networkState() const {
+        return static_cast<NetworkState>(api_->network(api_->context, 3, "", "", 0, nullptr, 0));
+    }
+    /// Offline or hosting: the game's rules run here.
+    [[nodiscard]] bool isServer() const {
+        const NetworkState s = networkState();
+        return s == NetworkState::Offline || s == NetworkState::Host;
+    }
+    [[nodiscard]] bool isClient() const {
+        const NetworkState s = networkState();
+        return s == NetworkState::Joining || s == NetworkState::Client;
+    }
+    /// This player's id (the host and offline games: 0).
+    [[nodiscard]] int playerId() const { return api_->network(api_->context, 4, "", "", 0, nullptr, 0); }
+    /// The other players' ids.
+    [[nodiscard]] std::vector<int> players() const {
+        std::vector<int> out;
+        const int n = api_->network(api_->context, 5, "", "", 0, nullptr, 0);
+        for (int i = 0; i < n; ++i) out.push_back(api_->network(api_->context, 6, "", "", i, nullptr, 0));
+        return out;
+    }
+    /// Round trip to the host in milliseconds.
+    [[nodiscard]] int ping() const { return api_->network(api_->context, 7, "", "", 0, nullptr, 0); }
+    [[nodiscard]] std::string networkError() const {
+        const int length = api_->network(api_->context, 8, "", "", 0, nullptr, 0);
+        if (length <= 0) return {};
+        std::string out(static_cast<std::size_t>(length) + 1, '\0');
+        api_->network(api_->context, 8, "", "", 0, out.data(), length + 1);
+        out.resize(static_cast<std::size_t>(length));
+        return out;
+    }
+    /// Calls onRpc(name, data) on this entity's behaviour where `target` says (next step).
+    bool rpc(std::string_view name, std::string_view data = {}, RpcTarget target = RpcTarget::All) const {
+        return rpcOn(entity_, name, data, target);
+    }
+    bool rpcOn(Entity e, std::string_view name, std::string_view data = {}, RpcTarget target = RpcTarget::All) const {
+        return api_->rpc(api_->context, e, std::string(name).c_str(), data.data(), static_cast<int>(data.size()),
+                         static_cast<int>(target)) != 0;
+    }
+    /// Calls onRpc on every behaviour (game-wide events: a round starts).
+    bool rpcGame(std::string_view name, std::string_view data = {}, RpcTarget target = RpcTarget::All) const {
+        return rpcOn(kNoEntity, name, data, target);
+    }
+    /// The player who owns an entity (-1: not shared).
+    [[nodiscard]] int owner(Entity e) const { return api_->netEntity(api_->context, e, 0, 0); }
+    [[nodiscard]] int owner() const { return owner(entity_); }
+    /// Hosts: gives an entity to a player (their character); 0 gives it back to the host.
+    bool setOwner(Entity e, int player) const { return api_->netEntity(api_->context, e, 1, player) != 0; }
+    /// Whether this machine moves the entity (always, offline and for what is not shared).
+    [[nodiscard]] bool hasAuthority(Entity e) const { return api_->netEntity(api_->context, e, 2, 0) != 0; }
+    [[nodiscard]] bool hasAuthority() const { return hasAuthority(entity_); }
+    [[nodiscard]] bool isNetworked(Entity e) const { return api_->netEntity(api_->context, e, 3, 0) != 0; }
+    /// Values every player sees (who has authority over the entity sets them).
+    bool setNetNumber(std::string_view key, double value) const { return netSet(entity_, key, value); }
+    [[nodiscard]] double netNumber(std::string_view key, double fallback = 0.0) const { return netGet(entity_, key, fallback); }
+    [[nodiscard]] double netNumberOf(Entity e, std::string_view key, double fallback = 0.0) const {
+        return netGet(e, key, fallback);
+    }
+    bool setNetText(std::string_view key, std::string_view text) const { return netSetText(entity_, key, text); }
+    [[nodiscard]] std::string netText(std::string_view key, std::string_view fallback = {}) const {
+        return netGetText(entity_, key, fallback);
+    }
+    [[nodiscard]] std::string netTextOf(Entity e, std::string_view key, std::string_view fallback = {}) const {
+        return netGetText(e, key, fallback);
+    }
+    /// The game's own shared values (the score, the round); only the host sets them.
+    bool setGameNumber(std::string_view key, double value) const { return netSet(kNoEntity, key, value); }
+    [[nodiscard]] double gameNumber(std::string_view key, double fallback = 0.0) const { return netGet(kNoEntity, key, fallback); }
+    bool setGameText(std::string_view key, std::string_view text) const { return netSetText(kNoEntity, key, text); }
+    [[nodiscard]] std::string gameText(std::string_view key, std::string_view fallback = {}) const {
+        return netGetText(kNoEntity, key, fallback);
+    }
+
 private:
     [[nodiscard]] std::string localized(int command, std::string_view key) const {
         const std::string k(key);
@@ -646,6 +771,28 @@ private:
         if (length < 0) return k;
         std::string out(static_cast<std::size_t>(length) + 1, '\0');
         api_->localize(api_->context, command, k.c_str(), out.data(), length + 1);
+        out.resize(static_cast<std::size_t>(length));
+        return out;
+    }
+
+    bool netSet(Entity e, std::string_view key, double value) const {
+        return api_->netValue(api_->context, e, 0, std::string(key).c_str(), nullptr, value, nullptr, 0, nullptr) != 0;
+    }
+    bool netSetText(Entity e, std::string_view key, std::string_view text) const {
+        return api_->netValue(api_->context, e, 2, std::string(key).c_str(), std::string(text).c_str(), 0.0, nullptr, 0,
+                              nullptr) != 0;
+    }
+    [[nodiscard]] double netGet(Entity e, std::string_view key, double fallback) const {
+        double value = fallback;
+        if (api_->netValue(api_->context, e, 1, std::string(key).c_str(), nullptr, 0.0, nullptr, 0, &value) == 0) return fallback;
+        return value;
+    }
+    [[nodiscard]] std::string netGetText(Entity e, std::string_view key, std::string_view fallback) const {
+        const std::string k(key);
+        const int length = api_->netValue(api_->context, e, 3, k.c_str(), nullptr, 0.0, nullptr, 0, nullptr);
+        if (length < 0) return std::string(fallback);
+        std::string out(static_cast<std::size_t>(length) + 1, '\0');
+        api_->netValue(api_->context, e, 3, k.c_str(), nullptr, 0.0, out.data(), length + 1, nullptr);
         out.resize(static_cast<std::size_t>(length));
         return out;
     }

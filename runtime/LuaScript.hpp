@@ -33,6 +33,9 @@
 #include <vector>
 
 struct lua_State;
+namespace lumora::net {
+struct NetScriptEvent;
+}
 
 namespace lumora {
 
@@ -48,6 +51,7 @@ public:
     bool start();
     bool update(float dt);
     bool collision(script::Entity other);
+    bool network(const net::NetScriptEvent& event);  // onRpc, onPlayerJoined, ...
     [[nodiscard]] const std::string& error() const noexcept { return error_; }
     [[nodiscard]] const std::string& file() const noexcept { return file_; }
 

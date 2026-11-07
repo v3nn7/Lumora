@@ -8,6 +8,7 @@
 #include "runtime/Navigation.hpp"
 #include "runtime/SaveData.hpp"
 #include "runtime/Scripting.hpp"
+#include "runtime/net/NetSession.hpp"
 #include "core/Log.hpp"
 #include "scene/Scene.hpp"
 #include "scene/Particles.hpp"
@@ -65,6 +66,17 @@ Simulation::Simulation(Scene& scene, double fixedStep)
       navigation_(std::make_unique<NavigationWorld>(scene)), localization_(std::make_unique<Localization>()),
       timelines_(std::make_unique<TimelineSystem>(scene, std::filesystem::path())) {
     if (PhysicsWorld::sceneHasColliders(scene_)) physics_ = std::make_unique<PhysicsWorld>(scene_);
+    net::NetSession::Hooks hooks;
+    hooks.loadScene = [this](const std::string& path) {
+        auto loaded = loadScene(path);
+        if (!loaded) log::error("Net", "{}", loaded.error().message);
+        return loaded.has_value();
+    };
+    hooks.deliver = [this](const net::NetScriptEvent& event) {
+        if (scripts_) scripts_->dispatchNetwork(event);
+    };
+    hooks.physics = [this] { return physics_.get(); };
+    net_ = std::make_unique<net::NetSession>(scene_, std::move(hooks));
 }
 
 Simulation::~Simulation() = default;
@@ -100,6 +112,7 @@ void Simulation::setScripts(std::shared_ptr<ScriptModule> module, const InputSta
         scripts_->setNavigation(navigation_.get());
         scripts_->setLocalization(localization_.get());
         scripts_->setTimelines(timelines_.get());
+        scripts_->setNetwork(net_.get());
     }
 }
 
@@ -116,6 +129,7 @@ void Simulation::setSaveFile(std::filesystem::path file) {
 
 void Simulation::setProjectRoot(std::filesystem::path root) {
     projectRoot_ = std::move(root);
+    net_->setProjectRoot(projectRoot_);
     if (scripts_) scripts_->setProjectRoot(projectRoot_);
     if (physics_) physics_->setProjectRoot(projectRoot_);
     navigation_->setProjectRoot(projectRoot_);
@@ -138,6 +152,8 @@ std::size_t Simulation::scriptInstances() const noexcept { return scripts_ ? scr
 
 void Simulation::step() {
     const auto dt = static_cast<float>(fixedStep_);
+    // What other players sent (scene changes, spawns, RPCs) before the behaviours run.
+    net_->beginStep(fixedStep_, simulatedSeconds());
     // Behaviours first, so physics and rendering see what they did this step. They redraw the
     // HUD every step.
     if (scripts_) {
@@ -164,11 +180,17 @@ void Simulation::step() {
     }
     if (save_) save_->flushIfDue();
     updateParticles(scene_, dt);  // after physics: emitters on moving bodies emit from where they are
+    // Shared entities: updates out, smoothed movement of what others move in.
+    net_->endStep(fixedStep_, simulatedSeconds() + fixedStep_);
     if (audio_) audio_->update();
     ++steps_;
     if (scripts_) {
         if (const std::string next = scripts_->takeSceneRequest(); !next.empty()) {
-            if (auto loaded = loadScene(next); !loaded) log::error("Simulation", "{}", loaded.error().message);
+            if (net_->role() == net::NetRole::Client || net_->role() == net::NetRole::Connecting) {
+                log::warn("Simulation", "loadScene({}): in a network game only the host changes scenes", next);
+            } else if (auto loaded = loadScene(next); !loaded) {
+                log::error("Simulation", "{}", loaded.error().message);
+            }
         }
     }
 }
@@ -222,6 +244,7 @@ Result<> Simulation::loadScene(const std::filesystem::path& relativePath) {
     accumulator_ = 0.0;
     loadedScene_ = relative;
     ++sceneLoads_;
+    net_->sceneLoaded(relative.generic_string());  // a host takes its players along
     log::info("Simulation", "loaded scene {}", relative.generic_string());
     return {};
 }

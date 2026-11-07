@@ -78,6 +78,24 @@ LUMORA_SCRIPT_EXPORT int lumora_script_collision(void* instance, lumora::script:
         [&] { static_cast<lumora::script::Behaviour*>(instance)->onCollision(other); });
 }
 
+/// Network games: kind 0 RPC (name, data, sender), 1 player joined, 2 player left, 3 connected,
+/// 4 disconnected (data = why).
+LUMORA_SCRIPT_EXPORT int lumora_script_network(void* instance, int kind, int peer, const char* name, const char* data,
+                                               std::uint32_t size) {
+    return lumora::script::detail::guarded([&] {
+        auto* b = static_cast<lumora::script::Behaviour*>(instance);
+        const std::string_view text = data != nullptr ? std::string_view(data, size) : std::string_view();
+        switch (kind) {
+            case 0: b->onRpc(name != nullptr ? name : "", text, peer); break;
+            case 1: b->onPlayerJoined(peer); break;
+            case 2: b->onPlayerLeft(peer); break;
+            case 3: b->onConnected(); break;
+            case 4: b->onDisconnected(text); break;
+            default: break;
+        }
+    });
+}
+
 LUMORA_SCRIPT_EXPORT void lumora_script_destroy(void* instance) {
     lumora::script::detail::guarded([&] { delete static_cast<lumora::script::Behaviour*>(instance); });
 }

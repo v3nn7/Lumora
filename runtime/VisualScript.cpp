@@ -1,8 +1,12 @@
 #include "runtime/VisualScript.hpp"
 
+#include "runtime/net/NetSession.hpp"
+
 #include "runtime/ScriptNames.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <charconv>
 #include <atomic>
 #include <cmath>
@@ -269,6 +273,14 @@ std::vector<NodeDef> buildLibrary() {
     lib.push_back(event("event.action", "On Action Pressed", "An input action (Config/Input.json) was pressed.",
                         {str("action", "Jump")}, {}));
     lib.push_back(event("event.every", "Every N Seconds", "Runs repeatedly at a fixed interval.", {num("seconds", 1.0)}, {}));
+    lib.push_back(event("event.rpc", "On RPC", "A network call (RPC) with this name arrived (empty: any).", {str("name", "Hit")},
+                        {str("data"), num("sender"), str("name")}));
+    lib.push_back(event("event.playerJoined", "On Player Joined", "Another player joined the network game.", {},
+                        {num("player")}));
+    lib.push_back(event("event.playerLeft", "On Player Left", "A player left the network game.", {}, {num("player")}));
+    lib.push_back(event("event.connected", "On Connected", "Clients: joined the host's game.", {}, {}));
+    lib.push_back(event("event.disconnected", "On Disconnected", "Clients: the connection to the host ended.", {},
+                        {str("reason")}));
     lib.push_back(event("event.timeline", "On Timeline Event", "A timeline passed an event marker with this name.",
                         {str("name")}, {}));
 
@@ -852,6 +864,93 @@ std::vector<NodeDef> buildLibrary() {
                            if (x.api().save(x.ctx(), 1, key.c_str(), nullptr, 0.0, nullptr, 0, &out) == 0) out = x.number(1);
                            x.out(0, Value::ofNumber(out));
                        }));
+    // Network games
+    lib.push_back(action("net.host", "Host Game", "Network", "Starts a network game others join (port 0: 7778).",
+                         {num("port", 7778.0), str("password")}, {boolean("ok")}, [](Exec& x) {
+                             const std::string password = x.text(2);
+                             const int ok = x.api().network(x.ctx(), 0, "", password.c_str(), static_cast<int>(x.number(1)), nullptr, 0);
+                             x.out(1, Value::ofBool(ok != 0));
+                         }));
+    lib.push_back(action("net.join", "Join Game", "Network", "Joins a host (\"192.168.1.20:7778\", a tunnel's address).",
+                         {str("address", "127.0.0.1:7778"), str("password")}, {boolean("ok")}, [](Exec& x) {
+                             const std::string address = x.text(1);
+                             const std::string password = x.text(2);
+                             const int ok = x.api().network(x.ctx(), 1, address.c_str(), password.c_str(), 0, nullptr, 0);
+                             x.out(1, Value::ofBool(ok != 0));
+                         }));
+    lib.push_back(action("net.leave", "Leave Game", "Network", "Ends the network game (a host closes it for everyone).", {}, {},
+                         [](Exec& x) { x.api().network(x.ctx(), 2, "", "", 0, nullptr, 0); }));
+    lib.push_back(pure("net.state", "Network State", "Network",
+                       "Server: offline or hosting (the game's rules run here). Client: joining or joined.", {},
+                       {boolean("server"), boolean("client"), num("player"), num("players")}, [](Exec& x) {
+                           const int state = x.api().network(x.ctx(), 3, "", "", 0, nullptr, 0);
+                           x.out(0, Value::ofBool(state == 0 || state == 2));
+                           x.out(1, Value::ofBool(state == 1 || state == 3));
+                           x.out(2, Value::ofNumber(x.api().network(x.ctx(), 4, "", "", 0, nullptr, 0)));
+                           x.out(3, Value::ofNumber(x.api().network(x.ctx(), 5, "", "", 0, nullptr, 0)));
+                       }));
+    static constexpr std::array<std::string_view, 4> kRpcTargets = {"Host", "All", "Others", "Owner"};
+    auto rpcTarget = [](const std::string& name) {
+        for (std::size_t i = 0; i < kRpcTargets.size(); ++i) {
+            if (name.size() == kRpcTargets[i].size() &&
+                std::equal(name.begin(), name.end(), kRpcTargets[i].begin(),
+                           [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b)); })) {
+                return static_cast<int>(i);
+            }
+        }
+        return 1;
+    };
+    lib.push_back(action("net.rpc", "Call RPC", "Network",
+                         "Runs On RPC with this name on the entity's graph on other machines. Target: Host, All, Others or Owner.",
+                         {ent(), str("name", "Hit"), any("data"), str("target", "All")}, {}, [rpcTarget](Exec& x) {
+                             const std::string name = x.text(2);
+                             const std::string data = x.in(3).asString();
+                             x.api().rpc(x.ctx(), x.entity(1), name.c_str(), data.data(), static_cast<int>(data.size()),
+                                         rpcTarget(x.text(4)));
+                         }));
+    lib.push_back(action("net.rpcGame", "Call Game RPC", "Network", "Runs On RPC with this name in every graph and script.",
+                         {str("name", "RoundStart"), any("data"), str("target", "All")}, {}, [rpcTarget](Exec& x) {
+                             const std::string name = x.text(1);
+                             const std::string data = x.in(2).asString();
+                             x.api().rpc(x.ctx(), script::kNoEntity, name.c_str(), data.data(), static_cast<int>(data.size()),
+                                         rpcTarget(x.text(3)));
+                         }));
+    lib.push_back(pure("net.authority", "Has Authority", "Network",
+                       "Whether this machine moves the entity (its owner; always offline).", {ent()}, {boolean("authority")},
+                       [](Exec& x) { x.out(0, Value::ofBool(x.api().netEntity(x.ctx(), x.entity(0), 2, 0) != 0)); }));
+    lib.push_back(pure("net.owner", "Owner", "Network", "The player who owns the entity (-1: not shared).", {ent()},
+                       {num("player")}, [](Exec& x) { x.out(0, Value::ofNumber(x.api().netEntity(x.ctx(), x.entity(0), 0, 0))); }));
+    lib.push_back(action("net.setOwner", "Set Owner", "Network", "Hosts: gives the entity to a player (0: the host).",
+                         {ent(), num("player", 1.0)}, {}, [](Exec& x) {
+                             x.api().netEntity(x.ctx(), x.entity(1), 1, static_cast<int>(x.number(2)));
+                         }));
+    lib.push_back(action("net.setNumber", "Set Shared Number", "Network",
+                         "A number every player sees on this entity (whoever has authority sets it).",
+                         {ent(), str("key", "health"), num("value")}, {}, [](Exec& x) {
+                             const std::string key = x.text(2);
+                             x.api().netValue(x.ctx(), x.entity(1), 0, key.c_str(), nullptr, x.number(3), nullptr, 0, nullptr);
+                         }));
+    lib.push_back(pure("net.number", "Shared Number", "Network", "A shared number of the entity.",
+                       {ent(), str("key", "health"), num("fallback")}, {num("value")}, [](Exec& x) {
+                           const std::string key = x.text(1);
+                           double out = x.number(2);
+                           if (x.api().netValue(x.ctx(), x.entity(0), 1, key.c_str(), nullptr, 0.0, nullptr, 0, &out) == 0) out = x.number(2);
+                           x.out(0, Value::ofNumber(out));
+                       }));
+    lib.push_back(action("net.setGameNumber", "Set Game Number", "Network", "A number of the whole game every player sees (hosts set it).",
+                         {str("key", "score"), num("value")}, {}, [](Exec& x) {
+                             const std::string key = x.text(1);
+                             x.api().netValue(x.ctx(), script::kNoEntity, 0, key.c_str(), nullptr, x.number(2), nullptr, 0, nullptr);
+                         }));
+    lib.push_back(pure("net.gameNumber", "Game Number", "Network", "A shared number of the whole game.",
+                       {str("key", "score"), num("fallback")}, {num("value")}, [](Exec& x) {
+                           const std::string key = x.text(0);
+                           double out = x.number(1);
+                           if (x.api().netValue(x.ctx(), script::kNoEntity, 1, key.c_str(), nullptr, 0.0, nullptr, 0, &out) == 0) {
+                               out = x.number(1);
+                           }
+                           x.out(0, Value::ofNumber(out));
+                       }));
     lib.push_back(action("nav.moveTo", "Move To (Navigation)", "AI", "Walks the Nav Agent to a point.", {vec("target")}, {},
                          [](Exec& x) {
                              const Vec3 t = x.vec(1);
@@ -1238,6 +1337,35 @@ bool GraphInstance::update(float dt) {
         const std::string name = evaluate(node, 0).asString();
         return !name.empty() && api_->timeline(api_->context, script::kNoEntity, 4, name.c_str(), nullptr) != 0;
     });
+    return !failed_;
+}
+
+bool GraphInstance::network(const net::NetScriptEvent& event) {
+    if (failed_) return false;
+    using Kind = net::NetScriptEvent::Kind;
+    switch (event.kind) {
+        case Kind::Rpc:
+            return fire("event.rpc", [&](int node) {
+                const std::string name = evaluate(node, 0).asString();
+                if (!name.empty() && name != event.name) return false;
+                output(node, 1) = Value::ofString(event.data);
+                output(node, 2) = Value::ofNumber(static_cast<double>(event.peer));
+                output(node, 3) = Value::ofString(event.name);
+                return true;
+            });
+        case Kind::PeerJoined:
+        case Kind::PeerLeft:
+            return fire(event.kind == Kind::PeerJoined ? "event.playerJoined" : "event.playerLeft", [&](int node) {
+                output(node, 1) = Value::ofNumber(static_cast<double>(event.peer));
+                return true;
+            });
+        case Kind::Connected: return fire("event.connected", nullptr);
+        case Kind::Disconnected:
+            return fire("event.disconnected", [&](int node) {
+                output(node, 1) = Value::ofString(event.data);
+                return true;
+            });
+    }
     return !failed_;
 }
 

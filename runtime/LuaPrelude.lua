@@ -248,6 +248,50 @@ function Behaviour:setUiValue(name, value) engine.uiDocument(6, "", name, value)
 function Behaviour:setUiText(name, text) engine.uiDocument(7, "", name, tostring(text)) end
 function Behaviour:setUiVisible(name, visible) engine.uiDocument(8, "", name, visible and 1 or 0) end
 function Behaviour:uiText(name) return engine.uiDocument(9, "", name) end
+-- Network games: one player hosts, the others join its address. Entities with a Network
+-- Identity are shared; their owner moves them. Handlers: onRpc(name, data, sender),
+-- onPlayerJoined(player), onPlayerLeft(player), onConnected(), onDisconnected(reason).
+local networkStates = { "offline", "joining", "host", "client" }
+local rpcTargets = { host = 0, all = 1, others = 2, owner = 3 }
+local function rpcTarget(target) return rpcTargets[string.lower(target or "all")] or 1 end
+function Behaviour:hostGame(port, password) return engine.network(0, "", password or "", port or 0) ~= 0 end
+function Behaviour:joinGame(address, password) return engine.network(1, address, password or "", 0) ~= 0 end
+function Behaviour:leaveGame() engine.network(2) end
+function Behaviour:networkState() return networkStates[engine.network(3) + 1] end
+function Behaviour:isServer() local s = engine.network(3) return s == 0 or s == 2 end
+function Behaviour:isClient() local s = engine.network(3) return s == 1 or s == 3 end
+function Behaviour:playerId() return engine.network(4) end
+function Behaviour:players()
+    local list = {}
+    for i = 0, engine.network(5) - 1 do list[#list + 1] = engine.network(6, "", "", i) end
+    return list
+end
+function Behaviour:ping() return engine.network(7) end
+function Behaviour:networkError() return engine.network(8) end
+-- target: "all" (default), "host", "others" or "owner"; data: a string (or anything tostring takes)
+function Behaviour:rpc(name, data, target) return engine.rpc(self.entity, name, data, rpcTarget(target)) end
+function Behaviour:rpcOn(entity, name, data, target) return engine.rpc(entity, name, data, rpcTarget(target)) end
+function Behaviour:rpcGame(name, data, target) return engine.rpc(nil, name, data, rpcTarget(target)) end
+function Behaviour:owner(e) return engine.netEntity(e or self.entity, 0) end
+function Behaviour:setOwner(e, player) return engine.netEntity(e, 1, player) ~= 0 end
+function Behaviour:hasAuthority(e) return engine.netEntity(e or self.entity, 2) ~= 0 end
+function Behaviour:isNetworked(e) return engine.netEntity(e or self.entity, 3) ~= 0 end
+function Behaviour:setNetNumber(key, value, e) return engine.netValue(e or self.entity, 0, key, value) end
+function Behaviour:netNumber(key, fallback, e)
+    local v = engine.netValue(e or self.entity, 1, key)
+    if v == nil then return fallback or 0 end
+    return v
+end
+function Behaviour:setNetText(key, text, e) return engine.netValue(e or self.entity, 2, key, tostring(text)) end
+function Behaviour:netText(key, fallback, e) return engine.netValue(e or self.entity, 3, key) or fallback or "" end
+function Behaviour:setGameNumber(key, value) return engine.netValue(nil, 0, key, value) end
+function Behaviour:gameNumber(key, fallback)
+    local v = engine.netValue(nil, 1, key)
+    if v == nil then return fallback or 0 end
+    return v
+end
+function Behaviour:setGameText(key, text) return engine.netValue(nil, 2, key, tostring(text)) end
+function Behaviour:gameText(key, fallback) return engine.netValue(nil, 3, key) or fallback or "" end
 -- Game UI widgets (immediate mode: call every update)
 function Behaviour:button(text, x, y, w, h) return (engine.ui(0, text, x, y, w or 220, h or 48, 0, 0, 0)) end
 function Behaviour:checkbox(text, value, x, y, w, h)

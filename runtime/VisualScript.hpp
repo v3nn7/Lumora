@@ -36,6 +36,10 @@
 #include <unordered_map>
 #include <vector>
 
+namespace lumora::net {
+struct NetScriptEvent;
+}
+
 namespace lumora::visual {
 
 enum class PinType : std::uint8_t { Exec, Number, Bool, Vec3, String, Entity, Any };
@@ -175,6 +179,7 @@ public:
     bool start();
     bool update(float dt);
     bool collision(script::Entity other);
+    bool network(const net::NetScriptEvent& event);  // On RPC, On Player Joined, ...
     [[nodiscard]] const std::string& error() const noexcept { return error_; }
 
     // Used by node implementations (through Exec).

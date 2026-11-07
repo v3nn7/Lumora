@@ -159,6 +159,17 @@ entt::entity Scene::primaryCamera() const {
     return found != entt::null ? found : fallback;
 }
 
+bool Scene::changeUuid(entt::entity entity, Uuid id) {
+    if (!registry_.valid(entity) || !id.isValid()) return false;
+    auto& current = registry_.get<IdComponent>(entity).id;
+    if (current == id) return true;
+    if (uuidMap_.contains(id)) return false;
+    uuidMap_.erase(current);
+    current = id;
+    uuidMap_.emplace(id, entity);
+    return true;
+}
+
 entt::entity Scene::duplicateEntity(entt::entity entity) {
     if (!registry_.valid(entity)) return entt::null;
     const entt::entity parent = parentOf(entity);

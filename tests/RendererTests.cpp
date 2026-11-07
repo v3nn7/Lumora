@@ -2456,3 +2456,142 @@ TEST_F(RendererTest, MaterialAssetsCarryAlphaSidesAndLayers) {
     const auto absorbed = render(tinted);
     EXPECT_LT(absorbed.r, transmitted.r * 0.6f) << "absorbed in the volume";
 }
+
+// ---- Material graphs --------------------------------------------------------------------------
+
+#include "assets/MaterialGraph.hpp"
+
+#include <nlohmann/json.hpp>
+
+namespace {
+
+/// A sphere wearing `material` (project-relative key), lit by the sun, filling the picture.
+std::optional<CapturedImage> renderSphere(Renderer& renderer, AssetLibrary& assets, const std::string& material,
+                                          glm::vec3 position = glm::vec3(0.0f), bool wall = false) {
+    auto scene = std::make_unique<Scene>("Sphere");
+    scene->environment().fogDensity = 0.0f;
+    const auto sun = scene->createEntity("Sun");
+    scene->registry().get<TransformComponent>(sun).rotationDeg = {-40.0f, -35.0f, 0.0f};
+    scene->registry().emplace<LightComponent>(sun).intensity = 3.0f;
+    const auto ball = scene->createEntity("Ball");
+    auto& mesh = scene->registry().emplace<MeshRendererComponent>(ball);
+    mesh.mesh = MeshPrimitive::Sphere;
+    mesh.material = material;
+    scene->registry().get<TransformComponent>(ball).position = position;
+    if (wall) {
+        const auto w = scene->createEntity("Wall");
+        auto& wm = scene->registry().emplace<MeshRendererComponent>(w);
+        wm.baseColor = glm::vec3(0.0f);
+        wm.emissive = {0.0f, 0.0f, 1.0f};
+        wm.emissiveStrength = 1.0f;
+        auto& t = scene->registry().get<TransformComponent>(w);
+        t.position = {0.0f, 0.0f, -3.0f};
+        t.scale = {20.0f, 20.0f, 0.2f};
+    }
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.0f, 1.6f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    RenderSettings settings;
+    settings.assets = &assets;
+    settings.blockOnAssets = true;
+    settings.temporalAntiAliasing = false;
+    settings.bloom = false;
+    auto image = renderer.capture(*scene, cam.view(1.0f), {96, 96}, settings);
+    if (!image) return std::nullopt;
+    return std::move(*image);
+}
+
+nlohmann::json graphNode(int id, std::string_view type, nlohmann::json inputs = nlohmann::json::object()) {
+    return {{"id", id}, {"type", std::string(type)}, {"x", 0}, {"y", 0}, {"inputs", std::move(inputs)}};
+}
+nlohmann::json graphLink(int from, std::string_view fromPin, int to, std::string_view toPin) {
+    return {{"from", from}, {"fromPin", std::string(fromPin)}, {"to", to}, {"toPin", std::string(toPin)}};
+}
+
+} // namespace
+
+TEST_F(RendererTest, MaterialGraphTextureTimesColourMatchesTheSameMaterialAsset) {
+    test::TempDir project;
+    // A texture with a soft gradient and a hole (alpha 0 in the top-left quarter).
+    std::vector<unsigned char> rgba(16 * 16 * 4);
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) {
+            unsigned char* p = &rgba[static_cast<std::size_t>(y * 16 + x) * 4];
+            p[0] = static_cast<unsigned char>(100 + x * 9);
+            p[1] = static_cast<unsigned char>(200 - y * 6);
+            p[2] = 120;
+            p[3] = x < 8 && y < 8 ? 0 : 255;
+        }
+    }
+    std::filesystem::create_directories(project.path() / "Content" / "Textures");
+    const auto png = test::encodePng(16, 16, rgba);
+    std::ofstream(project.path() / "Content" / "Textures" / "grad.png", std::ios::binary)
+        .write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    MaterialAsset lmat;
+    lmat.baseColor = {1.0f, 0.5f, 0.25f};
+    lmat.roughness = 0.6f;
+    lmat.baseColorTexture = "Content/Textures/grad.png";
+    lmat.alphaMode = MaterialAsset::AlphaMode::CutOut;
+    lmat.alphaCutoff = 0.5f;
+    ASSERT_TRUE(saveMaterial(lmat, project.path() / "Content" / "Materials" / "Plain.lmat").has_value());
+    const nlohmann::json graph{
+        {"version", 1},
+        {"nodes", {graphNode(1, "output.material", {{"roughness", 0.6}, {"metallic", 0.0}, {"alphaMode", 1}, {"alphaCutoff", 0.5}}),
+                   graphNode(2, "texture.color", {{"texture", "Content/Textures/grad.png"}}),
+                   graphNode(3, "const.color", {{"color", {1.0, 0.5, 0.25}}}), graphNode(4, "math.multiply")}},
+        {"links", {graphLink(2, "rgb", 4, "a"), graphLink(3, "color", 4, "b"), graphLink(4, "result", 1, "baseColor"),
+                   graphLink(2, "a", 1, "opacity")}}};
+    std::ofstream(project.path() / "Content" / "Materials" / "Graph.lmgraph") << graph.dump(2);
+    AssetLibrary assets(project.path());
+    auto plain = renderSphere(*renderer_, assets, "Content/Materials/Plain.lmat");
+    auto graphed = renderSphere(*renderer_, assets, "Content/Materials/Graph.lmgraph");
+    ASSERT_TRUE(plain && graphed);
+    double difference = 0.0;
+    for (std::size_t i = 0; i < plain->rgba.size(); i += 4) {
+        for (int c = 0; c < 3; ++c) difference += std::abs(int(plain->rgba[i + c]) - int(graphed->rgba[i + c]));
+    }
+    difference /= static_cast<double>(plain->rgba.size() / 4 * 3);
+    EXPECT_LT(difference, 1.5) << "the graph draws what the material asset with the same settings draws";
+    // Not trivially equal: the sphere covers the middle, tinted orange.
+    const auto middle = pixel(*graphed, 48, 48);
+    EXPECT_GT(middle.r, middle.b + 40);
+
+    // Cut out everywhere (opacity 0 below the cutoff): the sphere is gone, in the depth
+    // prepass too (the sky shows, not a hole in black).
+    const nlohmann::json gone{{"version", 1},
+                              {"nodes", {graphNode(1, "output.material", {{"alphaMode", 1}, {"opacity", 0.0}})}},
+                              {"links", nlohmann::json::array()}};
+    std::ofstream(project.path() / "Content" / "Materials" / "Gone.lmgraph") << gone.dump(2);
+    auto empty = renderSphere(*renderer_, assets, "Content/Materials/Gone.lmgraph");
+    ASSERT_TRUE(empty.has_value());
+    const auto sky = pixel(*empty, 48, 48);
+    EXPECT_GT(sky.b, sky.r) << "the sky behind";
+    EXPECT_GT(int(sky.r) + sky.g + sky.b, 200) << "not a black hole";
+}
+
+TEST_F(RendererTest, MaterialGraphWorldOffsetMovesTheMeshInEveryPass) {
+    test::TempDir project;
+    std::filesystem::create_directories(project.path() / "Content" / "Materials");
+    const nlohmann::json graph{
+        {"version", 1},
+        {"nodes", {graphNode(1, "output.material", {{"baseColor", {1.0, 0.1, 0.1}}, {"roughness", 0.9}}),
+                   graphNode(2, "vector.combine", {{"x", 0.9}, {"y", 0.0}, {"z", 0.0}})}},
+        {"links", {graphLink(2, "vector", 1, "worldOffset")}}};
+    std::ofstream(project.path() / "Content" / "Materials" / "Moved.lmgraph") << graph.dump(2);
+    AssetLibrary assets(project.path());
+    auto moved = renderSphere(*renderer_, assets, "Content/Materials/Moved.lmgraph", glm::vec3(0.0f), true);
+    ASSERT_TRUE(moved.has_value());
+    // The sphere (radius 0.5) now sits 0.9 m to the right: the middle shows the blue wall, the
+    // right of the picture the red sphere, drawn (the depth prepass moved it the same way).
+    const auto middle = pixel(*moved, 48, 48);
+    EXPECT_GT(middle.b, middle.r + 40) << "nothing left in the middle";
+    int red = 0;
+    for (std::uint32_t y = 30; y < 66; ++y) {
+        for (std::uint32_t x = 72; x < 96; ++x) {
+            const auto p = pixel(*moved, x, y);
+            if (p.r > p.b + 40) ++red;
+        }
+    }
+    EXPECT_GT(red, 200) << "the sphere, moved and shaded";
+}

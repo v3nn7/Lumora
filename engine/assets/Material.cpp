@@ -1,5 +1,6 @@
 #include "assets/Material.hpp"
 
+#include "assets/MaterialGraph.hpp"
 #include "core/FileSystem.hpp"
 
 #include <nlohmann/json.hpp>
@@ -125,6 +126,17 @@ Result<MaterialAsset> materialFromJson(const nlohmann::json& j) {
 }
 
 Result<MaterialAsset> loadMaterial(const std::filesystem::path& file) {
+    if (file.extension() == kMaterialGraphExtension) {
+        auto program = loadMaterialGraph(file);
+        if (!program) return std::unexpected(program.error());
+        MaterialAsset m;
+        m.baseColor = glm::vec3(1.0f);
+        m.alphaMode = static_cast<MaterialAsset::AlphaMode>(program->alphaMode);
+        m.alphaCutoff = program->alphaCutoff;
+        m.doubleSided = program->twoSided;
+        m.program = std::make_shared<const MaterialProgram>(std::move(*program));
+        return m;
+    }
     auto text = fs::readTextFile(file);
     if (!text) return std::unexpected(text.error());
     const nlohmann::json j = nlohmann::json::parse(*text, nullptr, false);

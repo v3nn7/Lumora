@@ -14,12 +14,14 @@
 #include <entt/entity/entity.hpp>
 
 #include <array>
+#include <memory>
 #include <unordered_map>
 
 namespace lumora {
 class AssetLibrary;
 class Scene;
 struct MaterialAsset;
+struct MaterialProgram;
 }
 
 namespace lumora::render {
@@ -170,6 +172,17 @@ private:
     [[nodiscard]] ModelSurface modelSurface(AssetLibrary& assets, const std::string& meshAsset);
     /// The same for a material asset (.lmat), which replaces everything else.
     [[nodiscard]] static ModelSurface materialSurface(const MaterialAsset& material);
+    /// GPU copies of material graph programs (float textures the shaders interpret).
+    struct GraphProgramGpu {
+        std::weak_ptr<const MaterialProgram> source;
+        nvrhi::TextureHandle fragment, vertex;
+        std::uint32_t fragmentIndex = UINT32_MAX, vertexIndex = UINT32_MAX;
+        std::uint64_t lastUsed = 0;
+    };
+    [[nodiscard]] const GraphProgramGpu& graphProgram(const std::shared_ptr<const MaterialProgram>& program);
+    void releaseGraphPrograms(bool all);
+    std::unordered_map<const MaterialProgram*, GraphProgramGpu> graphPrograms_;
+    std::vector<GraphProgramGpu> retiredGraphPrograms_;
     std::unordered_map<std::string, ModelSurface> modelSurfaces_;
     const AssetLibrary* surfaceAssets_ = nullptr;
     std::uint64_t surfaceGeneration_ = 0;

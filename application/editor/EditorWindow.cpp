@@ -219,7 +219,7 @@ EditorWindow::EditorWindow(app::AppContext& app, Project project, QWidget* paren
     client_->onAcceptsDrop = [](const QList<QUrl>& urls) {
         return std::ranges::any_of(urls, [](const QUrl& url) {
             const QString suffix = QFileInfo(url.toLocalFile()).suffix().toLower();
-            return url.isLocalFile() && (suffix == QLatin1String("lmat") || isModelFile(app::toPath(url.toLocalFile())) ||
+            return url.isLocalFile() && (isMaterialFile(app::toPath(url.toLocalFile())) || isModelFile(app::toPath(url.toLocalFile())) ||
                                          suffix == QLatin1String("lprefab") ||
                                          suffix == QLatin1String("hdr") || isScriptFile(url.toLocalFile()));
         });
@@ -481,7 +481,7 @@ void EditorWindow::buildDocks() {
         // Materials go on the entity they are dropped on; anything else is placed or imported.
         QStringList others;
         for (const QString& file : files) {
-            if (file.endsWith(QString::fromLatin1(kMaterialExtension))) {
+            if (isMaterialFile(app::toPath(file))) {
                 if (target.isValid()) assignMaterial(target, file);
             } else if (isScriptFile(file)) {
                 if (target.isValid()) attachScript(target, file);
@@ -538,10 +538,20 @@ void EditorWindow::buildDocks() {
     timelineDock_ = makeDock(this, tr("Timeline"), QStringLiteral("dock.timeline"), QStringLiteral("animation"), timeline_);
     graph_ = new GraphEditorPanel(app::toQString(project_.rootDir()));
     graphDock_ = makeDock(this, tr("Visual Script"), QStringLiteral("dock.graph"), QStringLiteral("hierarchy"), graph_);
+    materialGraph_ = new GraphEditorPanel(app::toQString(project_.rootDir()), GraphKind::Material);
+    materialGraphDock_ = makeDock(this, tr("Material Graph"), QStringLiteral("dock.materialGraph"), QStringLiteral("sphere"), materialGraph_);
+    materialGraph_->setMaterialPreview([this](const QString& file, int size) { return renderPreview(file, size); });
+    connect(materialGraph_, &GraphEditorPanel::materialSaved, this, [this](const QString& file) {
+        // Every object using it picks it up now, not at the next file check.
+        assets_.reloadMaterial(project_.relativePath(std::filesystem::absolute(app::toPath(file))));
+        if (thumbnails_ != nullptr) thumbnails_->invalidate(file);
+    });
     addDockWidget(Qt::BottomDockWidgetArea, timelineDock_);
     tabifyDockWidget(contentDock, timelineDock_);
     addDockWidget(Qt::BottomDockWidgetArea, graphDock_);
     tabifyDockWidget(contentDock, graphDock_);
+    addDockWidget(Qt::BottomDockWidgetArea, materialGraphDock_);
+    tabifyDockWidget(contentDock, materialGraphDock_);
     contentDock->raise();
     resizeDocks({hierarchy, inspector}, {280, 360}, Qt::Horizontal);
     resizeDocks({contentDock}, {230}, Qt::Vertical);
@@ -579,6 +589,12 @@ void EditorWindow::buildDocks() {
         }
         if (graph_->open(path)) revealDock(graphDock_);
     });
+    auto openMaterialGraph = [this](const QString& path) {
+        if (materialGraph_->isDirty()) materialGraph_->save();  // material graphs save themselves
+        if (materialGraph_->open(path)) revealDock(materialGraphDock_);
+    };
+    connect(content, &ContentBrowserPanel::openMaterialGraphRequested, this, openMaterialGraph);
+    connect(inspector_, &InspectorPanel::openMaterialGraphRequested, this, openMaterialGraph);
     connect(content, &ContentBrowserPanel::assetSelected, inspector_, &InspectorPanel::showAsset);
     connect(content, &ContentBrowserPanel::applyMaterialRequested, this, [this](const QString& path) {
         if (!assignMaterial(ctx_.selectedUuid(), path)) statusBar()->showMessage(tr("Select an object first"), 4000);
@@ -1079,7 +1095,7 @@ std::optional<std::string> EditorWindow::pickMeshAsset(QWidget* parent) {
 
 std::optional<std::string> EditorWindow::pickMaterialAsset(QWidget* parent) {
     const QString file = QFileDialog::getOpenFileName(parent, tr("Choose Material"), app::toQString(project_.contentDir()),
-                                                      tr("Materials (*.lmat)"));
+                                                      tr("Materials (*.lmat *.lmgraph)"));
     if (file.isEmpty()) return std::nullopt;
     std::filesystem::path path = std::filesystem::absolute(app::toPath(file));
     if (project_.relativePath(path).starts_with("..")) {
@@ -1119,7 +1135,7 @@ QImage EditorWindow::renderPreview(const QString& path, int size) {
     scene.registry().emplace<LightComponent>(sun).intensity = 3.0f;
     scene.registry().get<TransformComponent>(sun).rotationDeg = {-40.0f, -35.0f, 0.0f};
     scene.environment().fogDensity = 0.0f;
-    if (file.extension() == kMaterialExtension) {
+    if (isMaterialFile(file)) {
         auto& mesh = scene.registry().emplace<MeshRendererComponent>(scene.createEntity("Ball"));
         mesh.mesh = MeshPrimitive::Sphere;
         mesh.material = relative;
@@ -1376,7 +1392,7 @@ void EditorWindow::dropOnViewport(const QStringList& files, glm::vec2 ndc) {
     for (const QString& file : files) {
         const std::filesystem::path path = std::filesystem::absolute(app::toPath(file));
         const bool inProject = !project_.relativePath(path).starts_with("..");
-        if (path.extension() == kMaterialExtension) {
+        if (isMaterialFile(path)) {
             const entt::entity hit = pickEntity(*scene, ray, &assets_);
             if (hit == entt::null) {
                 statusBar()->showMessage(tr("Drop the material onto an object"), 4000);

@@ -202,6 +202,8 @@ private:
     QDockWidget* timelineDock_ = nullptr;
     class GraphEditorPanel* graph_ = nullptr;
     QDockWidget* graphDock_ = nullptr;
+    class GraphEditorPanel* materialGraph_ = nullptr;  // material graphs (.lmgraph)
+    QDockWidget* materialGraphDock_ = nullptr;
     QByteArray defaultLayout_;
 
     QAction* newScene_ = nullptr;

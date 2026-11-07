@@ -5,8 +5,10 @@
 #include <nlohmann/json.hpp>
 
 #include <QGraphicsView>
+#include <QImage>
 #include <QWidget>
 
+#include <functional>
 #include <map>
 #include <optional>
 #include <vector>
@@ -38,11 +40,25 @@ class GraphCommentItem;
 /// right; drag one onto the canvas for a Get or Set node. While the game plays, the nodes and
 /// links that run light up and output pins show their values.
 /// Saving writes the file, which a running game reloads at once.
+/// What a graph panel edits: visual scripts (.lgraph) or material graphs (.lmgraph), each with
+/// its own node library. Material graphs have no variables and no live view; they are saved
+/// a moment after every change (the scene shows it at once), compiled to report problems, and
+/// show a sphere wearing the material.
+enum class GraphKind { VisualScript, Material };
+
 class LUMORA_EDITOR_API GraphEditorPanel final : public QWidget {
     Q_OBJECT
 public:
-    explicit GraphEditorPanel(QString projectRoot, QWidget* parent = nullptr);
+    explicit GraphEditorPanel(QString projectRoot, GraphKind kind = GraphKind::VisualScript, QWidget* parent = nullptr);
     ~GraphEditorPanel() override;
+
+    [[nodiscard]] GraphKind kind() const noexcept { return kind_; }
+    /// Material graphs: renders the preview sphere (absolute .lmgraph path, size in pixels).
+    void setMaterialPreview(std::function<QImage(const QString&, int)> preview);
+    /// Material graphs: why the graph does not compile (empty when it does).
+    [[nodiscard]] const QString& compileError() const noexcept { return compileError_; }
+    /// Material graphs: the preview image (null without a preview renderer).
+    [[nodiscard]] QImage previewImage() const;
 
     bool open(const QString& file);
     bool save();
@@ -120,6 +136,8 @@ public:
 
 signals:
     void dirtyChanged(bool dirty);
+    /// A material graph was written (the scene should re-read it).
+    void materialSaved(const QString& file);
 
 private:
     friend class GraphView;
@@ -154,6 +172,11 @@ private:
     [[nodiscard]] nlohmann::json variablesJson() const;
     [[nodiscard]] GraphPinItem* pin(int node, std::string_view name, bool output) const;
     void pinDragFinished(GraphPinItem* from, QPointF scenePos);
+    [[nodiscard]] const visual::NodeDef* findNode(std::string_view type) const;
+    [[nodiscard]] const std::vector<visual::NodeDef>& library() const;
+    /// Whether a link between pins of these types may be made in this kind of graph.
+    [[nodiscard]] bool canLink(int fromType, int toType) const;
+    void materialChanged();
 
     QString root_;
     QString file_;
@@ -178,6 +201,12 @@ private:
     bool live_ = false;
     bool restoring_ = false;
     int pasteCount_ = 0;
+    GraphKind kind_ = GraphKind::VisualScript;
+    QLabel* preview_ = nullptr;
+    QLabel* status_ = nullptr;
+    QTimer* autoSave_ = nullptr;
+    QString compileError_;
+    std::function<QImage(const QString&, int)> previewRenderer_;
 };
 
 /// The canvas: pans with the middle mouse button (or Alt + left), zooms with the wheel.

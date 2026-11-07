@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 
 namespace lumora {
@@ -57,16 +58,25 @@ struct MaterialAsset {
     float attenuationDistance = 0.0f;  // 0 = clear
     glm::vec3 attenuationColor{1.0f};
 
+    /// A material graph (.lmgraph) computes the surface instead of the fields above (except
+    /// alpha mode, cutoff and two sides, which come from its output node).
+    std::shared_ptr<const struct MaterialProgram> program;
+
     [[nodiscard]] TextureTransform uvTransform() const;
 
     friend bool operator==(const MaterialAsset&, const MaterialAsset&) = default;
 };
 
 inline constexpr const char* kMaterialExtension = ".lmat";
+/// A material an entity can use: a .lmat or a material graph (.lmgraph).
+[[nodiscard]] inline bool isMaterialFile(const std::filesystem::path& file) {
+    return file.extension() == ".lmat" || file.extension() == ".lmgraph";
+}
 
 [[nodiscard]] nlohmann::json materialToJson(const MaterialAsset& material);
 /// Missing fields keep their defaults; wrong types are errors.
 [[nodiscard]] Result<MaterialAsset> materialFromJson(const nlohmann::json& json);
+/// A .lmat, or a material graph (.lmgraph), compiled.
 [[nodiscard]] Result<MaterialAsset> loadMaterial(const std::filesystem::path& file);
 /// Atomic write (temporary file + rename): the renderer never reads half a file.
 [[nodiscard]] Result<> saveMaterial(const MaterialAsset& material, const std::filesystem::path& file);

@@ -1,5 +1,9 @@
 #include "editor/ContentBrowserPanel.hpp"
 
+#include "assets/MaterialGraph.hpp"
+
+#include <nlohmann/json.hpp>
+
 #include "common/Theme.hpp"
 #include "assets/Material.hpp"
 #include "scene/Timeline.hpp"
@@ -45,7 +49,7 @@ bool isModel(const QFileInfo& info) { return hasSuffix(info, {"glb", "gltf", "fb
 bool isPrefab(const QFileInfo& info) { return hasSuffix(info, {"lprefab"}); }
 /// Equirectangular HDR environment: dropping or opening one makes it the scene's sky.
 bool isHdr(const QFileInfo& info) { return hasSuffix(info, {"hdr", "exr"}); }
-bool isMaterial(const QFileInfo& info) { return hasSuffix(info, {"lmat"}); }
+bool isMaterial(const QFileInfo& info) { return hasSuffix(info, {"lmat", "lmgraph"}); }
 bool isCode(const QFileInfo& info) {
     return hasSuffix(info, {"cpp", "hpp", "h", "cc", "cxx", "inl", "txt", "md", "json", "lumora", "lscene", "lprefab", "lua",
                             "lanim"});
@@ -274,6 +278,8 @@ void ContentBrowserPanel::activate(const QString& path) {
         emit addModelRequested(path);
     } else if (isHdr(info)) {
         emit importRequested({path}, current_);
+    } else if (info.suffix() == QLatin1String("lmgraph")) {
+        emit openMaterialGraphRequested(path);
     } else if (isMaterial(info)) {
         emit assetSelected(path);
     } else if (info.suffix() == QLatin1String("ltimeline")) {
@@ -291,6 +297,7 @@ void ContentBrowserPanel::populateNewMenu(QMenu& menu) {
     menu.addAction(app::theme::icon(QStringLiteral("folder")), tr("Folder…"), this, &ContentBrowserPanel::newFolder);
     menu.addAction(app::theme::icon(QStringLiteral("scene")), tr("Scene…"), this, &ContentBrowserPanel::newScene);
     menu.addAction(app::theme::icon(QStringLiteral("sphere")), tr("Material…"), this, &ContentBrowserPanel::newMaterial);
+    menu.addAction(app::theme::icon(QStringLiteral("sphere")), tr("Material Graph…"), this, &ContentBrowserPanel::newMaterialGraph);
     menu.addAction(app::theme::icon(QStringLiteral("animation")), tr("Timeline…"), this, &ContentBrowserPanel::newTimeline);
     menu.addAction(app::theme::icon(QStringLiteral("hierarchy")), tr("Visual Script…"), this, &ContentBrowserPanel::newVisualScript);
     menu.addAction(app::theme::icon(QStringLiteral("code")), tr("Lua Script…"), this, &ContentBrowserPanel::newLuaScript);
@@ -473,6 +480,23 @@ void ContentBrowserPanel::newAnimatorController() {
         return;
     }
     emit openCodeRequested(path);
+}
+
+void ContentBrowserPanel::newMaterialGraph() {
+    const QString name = askFileName(this, tr("New Material Graph"), tr("Material name"), tr("Surface"), QStringLiteral(".lmgraph"));
+    if (name.isEmpty()) return;
+    const QString path = createMaterialGraph(name);
+    if (path.isEmpty()) {
+        QMessageBox::warning(this, tr("New Material Graph"), tr("Could not create %1 (does it exist already?).").arg(name));
+    }
+}
+
+QString ContentBrowserPanel::createMaterialGraph(QString name) {
+    if (!name.endsWith(QLatin1String(".lmgraph"))) name += QStringLiteral(".lmgraph");
+    const QString path = QDir(current_).filePath(name);
+    if (!writeNewFile(path, QByteArray::fromStdString(defaultMaterialGraph().dump(2) + "\n"))) return {};
+    emit openMaterialGraphRequested(path);
+    return path;
 }
 
 QString ContentBrowserPanel::createMaterial(QString name) {

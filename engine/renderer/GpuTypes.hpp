@@ -122,6 +122,9 @@ struct GpuObject {
     glm::vec4 sheen{0.0f};                           // rgb sheen colour, w sheen roughness
     glm::vec4 transmission{0.0f};  // x transmission, y clearcoat roughness, z thickness (m), w attenuation distance (m, 0 = clear)
     glm::vec4 attenuation{1.0f, 1.0f, 1.0f, 0.0f};  // rgb attenuation colour (volume); w: asfloat(uv1Maps) maps on UV set 1
+    // Material graph (MaterialGraph.hpp): bindless program textures and their instruction counts.
+    glm::uvec4 graph{kNoTexture, 0u, kNoTexture, 0u};  // x fragment program, y its length, z vertex program, w its length
+    glm::uvec4 graphTextures[2]{glm::uvec4(kNoTexture), glm::uvec4(kNoTexture)};  // the graph's texture slots (bindless)
 };
 
 struct PushConstants {
@@ -156,7 +159,8 @@ static_assert(sizeof(FrameConstants) ==
                   64 * kMaxLights);
 static_assert(sizeof(GpuProbeVolume) == 64);
 static_assert(sizeof(GpuReflectionProbe) == 64);
-static_assert(sizeof(GpuObject) == 368);
+static_assert(sizeof(GpuObject) == 416);
+static_assert(offsetof(GpuObject, graph) == 368);
 static_assert(offsetof(GpuObject, uvTransformU) == 272);
 static_assert(offsetof(GpuObject, attenuation) == 352);
 static_assert(offsetof(GpuObject, previousWorld) == 208);

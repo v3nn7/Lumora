@@ -41,6 +41,10 @@ public:
     void showAsset(const QString& absolutePath);
     [[nodiscard]] const QString& shownAsset() const noexcept { return assetPath_; }
 
+signals:
+    /// "Edit Material Graph" on an object using a material graph.
+    void openMaterialGraphRequested(const QString& file);
+
 private:
     void rebuild();
     void buildMaterialAsset();

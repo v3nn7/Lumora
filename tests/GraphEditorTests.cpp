@@ -415,3 +415,73 @@ TEST(GraphEditor, Snapshot) {
     visual::trace::setEnabled(false);
     visual::trace::clear();
 }
+
+#include "assets/Material.hpp"
+#include "assets/MaterialGraph.hpp"
+
+#include <QElapsedTimer>
+#include <QLabel>
+#include <QThread>
+
+#include <nlohmann/json.hpp>
+
+TEST(GraphEditor, MaterialGraphsBuildSaveThemselvesAndCompile) {
+    test::TempDir dir;
+    const QString root = QString::fromStdString(dir.path().string());
+    QDir(root).mkpath(QStringLiteral("Content/Materials"));
+    const QString file = root + QStringLiteral("/Content/Materials/Rust.lmgraph");
+    {
+        QFile f(file);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write(QByteArray::fromStdString(defaultMaterialGraph().dump()));
+    }
+    GraphEditorPanel panel(root, editor::GraphKind::Material);
+    ASSERT_TRUE(panel.open(file));
+    EXPECT_EQ(panel.nodeCount(), 1u) << "the Material Output";
+    EXPECT_TRUE(panel.compileError().isEmpty());
+    EXPECT_EQ(panel.addNode("event.start", {0, 0}), 0) << "visual script nodes are not material nodes";
+    const int texture = panel.addNode("texture.color", {-500, 0});
+    const int tint = panel.addNode("const.color", {-500, 200});
+    const int multiply = panel.addNode("math.multiply", {-250, 0});
+    const int noise = panel.addNode("noise.value", {-250, 250});
+    ASSERT_GT(texture * tint * multiply * noise, 0);
+    const int output = 1;
+    panel.setLiteral(texture, "texture", "Content/Textures/rust.png");
+    panel.setLiteral(tint, "color", nlohmann::json::array({0.8, 0.4, 0.2}));
+    EXPECT_TRUE(panel.connectPins(texture, "rgb", multiply, "a"));
+    EXPECT_TRUE(panel.connectPins(tint, "color", multiply, "b"));
+    EXPECT_TRUE(panel.connectPins(multiply, "result", output, "baseColor"));
+    EXPECT_TRUE(panel.connectPins(noise, "value", output, "roughness"));
+    EXPECT_TRUE(panel.connectPins(multiply, "result", output, "metallic")) << "a vector into a number takes its first component";
+    EXPECT_TRUE(panel.isDirty());
+
+    // Saved by itself a moment later, compiled, and readable as a material.
+    auto waitSaved = [&] {
+        QElapsedTimer timer;
+        timer.start();
+        while (panel.isDirty() && timer.elapsed() < 3000) {
+            QCoreApplication::processEvents();
+            QThread::msleep(10);
+        }
+    };
+    waitSaved();
+    EXPECT_FALSE(panel.isDirty());
+    EXPECT_TRUE(panel.compileError().isEmpty()) << panel.compileError().toStdString();
+    auto material = loadMaterial(std::filesystem::path(file.toStdU16String()));
+    ASSERT_TRUE(material.has_value()) << material.error().message;
+    ASSERT_NE(material->program, nullptr);
+    ASSERT_EQ(material->program->textures.size(), 1u);
+    EXPECT_EQ(material->program->textures[0].key, "Content/Textures/rust.png");
+    auto* status = panel.findChild<QLabel*>(QStringLiteral("materialGraphStatus"));
+    ASSERT_NE(status, nullptr);
+    EXPECT_TRUE(status->text().contains(QStringLiteral("1 texture"))) << status->text().toStdString();
+
+    // A second Material Output does not compile: the panel says so.
+    panel.addNode("output.material", {300, 300});
+    waitSaved();
+    EXPECT_FALSE(panel.compileError().isEmpty());
+    EXPECT_TRUE(status->text().startsWith(QStringLiteral("Does not compile"))) << status->text().toStdString();
+    panel.undo();
+    waitSaved();
+    EXPECT_TRUE(panel.compileError().isEmpty());
+}

@@ -52,10 +52,15 @@ signals:
     void openTimelineRequested(const QString& path);
     /// A visual script (.lgraph) should open in the Visual Script panel.
     void openGraphRequested(const QString& path);
+    /// A material graph (.lmgraph) to edit.
+    void openMaterialGraphRequested(const QString& path);
 
 public:
     /// Writes a default material into the open folder; returns its path (empty on failure).
     QString createMaterial(QString name);
+    /// Creates a material graph (a Material Output only) in the current folder and opens it;
+    /// empty if it exists already.
+    QString createMaterialGraph(QString name);
     /// Starter Lua behaviour / visual script in the open folder; their path (empty on failure).
     QString createLuaScript(QString name);
     QString createVisualScript(QString name);
@@ -72,6 +77,7 @@ private:
     void newFolder();
     void newScene();
     void newMaterial();
+    void newMaterialGraph();
     void newTimeline();
     void newLuaScript();
     void newVisualScript();

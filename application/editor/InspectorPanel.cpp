@@ -136,6 +136,18 @@ QWidget* InspectorPanel::materialSection(const std::string& key) {
     hint->setWordWrap(true);
     hint->setContentsMargins(8, 6, 8, 0);
     layout->addWidget(hint);
+    if (file.endsWith(QLatin1String(".lmgraph"))) {
+        // A material graph is edited as a graph, never through the fields (they would overwrite it).
+        auto* open = new QPushButton(tr("Edit Material Graph"));
+        open->setObjectName(QStringLiteral("editMaterialGraph"));
+        connect(open, &QPushButton::clicked, this, [this, file] { emit openMaterialGraphRequested(file); });
+        auto* row = new QHBoxLayout;
+        row->setContentsMargins(8, 4, 8, 4);
+        row->addWidget(open);
+        row->addStretch(1);
+        layout->addLayout(row);
+        return section;
+    }
     layout->addWidget(new MaterialEditor(file, key, assets_, pickAsset_, materialPreview_));
     return section;
 }

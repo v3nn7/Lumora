@@ -190,6 +190,21 @@ i `volume` (z 1.2), drugi zestaw UV, morph targets (dziś pomijane). Nowe pola w
 `MaterialEditor.cpp` dostaje te pola i podgląd na kuli.
 
 ### 2.5 Edytor materiałów w węzłach (L), zależy od 2.3
+- **Stan: zrobione, inną drogą niż w planie.** Graf (`.lmgraph`, ten sam JSON co skrypty wizualne)
+  kompiluje się (`MaterialGraph.cpp`) do programu w teksturze RGBA32F, który jeden interpreter
+  (`shaders/material_graph.hlsli`, 32 rejestry float4, do 256 instrukcji, 8 tekstur) wykonuje we
+  wszystkich przebiegach: powierzchnia w `mesh.hlsl`, alfa w maskowanej głębi i cieniach, przesunięcie
+  wierzchołków (wiatr) w każdym VS. Zmiany widać od razu, bez kompilatora shaderów w edytorze i bez
+  osobnych potoków; działa tak samo na D3D12 i potem na webie. Generowanie HLSL z tego samego grafu
+  dla gotowej gry (szybsze shadery) zostaje jako optymalizacja na później.
+- Węzły: wejścia (UV, UV 2, pozycje, normalna, widok, czas), stałe, tekstury (kolor, dane, mapa
+  normalnych), Tiling & Offset, Panner, matematyka, Split/Combine, Blend Layers, Fresnel, Slope Mask,
+  Noise, Wind, Material Output (z trybem alfy, progiem i dwustronnością). Edytor: `GraphEditorPanel`
+  w trybie materiału (dok „Material Graph”), zapis sam po zmianie, błędy kompilacji i podgląd kuli
+  obok płótna; Content Browser: New > Material Graph, przeciąganie na obiekty jak `.lmat`.
+- **Ograniczenia:** program wierzchołków widzi tylko pozycje i czas (żeby każdy przebieg liczył to samo),
+  tekstury czyta tam najbliższym tekselem (glslang psuje samplery w VS); ruch od wiatru nie trafia do
+  wektorów ruchu (TAA), a obiekty z wiatrem przerysowują cienie co klatkę.
 - **Jak:** front na istniejącym `GraphEditorPanel` (płótno, cofanie, schowek, komentarze już są);
   węzły: tekstury, UV i kafelkowanie, mieszanie warstw, maski, kolor, matematyka, czas, wiatr
   dla roślinności. Graf kompiluje się do fragmentu HLSL wstawianego w `mesh.hlsl` jako wariant;

@@ -1,5 +1,6 @@
 #include "editor/GraphEditorPanel.hpp"
 
+#include "assets/MaterialGraph.hpp"
 #include "common/Theme.hpp"
 #include "runtime/ScriptNames.hpp"
 #include "runtime/VisualScript.hpp"
@@ -28,6 +29,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPainter>
+#include <QPixmap>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QShortcut>
@@ -41,6 +43,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
+#include <format>
 #include <memory>
 
 namespace lumora::editor {
@@ -48,6 +52,52 @@ namespace lumora::editor {
 using visual::NodeDef;
 using visual::PinDef;
 using visual::PinType;
+
+namespace {
+
+/// The material graph nodes (engine/assets/MaterialGraph.hpp) as editor node definitions: pure
+/// nodes, numbers, vectors, a texture's asset key; link-only inputs (UV, position) get no field.
+const std::vector<NodeDef>& materialNodeLibrary() {
+    static std::deque<std::string> texts;  // vector defaults as "x,y,z" (string_views point here)
+    static const std::vector<NodeDef> library = [] {
+        std::vector<NodeDef> out;
+        auto pin = [](const matgraph::Pin& p) {
+            PinDef d;
+            d.name = p.name;
+            d.label = p.label;
+            switch (p.kind) {
+            case matgraph::PinKind::Float: d.type = PinType::Number; d.defaultNumber = p.x; break;
+            case matgraph::PinKind::Bool: d.type = PinType::Bool; d.defaultNumber = p.x; break;
+            case matgraph::PinKind::Texture: d.type = PinType::String; d.hint = visual::PinHint::Asset; break;
+            case matgraph::PinKind::Vector:
+                d.type = PinType::Vec3;
+                if (p.defaultText == "auto") {
+                    d.defaultText = "auto";
+                } else {
+                    texts.push_back(std::format("{},{},{}", p.x, p.y, p.z));
+                    d.defaultText = texts.back();
+                }
+                break;
+            }
+            return d;
+        };
+        for (const matgraph::NodeType& t : matgraph::nodeTypes()) {
+            NodeDef d;
+            d.type = t.type;
+            d.title = t.title;
+            d.category = t.category;
+            d.description = t.description;
+            d.pure = true;
+            for (const matgraph::Pin& p : t.inputs) d.inputs.push_back(pin(p));
+            for (const matgraph::Pin& p : t.outputs) d.outputs.push_back(pin(p));
+            out.push_back(std::move(d));
+        }
+        return out;
+    }();
+    return library;
+}
+
+} // namespace
 
 namespace {
 
@@ -356,7 +406,7 @@ protected:
 
 private:
     QGraphicsProxyWidget* createEditor(const PinDef& pin, int index) {
-        if (pin.type == PinType::Exec) return nullptr;
+        if (pin.type == PinType::Exec || pin.defaultText == "auto") return nullptr;  // link-only (material UV, position)
         const std::string key(pin.name);
         if (!literals_.contains(key)) literals_[key] = defaultLiteral(pin);
         const nlohmann::json value = literals_[key];
@@ -596,7 +646,8 @@ namespace {
 
 /// Search box over the node library; returns the chosen node type (empty if cancelled).
 /// `accept` narrows the list (nodes that fit a dragged pin).
-std::string pickNode(QWidget* parent, QPoint globalPos, const std::function<bool(const NodeDef&)>& accept = {}) {
+std::string pickNode(QWidget* parent, QPoint globalPos, const std::vector<NodeDef>& library,
+                     const std::function<bool(const NodeDef&)>& accept = {}) {
     QDialog dialog(parent, Qt::Popup);
     auto* layout = new QVBoxLayout(&dialog);
     layout->setContentsMargins(6, 6, 6, 6);
@@ -609,7 +660,7 @@ std::string pickNode(QWidget* parent, QPoint globalPos, const std::function<bool
     dialog.move(globalPos);
     auto fill = [&](const QString& filter) {
         list->clear();
-        for (const NodeDef& d : visual::nodeLibrary()) {
+        for (const NodeDef& d : library) {
             if (isReroute(d.type) || (accept && !accept(d))) continue;  // reroutes come from double-clicking a link
             const QString title = qs(d.title);
             const QString category = qs(d.category);
@@ -851,11 +902,14 @@ void GraphView::drawBackground(QPainter* painter, const QRectF& rect) {
 
 // ---- GraphEditorPanel ---------------------------------------------------------------------------
 
-GraphEditorPanel::GraphEditorPanel(QString projectRoot, QWidget* parent) : QWidget(parent), root_(std::move(projectRoot)) {
+GraphEditorPanel::GraphEditorPanel(QString projectRoot, GraphKind kind, QWidget* parent)
+    : QWidget(parent), root_(std::move(projectRoot)), kind_(kind) {
+    const bool material = kind_ == GraphKind::Material;
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, 4, 4, 4);
     auto* bar = new QHBoxLayout;
-    title_ = new QLabel(tr("No visual script open — create one in the Content Browser (New > Visual Script)"));
+    title_ = new QLabel(material ? tr("No material graph open — create one in the Content Browser (New > Material Graph)")
+                                 : tr("No visual script open — create one in the Content Browser (New > Visual Script)"));
     auto* add = new QToolButton;
     add->setIcon(app::theme::icon(QStringLiteral("plus")));
     add->setText(tr("Add Node"));
@@ -901,7 +955,20 @@ GraphEditorPanel::GraphEditorPanel(QString projectRoot, QWidget* parent) : QWidg
     auto* side = new QWidget;
     auto* sideLayout = new QVBoxLayout(side);
     sideLayout->setContentsMargins(0, 0, 0, 0);
-    sideLayout->addWidget(new QLabel(tr("Variables")));
+    if (material) {
+        // A sphere wearing the material and whether it compiles, instead of variables.
+        preview_ = new QLabel;
+        preview_->setObjectName(QStringLiteral("materialGraphPreview"));
+        preview_->setAlignment(Qt::AlignCenter);
+        preview_->setMinimumSize(180, 180);
+        sideLayout->addWidget(preview_);
+        status_ = new QLabel;
+        status_->setObjectName(QStringLiteral("materialGraphStatus"));
+        status_->setWordWrap(true);
+        sideLayout->addWidget(status_);
+    }
+    auto* variablesLabel = new QLabel(tr("Variables"));
+    sideLayout->addWidget(variablesLabel);
     variables_ = new QTableWidget(0, 3);
     variables_->setHorizontalHeaderLabels({tr("Name"), tr("Type"), tr("Value")});
     variables_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
@@ -913,7 +980,11 @@ GraphEditorPanel::GraphEditorPanel(QString projectRoot, QWidget* parent) : QWidg
     varButtons->addWidget(addVar);
     varButtons->addWidget(removeVar);
     sideLayout->addLayout(varButtons);
-    auto* help = new QLabel(tr("Drag from a pin to another pin to link them, or to empty canvas for nodes that fit. "
+    auto* help = new QLabel(material ? tr("Link nodes into the Material Output: textures, UVs, colours, math, layers and masks "
+                                          "per pixel; World Offset (wind) per vertex. Changes are saved and shown at once. "
+                                          "Space / right-click: add node. C: comment. Ctrl+Z/C/V/D: undo, copy, paste, duplicate. "
+                                          "Middle mouse: pan, wheel: zoom.")
+                                     : tr("Drag from a pin to another pin to link them, or to empty canvas for nodes that fit. "
                                "Space / right-click: add node. Right-click a node, pin or link to delete it or cut links. "
                                "Double-click a link: reroute dot. C: comment. Ctrl+Z/C/V/D: undo, copy, paste, duplicate. "
                                "Drag a variable here for Get/Set (Ctrl: Get, Alt: Set). Middle mouse: pan, wheel: zoom."));
@@ -987,8 +1058,49 @@ GraphEditorPanel::GraphEditorPanel(QString projectRoot, QWidget* parent) : QWidg
     liveTimer_ = new QTimer(this);
     liveTimer_->setInterval(100);
     connect(liveTimer_, &QTimer::timeout, this, &GraphEditorPanel::refreshLive);
-    liveTimer_->start();
+    if (material) {
+        variablesLabel->hide();
+        variables_->hide();
+        addVar->hide();
+        removeVar->hide();
+        // Saved shortly after each change, like the material editor.
+        autoSave_ = new QTimer(this);
+        autoSave_->setSingleShot(true);
+        autoSave_->setInterval(300);
+        connect(autoSave_, &QTimer::timeout, this, [this] {
+            if (!file_.isEmpty() && dirty_) save();
+        });
+    } else {
+        liveTimer_->start();
+    }
     setEnabled(true);
+}
+
+void GraphEditorPanel::setMaterialPreview(std::function<QImage(const QString&, int)> preview) {
+    previewRenderer_ = std::move(preview);
+    materialChanged();
+}
+
+QImage GraphEditorPanel::previewImage() const {
+    return preview_ != nullptr ? preview_->pixmap().toImage() : QImage();
+}
+
+void GraphEditorPanel::materialChanged() {
+    if (kind_ != GraphKind::Material || file_.isEmpty()) return;
+    auto program = compileMaterialGraph(document());
+    compileError_ = program ? QString() : QString::fromStdString(program.error().message);
+    if (status_ != nullptr) {
+        status_->setText(program ? tr("%n step(s), %1 texture(s)", "", static_cast<int>(program->fragmentInstructions()))
+                                       .arg(program->textures.size()) +
+                                       (program->vertex.empty() ? QString() : tr(", moves vertices"))
+                                 : tr("Does not compile: %1").arg(compileError_));
+        status_->setStyleSheet(program ? QStringLiteral("color: %1;").arg(app::theme::kTextMuted.name())
+                                       : QStringLiteral("color: #e06c75;"));
+    }
+    if (preview_ != nullptr && previewRenderer_ && program) {
+        const QImage image = previewRenderer_(file_, 180);
+        if (!image.isNull()) preview_->setPixmap(QPixmap::fromImage(image));
+    }
 }
 
 GraphEditorPanel::~GraphEditorPanel() = default;
@@ -998,6 +1110,7 @@ GraphEditorPanel::~GraphEditorPanel() = default;
 void GraphEditorPanel::changed() {
     if (loading_ || restoring_) return;
     setDirty(true);
+    if (autoSave_ != nullptr) autoSave_->start();
     commitTimer_->start();
 }
 
@@ -1038,6 +1151,7 @@ void GraphEditorPanel::restore(const nlohmann::json& doc) {
     loadDocument(doc);
     restoring_ = false;
     setDirty(document() != saved_);
+    if (autoSave_ != nullptr && dirty_) autoSave_->start();  // material graphs: undo is saved too
 }
 
 // ---- Clipboard ------------------------------------------------------------------------------------
@@ -1124,7 +1238,7 @@ bool GraphEditorPanel::pasteDocument(const nlohmann::json& doc, std::optional<QP
     std::vector<int> pasted;
     scene_->clearSelection();
     for (const auto& n : doc["nodes"]) {
-        const NodeDef* def = visual::findNode(n.value("type", std::string()));
+        const NodeDef* def = findNode(n.value("type", std::string()));
         if (def == nullptr) continue;
         const int id = nextId_++;
         auto* item = new GraphNodeItem(*this, id, *def, n.value("inputs", nlohmann::json::object()));
@@ -1205,6 +1319,7 @@ int GraphEditorPanel::insertReroute(int fromNode, std::string_view fromPin, int 
 }
 
 int GraphEditorPanel::addVariableNode(const QString& name, bool set, QPointF at) {
+    if (kind_ == GraphKind::Material) return 0;  // no variables in material graphs
     const NodeDef* def = visual::findNode(set ? "var.set" : "var.get");
     if (def == nullptr) return 0;
     const int id = nextId_++;
@@ -1322,6 +1437,26 @@ void GraphEditorPanel::clear() {
     nextId_ = 1;
 }
 
+bool GraphEditorPanel::canLink(int fromType, int toType) const {
+    // Material graphs: a vector into a number takes its first component.
+    if (kind_ == GraphKind::Material && fromType == static_cast<int>(PinType::Vec3) && toType == static_cast<int>(PinType::Number)) {
+        return true;
+    }
+    return compatible(fromType, toType);
+}
+
+const NodeDef* GraphEditorPanel::findNode(std::string_view type) const {
+    if (kind_ == GraphKind::VisualScript) return visual::findNode(type);
+    for (const NodeDef& d : materialNodeLibrary()) {
+        if (d.type == type) return &d;
+    }
+    return nullptr;
+}
+
+const std::vector<NodeDef>& GraphEditorPanel::library() const {
+    return kind_ == GraphKind::Material ? materialNodeLibrary() : visual::nodeLibrary();
+}
+
 bool GraphEditorPanel::compatible(int fromType, int toType) {
     const auto from = static_cast<PinType>(fromType);
     const auto to = static_cast<PinType>(toType);
@@ -1335,7 +1470,7 @@ bool GraphEditorPanel::compatible(int fromType, int toType) {
 }
 
 int GraphEditorPanel::addNode(std::string_view type, QPointF position) {
-    const NodeDef* def = visual::findNode(type);
+    const NodeDef* def = findNode(type);
     if (def == nullptr) return 0;
     const int id = nextId_++;
     auto* item = new GraphNodeItem(*this, id, *def, nlohmann::json::object());
@@ -1374,7 +1509,7 @@ bool GraphEditorPanel::connectPins(int fromNode, std::string_view fromPin, int t
     GraphPinItem* out = pin(fromNode, fromPin, true);
     GraphPinItem* in = pin(toNode, toPin, false);
     if (out == nullptr || in == nullptr || fromNode == toNode) return false;
-    if (!compatible(static_cast<int>(out->def().type), static_cast<int>(in->def().type))) return false;
+    if (!canLink(static_cast<int>(out->def().type), static_cast<int>(in->def().type))) return false;
     const bool exec = out->def().type == PinType::Exec;
     for (auto l = links_.begin(); l != links_.end();) {
         const bool same = l->fromNode == fromNode && l->fromPin == fromPin && l->toNode == toNode && l->toPin == toPin;
@@ -1624,11 +1759,11 @@ void GraphEditorPanel::pinDragFinished(GraphPinItem* from, QPointF scenePos) {
         const PinType type = from->def().type;
         const bool output = from->output();
         auto fits = [&](const PinDef& p) {
-            return output ? compatible(static_cast<int>(type), static_cast<int>(p.type))
-                          : compatible(static_cast<int>(p.type), static_cast<int>(type));
+            return output ? canLink(static_cast<int>(type), static_cast<int>(p.type))
+                          : canLink(static_cast<int>(p.type), static_cast<int>(type));
         };
         const QPoint global = view_->viewport()->mapToGlobal(view_->mapFromScene(scenePos));
-        const std::string chosen = pickNode(this, global, [&](const NodeDef& d) {
+        const std::string chosen = pickNode(this, global, library(), [&](const NodeDef& d) {
             return std::ranges::any_of(output ? d.inputs : d.outputs, fits);
         });
         if (chosen.empty()) return;
@@ -1652,7 +1787,7 @@ void GraphEditorPanel::pinDragFinished(GraphPinItem* from, QPointF scenePos) {
 void GraphEditorPanel::showNodePicker(QPointF scenePosition) {
     if (file_.isEmpty()) return;
     const QPoint global = view_->viewport()->mapToGlobal(view_->mapFromScene(scenePosition));
-    const std::string type = pickNode(this, global);
+    const std::string type = pickNode(this, global, library());
     if (!type.empty()) addNode(type, scenePosition);
 }
 
@@ -1755,7 +1890,7 @@ void GraphEditorPanel::loadDocument(const nlohmann::json& doc) {
     loadVariables(doc.value("variables", nlohmann::json::array()));
     for (const auto& n : doc.value("nodes", nlohmann::json::array())) {
         if (!n.is_object()) continue;
-        const NodeDef* def = visual::findNode(n.value("type", std::string()));
+        const NodeDef* def = findNode(n.value("type", std::string()));
         const int id = n.value("id", 0);
         if (def == nullptr || id <= 0 || nodes_.contains(id)) continue;
         auto* item = new GraphNodeItem(*this, id, *def, n.value("inputs", nlohmann::json::object()));
@@ -1787,7 +1922,8 @@ bool GraphEditorPanel::open(const QString& path) {
     if (!f.open(QIODevice::ReadOnly)) return false;
     const nlohmann::json doc = nlohmann::json::parse(f.readAll().toStdString(), nullptr, false);
     if (doc.is_discarded() || !doc.is_object()) {
-        QMessageBox::warning(this, tr("Visual Script"), tr("%1 is not a valid visual script.").arg(QFileInfo(path).fileName()));
+        QMessageBox::warning(this, kind_ == GraphKind::Material ? tr("Material Graph") : tr("Visual Script"),
+                             tr("%1 is not a valid graph.").arg(QFileInfo(path).fileName()));
         return false;
     }
     file_ = path;
@@ -1801,6 +1937,7 @@ bool GraphEditorPanel::open(const QString& path) {
     dirty_ = true;  // so setDirty(false) updates the title
     setDirty(false);
     QTimer::singleShot(0, this, [this] { fitGraph(); });
+    materialChanged();
     return true;
 }
 
@@ -1808,14 +1945,22 @@ bool GraphEditorPanel::save() {
     if (file_.isEmpty()) return false;
     QFile f(file_);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::warning(this, tr("Visual Script"), tr("Could not write %1.").arg(file_));
+        QMessageBox::warning(this, kind_ == GraphKind::Material ? tr("Material Graph") : tr("Visual Script"),
+                             tr("Could not write %1.").arg(file_));
         return false;
     }
     if (commitTimer_->isActive()) commitUndo();
     saved_ = document();
-    const std::string text = saved_.dump(2) + "\n";
+    nlohmann::json written = saved_;
+    if (kind_ == GraphKind::Material) written["kind"] = "material";
+    const std::string text = written.dump(2) + "\n";
     f.write(text.data(), static_cast<qint64>(text.size()));
+    f.close();
     setDirty(false);
+    if (kind_ == GraphKind::Material) {
+        emit materialSaved(file_);  // first: the scene (and the preview) re-read the file
+        materialChanged();
+    }
     return true;
 }
 

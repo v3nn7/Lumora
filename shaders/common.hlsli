@@ -96,6 +96,9 @@ struct GpuObject {
     float4 sheen;              // rgb sheen colour, w sheen roughness
     float4 transmission;       // x transmission, y clearcoat roughness, z thickness (m), w attenuation distance (m, 0 = clear)
     float4 attenuation;        // rgb attenuation colour (volume); w: asuint = maps on the second UV set (bits: base, mr, emissive, normal, occlusion)
+    uint4 graph;               // material graph: x fragment program (bindless), y its length, z vertex program, w its length
+    uint4 graphTextures0;      // the graph's texture slots 0-3 (bindless)
+    uint4 graphTextures1;      // ... 4-7
 };
 
 /// The material's texture coordinates (KHR_texture_transform).

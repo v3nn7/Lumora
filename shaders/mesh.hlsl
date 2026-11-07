@@ -1,4 +1,5 @@
 #include "lighting.hlsli"
+#include "material_graph.hlsli"
 
 struct VSInput {
     [[vk::location(0)]] float3 position : POSITION;
@@ -41,6 +42,7 @@ VSOutput VSMain(VSInput input, uint instance : SV_InstanceID) {
     tangent = mul((float3x3)skin, tangent);
 #endif
     float4 world = mul(object.world, float4(position, 1.0));
+    world.xyz += graphWorldOffset(object, position, world.xyz);  // material graph (wind); same in every pass
     VSOutput o;
     o.position = toTarget(mul(gFrame.viewProjection, world));
     o.worldPosition = world.xyz;
@@ -174,7 +176,19 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     float faceSign = frontFace ? 1.0 : -1.0;
     float3 geometricNormal = normalize(input.normal) * faceSign;
     s.normal = geometricNormal;
-    if (object.textures.w != NO_TEXTURE) {
+    // A material graph computes the surface (gGraph) instead of the object's factors and maps.
+    const bool graphMaterial = object.graph.x != NO_TEXTURE;
+    if (graphMaterial) {
+        GraphInputs g;
+        g.uv0 = input.uv;
+        g.uv1 = input.uv1;
+        g.worldPosition = input.worldPosition;
+        g.localPosition = 0.0;
+        g.normal = geometricNormal;
+        g.view = normalize(gFrame.cameraPositionTime.xyz - input.worldPosition);
+        runMaterialGraph(object, object.graph.x, object.graph.y, g);
+    }
+    if (graphMaterial || object.textures.w != NO_TEXTURE) {
         // Tangent-space normal map (glTF convention: +Y up in the texture, bitangent sign in w).
         float3 n = geometricNormal;
         float3 t = input.tangent.xyz - n * dot(n, input.tangent.xyz);
@@ -183,22 +197,33 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
             float3 b = cross(n, t) * input.tangent.w * faceSign;
             // x and y from the map (BC5 keeps only those), z rebuilt: the normal has unit length.
             float3 m;
-            m.xy = sampleMaterial(object.textures.w, normalUv).xy * 2.0 - 1.0;
-            m.z = sqrt(saturate(1.0 - dot(m.xy, m.xy)));
-            m.xy *= object.surface.w;  // glTF normalTexture.scale
+            if (graphMaterial) {
+                m = normalize(gGraph[GRAPH_NORMAL].xyz + float3(0.0, 0.0, 1e-6));
+            } else {
+                m.xy = sampleMaterial(object.textures.w, normalUv).xy * 2.0 - 1.0;
+                m.z = sqrt(saturate(1.0 - dot(m.xy, m.xy)));
+                m.xy *= object.surface.w;  // glTF normalTexture.scale
+            }
             s.normal = normalize(t * m.x + b * m.y + n * m.z);
         }
     }
     s.geometricNormal = geometricNormal;
     s.view = normalize(gFrame.cameraPositionTime.xyz - input.worldPosition);
-    float3 albedo = object.baseColorMetallic.rgb;
+    float3 albedo = graphMaterial ? gGraph[GRAPH_BASE_COLOR].rgb : object.baseColorMetallic.rgb;
     if ((uint)object.flags.y == 3u) {
         albedo = terrainAlbedo(albedo, object.flags.z, input.worldPosition, geometricNormal);
     }
     // See-through (surface.y bit 1): surface.x is the opacity, which the map's alpha scales.
     const bool seeThrough = ((uint)object.surface.y & 2u) != 0u;
     float alpha = seeThrough ? object.surface.x : 1.0;
-    if (object.textures.x != NO_TEXTURE) {
+    if (graphMaterial) {
+        const float opacity = gGraph[GRAPH_OPACITY].x;
+        if (seeThrough) {
+            alpha *= saturate(opacity);
+        } else if (opacity < object.surface.x) {
+            discard;  // cut out, as in the depth prepass
+        }
+    } else if (object.textures.x != NO_TEXTURE) {
         float4 base = sampleMaterial(object.textures.x, baseUv);  // sRGB view: sampled in linear
         albedo *= base.rgb;
         if (seeThrough) {
@@ -208,9 +233,9 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
         }
     }
     s.albedo = albedo * surfacePattern(input.worldPosition, geometricNormal, (uint)object.flags.y);
-    s.metallic = saturate(object.baseColorMetallic.w);
-    s.roughness = object.emissiveRoughness.w;
-    if (object.textures.y != NO_TEXTURE) {
+    s.metallic = saturate(graphMaterial ? gGraph[GRAPH_METALLIC].x : object.baseColorMetallic.w);
+    s.roughness = graphMaterial ? gGraph[GRAPH_ROUGHNESS].x : object.emissiveRoughness.w;
+    if (!graphMaterial && object.textures.y != NO_TEXTURE) {
         float4 mr = sampleMaterial(object.textures.y, mrUv);  // glTF: G = roughness, B = metallic
         s.roughness *= mr.g;
         s.metallic *= mr.b;
@@ -232,7 +257,9 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
     float3 specularWeight;
     float3 color = evaluateAmbient(s, specularWeight);
     float occlusion = 1.0;
-    if (asuint(object.surface.z) != NO_TEXTURE) {
+    if (graphMaterial) {
+        occlusion *= saturate(gGraph[GRAPH_OCCLUSION].x);
+    } else if (asuint(object.surface.z) != NO_TEXTURE) {
         occlusion *= sampleMaterial(asuint(object.surface.z), occlusionUv).r;  // baked ambient occlusion (glTF: red)
     }
     if ((gPush.flags & 4u) != 0u) {
@@ -284,8 +311,8 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
         color += transmittedLight(s, object, object.uvTransformU.w) * s.albedo * (1.0 - F) * s.transmission;
         alpha = 1.0;
     }
-    float3 emissive = object.emissiveRoughness.rgb;
-    if (object.textures.z != NO_TEXTURE) {
+    float3 emissive = graphMaterial ? max(gGraph[GRAPH_EMISSIVE].rgb, 0.0.xxx) : object.emissiveRoughness.rgb;
+    if (!graphMaterial && object.textures.z != NO_TEXTURE) {
         emissive *= sampleMaterial(object.textures.z, emissiveUv).rgb;
     }
     color += emissive;

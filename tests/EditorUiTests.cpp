@@ -663,6 +663,7 @@ TEST(CodeEditor, CompletesTheScriptingApiWhileTyping) {
 #include "editor/EditorViewportClient.hpp"
 #include "editor/AddComponentMenu.hpp"
 #include "editor/InspectorPanel.hpp"
+#include "editor/GraphEditorPanel.hpp"
 #include "editor/MaterialEditor.hpp"
 #include "editor/SceneHierarchyPanel.hpp"
 
@@ -738,6 +739,30 @@ TEST_F(EditorUiTest, MaterialsAreCreatedEditedAndDroppedOnObjects) {
     ASSERT_NE(hierarchy, nullptr);
     emit hierarchy->tree()->filesDropped(scene.uuidOf(other), {paint});
     EXPECT_EQ(scene.registry().get<MeshRendererComponent>(other).material, "Content/Materials/Paint.lmat");
+
+    // A material graph: created in the Content Browser, opened in the Material Graph panel,
+    // dropped on the cube; the cube's Inspector offers to edit the graph, not fields that
+    // would overwrite it.
+    const QString rust = browser->createMaterialGraph(QStringLiteral("Rust"));
+    ASSERT_FALSE(rust.isEmpty());
+    processEvents();
+    editor::GraphEditorPanel* materialGraph = nullptr;
+    for (auto* p : editor->findChildren<editor::GraphEditorPanel*>()) {
+        if (p->kind() == editor::GraphKind::Material) materialGraph = p;
+    }
+    ASSERT_NE(materialGraph, nullptr);
+    EXPECT_EQ(materialGraph->file(), rust);
+    EXPECT_EQ(materialGraph->nodeCount(), 1u);
+    editor->dropOnViewport({rust}, glm::vec2(0.0f));
+    EXPECT_EQ(materialOf(), "Content/Materials/Rust.lmgraph");
+    editor->context().select(cubeId);
+    processEvents();
+    EXPECT_EQ(inspector->findChild<editor::MaterialEditor*>(), nullptr);
+    auto* edit = inspector->findChild<QPushButton*>(QStringLiteral("editMaterialGraph"));
+    ASSERT_NE(edit, nullptr);
+    edit->click();
+    processEvents();
+    EXPECT_EQ(materialGraph->file(), rust);
 }
 
 TEST_F(EditorUiTest, ScriptsAreAddedFromTheInspectorAndDroppedOnObjects) {
@@ -980,7 +1005,14 @@ TEST_F(EditorUiTest, AnyPanelMovesIntoTheMainAreaAndStaysThere) {
     auto* hierarchyDock = editor->findChild<QDockWidget*>(QStringLiteral("dock.hierarchy"));
     ASSERT_NE(graphDock, nullptr);
     ASSERT_NE(hierarchyDock, nullptr);
-    auto* graph = editor->findChild<editor::GraphEditorPanel*>();
+    // The visual script panel (the material graph panel is the other GraphEditorPanel).
+    auto visualGraph = [](editor::EditorWindow* w) -> editor::GraphEditorPanel* {
+        for (auto* p : w->findChildren<editor::GraphEditorPanel*>()) {
+            if (p->kind() == editor::GraphKind::VisualScript) return p;
+        }
+        return nullptr;
+    };
+    auto* graph = visualGraph(editor);
     ASSERT_NE(graph, nullptr);
 
     editor->setDockInMainArea(graphDock, true);
@@ -1009,7 +1041,7 @@ TEST_F(EditorUiTest, AnyPanelMovesIntoTheMainAreaAndStaysThere) {
     emit center->tabCloseRequested(1);
     EXPECT_EQ(center->count(), 2);
     EXPECT_FALSE(editor->dockInMainArea(graphDock));
-    EXPECT_EQ(graphDock->widget(), editor->findChild<editor::GraphEditorPanel*>());
+    EXPECT_EQ(graphDock->widget(), visualGraph(editor));
     EXPECT_TRUE(graphDock->toggleViewAction()->isEnabled());
     QSettings().remove(QStringLiteral("editor/mainArea"));
 }

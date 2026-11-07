@@ -4,6 +4,7 @@
 
 #include "assets/AssetLibrary.hpp"
 #include "assets/Material.hpp"
+#include "assets/MaterialGraph.hpp"
 #include "assets/MeshLod.hpp"
 
 #include "core/JobSystem.hpp"
@@ -409,6 +410,7 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
 }
 
 SceneRenderer::~SceneRenderer() {
+    releaseGraphPrograms(true);
     if (hudAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(hudAtlasIndex_);
     if (spriteAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(spriteAtlasIndex_);
     if (vsmPoolIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(vsmPoolIndex_);
@@ -492,6 +494,45 @@ SceneRenderer::ModelSurface SceneRenderer::modelSurface(AssetLibrary& assets, co
     }
     modelSurfaces_.emplace(key, surface);
     return surface;
+}
+
+const SceneRenderer::GraphProgramGpu& SceneRenderer::graphProgram(const std::shared_ptr<const MaterialProgram>& program) {
+    GraphProgramGpu& entry = graphPrograms_[program.get()];
+    if (entry.source.lock() != program) {
+        // New, or a freed program's address reused: (re)build the textures.
+        if (entry.fragment) retiredGraphPrograms_.push_back(entry);
+        entry = {};
+        entry.source = program;
+        auto upload = [&](const std::vector<glm::vec4>& code, nvrhi::TextureHandle& texture, std::uint32_t& index, const char* name) {
+            if (code.empty()) return;
+            const std::span<const std::byte> bytes = std::as_bytes(std::span(code));
+            texture = ctx_.createTexture(std::span(&bytes, 1), static_cast<std::uint32_t>(code.size()), 1, nvrhi::Format::RGBA32_FLOAT, name);
+            index = ctx_.bindless().registerTexture(texture);
+        };
+        upload(program->fragment, entry.fragment, entry.fragmentIndex, "Material graph (fragment)");
+        upload(program->vertex, entry.vertex, entry.vertexIndex, "Material graph (vertex)");
+    }
+    entry.lastUsed = frameCounter_;
+    return entry;
+}
+
+void SceneRenderer::releaseGraphPrograms(bool all) {
+    // Programs no frame used for a while, and replaced ones, once the GPU is surely done with them.
+    constexpr std::uint64_t kRetireFrames = 8;
+    for (auto it = graphPrograms_.begin(); it != graphPrograms_.end();) {
+        if (all || it->second.lastUsed + kRetireFrames < frameCounter_) {
+            retiredGraphPrograms_.push_back(it->second);
+            it = graphPrograms_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    std::erase_if(retiredGraphPrograms_, [&](const GraphProgramGpu& g) {
+        if (!all && g.lastUsed + 2 * kRetireFrames >= frameCounter_) return false;
+        if (g.fragmentIndex != UINT32_MAX) ctx_.bindless().releaseTexture(g.fragmentIndex);
+        if (g.vertexIndex != UINT32_MAX) ctx_.bindless().releaseTexture(g.vertexIndex);
+        return true;
+    });
 }
 
 SceneRenderer::ModelSurface SceneRenderer::materialSurface(const MaterialAsset& m) {
@@ -932,6 +973,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     };
     std::vector<Candidate> candidates;
     ++frameCounter_;
+    releaseGraphPrograms(false);
     ctx_.textures().beginFrame();
     const std::filesystem::path projectRoot = settings.assets != nullptr ? settings.assets->root() : std::filesystem::path();
     auto landscapeEntry = [&](entt::entity e, std::uint64_t kind) -> LandscapeEntry& {
@@ -1160,7 +1202,24 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             transmissive = surface->transmissive;
             transparent = transparent || transmissive;
         }
-        const bool masked = !transparent && cutoff > 0.0f && obj.textures.x != kNoTexture;
+        if (lmat != nullptr && lmat->program) {
+            // A material graph: its programs, and the bindless indices of its textures.
+            const GraphProgramGpu& program = graphProgram(lmat->program);
+            obj.graph = glm::uvec4(program.fragmentIndex, lmat->program->fragmentInstructions(),
+                                   program.vertexIndex == UINT32_MAX ? kNoTexture : program.vertexIndex,
+                                   lmat->program->vertexInstructions());
+            for (std::size_t t = 0; t < lmat->program->textures.size() && t < matgraph::kMaxTextures; ++t) {
+                const MaterialProgram::Texture& texture = lmat->program->textures[t];
+                const TextureKind kind = texture.kind == matgraph::TextureKind::Normal ? TextureKind::Normal
+                                         : texture.kind == matgraph::TextureKind::Data ? TextureKind::Data
+                                                                                       : TextureKind::Color;
+                obj.graphTextures[t / 4][static_cast<int>(t % 4)] =
+                    settings.assets != nullptr ? ctx_.textures().index(*settings.assets, texture.key, kind, settings.blockOnAssets) : kNoTexture;
+            }
+            // Moving vertices (wind) change the shadows every frame: never reuse cached tiles.
+            if (obj.graph.z != kNoTexture) state ^= (frameCounter_ + 1) * 0x9E3779B97F4A7C15ull;
+        }
+        const bool masked = !transparent && cutoff > 0.0f && (obj.textures.x != kNoTexture || obj.graph.x != kNoTexture);
         std::uint32_t occlusion = kNoTexture;
         const std::string& occlusionMap = lmat != nullptr ? lmat->occlusionTexture : look.occlusionTexture;
         if (p.visible && settings.assets != nullptr && !occlusionMap.empty()) {

@@ -135,6 +135,7 @@ std::vector<DeviceCandidate> enumerateDevices(VkInstance instance, bool requireS
         FeatureChain features;
         vkGetPhysicalDeviceFeatures2(devices[i], &features.core);
         caps.samplerAnisotropy = features.core.features.samplerAnisotropy == VK_TRUE;
+        caps.textureCompressionBC = features.core.features.textureCompressionBC == VK_TRUE;
 
         bool queueTimestamps = false;
         const auto family = findGraphicsFamily(devices[i], queueTimestamps);
@@ -209,6 +210,7 @@ Device::Device(const Instance& instance, const DeviceSelection& selection) : ins
     vkGetPhysicalDeviceFeatures2(physical_, &supported.core);
     FeatureChain enable;
     enable.core.features.samplerAnisotropy = supported.core.features.samplerAnisotropy;
+    enable.core.features.textureCompressionBC = supported.core.features.textureCompressionBC;
     enable.core.features.fillModeNonSolid = supported.core.features.fillModeNonSolid;
     enable.core.features.shaderInt64 = supported.core.features.shaderInt64;
     // Compute passes write storage images declared without a format (glslc's HLSL has no

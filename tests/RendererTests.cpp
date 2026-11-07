@@ -1992,3 +1992,92 @@ TEST_F(RendererTest, LocalShadowTilesAreKeptUntilTheirLightOrCastersChange) {
     EXPECT_LE(renderer_->stats().scene.localShadowTilesDrawn, 6u);
     EXPECT_NE(first->rgba, moved->rgba) << "its shadow moved";
 }
+
+#include "renderer/TextureCompression.hpp"
+#include "renderer/TextureCache.hpp"
+
+TEST(TextureCompression, BlockFormatsMipChainsAndCacheFiles) {
+    std::vector<std::uint8_t> rgba(64 * 32 * 4);
+    for (std::size_t i = 0; i < 64 * 32; ++i) {
+        rgba[i * 4] = static_cast<std::uint8_t>(i % 64 * 4);
+        rgba[i * 4 + 1] = 128;
+        rgba[i * 4 + 2] = 40;
+        rgba[i * 4 + 3] = 255;
+    }
+    const TextureMips color = prepareTexture(rgba, 64, 32, TextureKind::Color, true);
+    EXPECT_EQ(color.format, nvrhi::Format::BC1_UNORM_SRGB) << "opaque colour: BC1";
+    ASSERT_EQ(color.levels.size(), 7u);  // 64x32 .. 1x1
+    EXPECT_EQ(color.levels[0].size(), 16u * 8u * 8u) << "4x4 blocks of 8 bytes";
+    EXPECT_EQ(color.levels.back().size(), 8u) << "a 1x1 level is one block";
+    EXPECT_EQ(prepareTexture(rgba, 64, 32, TextureKind::Normal, true).format, nvrhi::Format::BC5_UNORM);
+    EXPECT_EQ(prepareTexture(rgba, 64, 32, TextureKind::Color, false).format, nvrhi::Format::SRGBA8_UNORM);
+    rgba[3] = 0;
+    EXPECT_EQ(prepareTexture(rgba, 64, 32, TextureKind::Color, true).format, nvrhi::Format::BC3_UNORM_SRGB) << "with alpha: BC3";
+
+    // A flat colour survives BC1 nearly exactly (decode the block's two 5:6:5 endpoints).
+    std::vector<std::uint8_t> flat(4 * 4 * 4);
+    for (std::size_t i = 0; i < 16; ++i) {
+        flat[i * 4] = 200;
+        flat[i * 4 + 1] = 100;
+        flat[i * 4 + 2] = 50;
+        flat[i * 4 + 3] = 255;
+    }
+    const auto block = compressBlocks(flat, 4, 4, nvrhi::Format::BC1_UNORM);
+    ASSERT_EQ(block.size(), 8u);
+    const unsigned c0 = block[0] | (block[1] << 8);
+    EXPECT_NEAR(static_cast<int>((c0 >> 11) * 255 / 31), 200, 9);
+    EXPECT_NEAR(static_cast<int>(((c0 >> 5) & 63) * 255 / 63), 100, 5);
+
+    test::TempDir dir;
+    const auto file = dir.path() / "Saved" / "TextureCache" / "a.ltex";
+    ASSERT_TRUE(saveTextureMips(file, color).has_value());
+    auto loaded = loadTextureMips(file);
+    ASSERT_TRUE(loaded.has_value()) << loaded.error().message;
+    EXPECT_EQ(loaded->format, color.format);
+    EXPECT_EQ(loaded->levels, color.levels);
+    std::filesystem::resize_file(file, 100);
+    EXPECT_FALSE(loadTextureMips(file).has_value());
+}
+
+TEST_F(RendererTest, TexturesAreCompressedCachedAndStreamed) {
+    if (!context_->caps().textureCompressionBC) GTEST_SKIP() << "no BC texture support";
+    test::TempDir project;
+    std::filesystem::create_directories(project.path() / "Content" / "Textures");
+    std::vector<std::uint8_t> pixels(1024 * 1024 * 3);
+    for (std::size_t i = 0; i < 1024 * 1024; ++i) {
+        pixels[i * 3] = static_cast<std::uint8_t>((i % 1024) / 4);
+        pixels[i * 3 + 1] = static_cast<std::uint8_t>((i / 1024) / 4);
+        pixels[i * 3 + 2] = 90;
+    }
+    ASSERT_NE(stbi_write_png((project.path() / "Content" / "Textures" / "big.png").string().c_str(), 1024, 1024, 3,
+                             pixels.data(), 1024 * 3), 0);
+    AssetLibrary assets(project.path());
+    TextureCache& cache = context_->textures();
+    cache.beginFrame();
+    // Far away: only the small mips are made resident.
+    const std::uint32_t far = cache.index(assets, "Content/Textures/big.png", TextureKind::Color, true, 64.0f);
+    ASSERT_NE(far, UINT32_MAX);
+    const auto small = cache.stats();
+    EXPECT_GE(small.compressed, 1u);
+    EXPECT_LT(small.residentBytes, std::size_t{1} << 20) << "64 texels across, not the whole 1024 chain";
+    std::size_t cacheFiles = 0;
+    for ([[maybe_unused]] const auto& f : std::filesystem::directory_iterator(project.path() / "Saved" / "TextureCache")) ++cacheFiles;
+    EXPECT_EQ(cacheFiles, 1u) << "the compressed chain is kept for the next run";
+
+    // Close up: the next frame streams in the full resolution, under a new bindless index.
+    EXPECT_EQ(cache.index(assets, "Content/Textures/big.png", TextureKind::Color, true, 4096.0f), far);
+    cache.beginFrame();
+    EXPECT_EQ(cache.stats().streamedIn, 1u);
+    const std::uint32_t near = cache.index(assets, "Content/Textures/big.png", TextureKind::Color, true, 4096.0f);
+    EXPECT_NE(near, far);
+    EXPECT_GT(cache.stats().residentBytes, std::size_t{512} << 10) << "1024x1024 BC1 is 512 KiB plus mips";
+
+    // Over budget: the finest mips go.
+    cache.setBudget(std::size_t{200} << 10);
+    cache.beginFrame();
+    EXPECT_GE(cache.stats().reduced, 1u);
+    EXPECT_LE(cache.stats().residentBytes, std::size_t{200} << 10);
+    cache.setBudget(std::size_t{1536} << 20);
+    context_->gpu()->waitForIdle();
+    cache.invalidateFile((std::filesystem::weakly_canonical(project.path() / "Content" / "Textures" / "big.png")).generic_string());
+}

@@ -105,6 +105,11 @@ Warunek dla kompresji tekstur (1.7).
   Światła punktowe i reflektory: osobne wirtualne mapy zamiast atlasu 16 kafli.
 
 ### 1.7 Kompresja i streaming tekstur (L), zależy od 0.4
+- **Stan: zrobione z zastrzeżeniami.** `stb_dxt`: BC1 (kolor/dane), BC3 (kolor z alfą), BC5 (normalne,
+  z odtwarzane w shaderze); cache `Saved/TextureCache/*.ltex`. Streaming: mipy od rozmiaru na ekranie,
+  start z ≤256 texeli, ≤48 MB wgrywania na klatkę, budżet 1,5 GB (zrzucanie nieużywanych, potem
+  najdrobniejszych mipów). Brakuje: BC7 (nowa biblioteka, np. bc7enc), KTX2/Basis (2.1), zwalniania
+  pełnych łańcuchów z RAM (dziś trzymane w pamięci).
 - **Kompresja:** BC7 (kolor), BC5 (normalne), BC4 (maski) kodowane przy imporcie do pamięci
   podręcznej w `Saved/`, plus wczytywanie KTX2/Basis (2.1). Na webie: transkodowanie Basis.
 - **Streaming:** mipy dociągane według odległości i rozmiaru na ekranie, budżet VRAM, wyrzucanie

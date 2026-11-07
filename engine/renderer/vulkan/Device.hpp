@@ -28,6 +28,7 @@ struct GpuCapabilities {
     bool timestamps = false;
     float timestampPeriodNs = 0.0f;
     bool samplerAnisotropy = false;
+    bool textureCompressionBC = false;  // BC1-BC7 block-compressed textures
     float maxAnisotropy = 1.0f;
     std::uint32_t maxImageDimension2D = 4096;  // guaranteed minimum
     bool memoryBudget = false;

@@ -132,7 +132,10 @@ float4 PSMain(VSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0 {
         if (dot(t, t) > 1e-10) {
             t = normalize(t);
             float3 b = cross(n, t) * input.tangent.w * faceSign;
-            float3 m = sampleMaterial(object.textures.w, input.uv).xyz * 2.0 - 1.0;
+            // x and y from the map (BC5 keeps only those), z rebuilt: the normal has unit length.
+            float3 m;
+            m.xy = sampleMaterial(object.textures.w, input.uv).xy * 2.0 - 1.0;
+            m.z = sqrt(saturate(1.0 - dot(m.xy, m.xy)));
             m.xy *= object.surface.w;  // glTF normalTexture.scale
             s.normal = normalize(t * m.x + b * m.y + n * m.z);
         }

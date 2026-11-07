@@ -81,6 +81,7 @@ lumora_engine_module(renderer
         renderer/TextureCache.cpp
         renderer/EnvironmentMap.cpp
         renderer/ReflectionProbes.cpp
+        renderer/TextureCompression.cpp
         renderer/LightProbes.cpp
         renderer/EnvironmentCache.cpp
         renderer/LightGrid.cpp

@@ -892,6 +892,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     };
     std::vector<Candidate> candidates;
     ++frameCounter_;
+    ctx_.textures().beginFrame();
     const std::filesystem::path projectRoot = settings.assets != nullptr ? settings.assets->root() : std::filesystem::path();
     auto landscapeEntry = [&](entt::entity e, std::uint64_t kind) -> LandscapeEntry& {
         const std::uint64_t slot = (static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&scene)) * 0x9E3779B97F4A7C15ull) ^
@@ -1010,10 +1011,15 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             const std::string& mrMap = m != nullptr ? m->metallicRoughnessTexture : mesh.metallicRoughnessTexture;
             const std::string& emissiveMap = m != nullptr ? m->emissiveTexture : mesh.emissiveTexture;
             const std::string& normalMap = m != nullptr ? m->normalTexture : mesh.normalTexture;
-            obj.textures = glm::uvec4(textures.index(*settings.assets, baseMap, TextureColorSpace::Srgb, block),
-                                      textures.index(*settings.assets, mrMap, TextureColorSpace::Linear, block),
-                                      textures.index(*settings.assets, emissiveMap, TextureColorSpace::Srgb, block),
-                                      textures.index(*settings.assets, normalMap, TextureColorSpace::Linear, block));
+            // Texels across the object needs: its size on screen, with room for tiling.
+            const float wanted = candidates[i].pattern >= 0.0f
+                                     ? TextureCache::kFullResolution
+                                     : 2.0f * static_cast<float>(extent.height) *
+                                           screenCoverage(glm::length(p.extent), glm::length(p.center - camera.position), camera.fovYRadians);
+            obj.textures = glm::uvec4(textures.index(*settings.assets, baseMap, TextureKind::Color, block, wanted),
+                                      textures.index(*settings.assets, mrMap, TextureKind::Data, block, wanted),
+                                      textures.index(*settings.assets, emissiveMap, TextureKind::Color, block, wanted),
+                                      textures.index(*settings.assets, normalMap, TextureKind::Normal, block, wanted));
         }
         {
             // Last frame's transform of this object (by entity, mesh and copy) for motion vectors.
@@ -1058,7 +1064,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         const bool masked = !transparent && cutoff > 0.0f && obj.textures.x != kNoTexture;
         std::uint32_t occlusion = kNoTexture;
         if (p.visible && settings.assets != nullptr && !look.occlusionTexture.empty()) {
-            occlusion = ctx_.textures().index(*settings.assets, look.occlusionTexture, TextureColorSpace::Linear, settings.blockOnAssets);
+            occlusion = ctx_.textures().index(*settings.assets, look.occlusionTexture, TextureKind::Data, settings.blockOnAssets);
         }
         // x: cutoff (opaque) or opacity (see-through); y: bit 0 two-sided, bit 1 see-through.
         obj.surface = glm::vec4(transparent ? opacity : masked ? cutoff : 0.0f,
@@ -1099,7 +1105,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         obj.normalMatrix = glm::inverse(world.matrix);
         obj.baseColorMetallic = glm::vec4(decal.color, std::clamp(decal.opacity, 0.0f, 1.0f));
         if (!decal.texture.empty() && settings.assets != nullptr) {
-            obj.textures.x = ctx_.textures().index(*settings.assets, decal.texture, TextureColorSpace::Srgb, settings.blockOnAssets);
+            obj.textures.x = ctx_.textures().index(*settings.assets, decal.texture, TextureKind::Color, settings.blockOnAssets);
         }
         decals.push_back(static_cast<std::uint32_t>(objects.size()));
         objects.push_back(obj);

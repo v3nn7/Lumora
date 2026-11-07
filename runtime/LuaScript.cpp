@@ -207,6 +207,26 @@ int lDrawTextAligned(lua_State* L) {
     api(L).drawTextAligned(ctx(L), luaL_checkstring(L, 1), box, static_cast<int>(luaL_checkinteger(L, 6)), c);
     return 0;
 }
+int lDrawImage(lua_State* L) {
+    // texture, x, y, w, h [, r, g, b, a [, u0, v0, u1, v1]]
+    const float r[4] = {num(L, 2), num(L, 3), num(L, 4), num(L, 5)};
+    const float c[4] = {optNum(L, 6, 1), optNum(L, 7, 1), optNum(L, 8, 1), optNum(L, 9, 1)};
+    const float uv[4] = {optNum(L, 10, 0), optNum(L, 11, 0), optNum(L, 12, 1), optNum(L, 13, 1)};
+    api(L).drawImage(ctx(L), luaL_checkstring(L, 1), r, uv, c);
+    return 0;
+}
+int lDrawTextFont(lua_State* L) {
+    // text, x, y, width, size, align, r, g, b, a, font
+    const float box[4] = {num(L, 2), num(L, 3), num(L, 4), optNum(L, 5, 24)};
+    const float c[4] = {optNum(L, 7, 1), optNum(L, 8, 1), optNum(L, 9, 1), optNum(L, 10, 1)};
+    api(L).drawTextFont(ctx(L), luaL_checkstring(L, 1), box, static_cast<int>(luaL_optinteger(L, 6, 0)), c, luaL_optstring(L, 11, ""));
+    return 0;
+}
+int lAudioBus(lua_State* L) {
+    // bus, command (0 set volume, 1 get, 2 mute, 3 muted?), value
+    lua_pushnumber(L, api(L).audioBus(ctx(L), luaL_checkstring(L, 1), static_cast<int>(luaL_checkinteger(L, 2)), optNum(L, 3, 0)));
+    return 1;
+}
 int lScreenSize(lua_State* L) {
     float wh[2] = {0, 0};
     api(L).screenSize(ctx(L), wh);
@@ -365,6 +385,7 @@ const luaL_Reg kEngine[] = {
     {"mousePosition", lMousePosition}, {"parameter", lParameter}, {"sound", lSound}, {"spawn", lSpawn},
     {"animation", lAnimation}, {"animationBlend", lAnimationBlend}, {"animParam", lAnimParam}, {"animState", lAnimState},
     {"character", lCharacter}, {"drawRect", lDrawRect}, {"drawText", lDrawText}, {"drawTextAligned", lDrawTextAligned},
+    {"drawImage", lDrawImage}, {"drawTextFont", lDrawTextFont}, {"audioBus", lAudioBus},
     {"screenSize", lScreenSize}, {"loadScene", lLoadScene}, {"setMaterial", lSetMaterial}, {"setColor", lSetColor},
     {"inputEdge", lInputEdge}, {"ui", lUi}, {"uiStyle", lUiStyle}, {"particles", lParticles}, {"debugDraw", lDebugDraw},
     {"findPath", lFindPath}, {"navigation", lNavigation}, {"input", lInput}, {"saveNumber", lSaveNumber},

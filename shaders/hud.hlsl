@@ -1,7 +1,8 @@
-// HUD: pixel-space rectangles and text (glyphs from the font atlas), alpha blended on top of
-// the final image. uv.x < 0 marks a solid rectangle. gPush: index0 = font atlas, index1 =
-// sampler, flags bit0 = UNORM target (colours stay as authored; sRGB targets decode first),
-// bit1 = index0 is a colour picture (sprites) that the vertex colour tints, not glyph coverage.
+// HUD: pixel-space rectangles, pictures and text, alpha blended on top of the final image.
+// uv.x < 0 marks a solid rectangle. gPush: index0 = the glyph atlas (signed distance fields,
+// 0.5 on the outline) or a picture, index1 = sampler, flags bit0 = UNORM target (colours stay as
+// authored; sRGB targets decode first), bit1 = index0 is a colour picture (HUD images, sprites)
+// that the vertex colour tints.
 #include "common.hlsli"
 
 struct VSInput {
@@ -28,13 +29,18 @@ VSOutput VSMain(VSInput input) {
 float4 PSMain(VSOutput input) : SV_Target0 {
     float coverage = 1.0;
     float3 c = input.color.rgb;
-    if ((gPush.flags & 2u) != 0u) {
+    // Derivatives first (uniform control flow): the field's change across a pixel sets the edge width.
+    float field = gTextures[gPush.index0].SampleLevel(gSamplers[gPush.index1], max(input.uv, 0.0.xx), 0.0).r;
+    float width = max(fwidth(field), 1e-4) * 0.75;
+    if (input.uv.x < 0.0) {
+        coverage = 1.0;  // a solid rectangle
+    } else if ((gPush.flags & 2u) != 0u) {
         // Straight alpha; the atlas carries colour into its transparent texels so edges do not darken.
         float4 picture = gTextures[gPush.index0].SampleLevel(gSamplers[gPush.index1], input.uv, 0.0);
         c *= picture.rgb;
         coverage = picture.a;
-    } else if (input.uv.x >= 0.0) {
-        coverage = gTextures[gPush.index0].SampleLevel(gSamplers[gPush.index1], input.uv, 0.0).r;
+    } else {
+        coverage = smoothstep(0.5 - width, 0.5 + width, field);  // glyph: antialiased at any size
     }
     if ((gPush.flags & 1u) == 0u) {
         c = pow(max(c, 0.0.xxx), 2.2);

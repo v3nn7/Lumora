@@ -109,6 +109,8 @@ constexpr ScriptApiEntry kApi[] = {
     {S::Behaviour, "uiStyle", "void uiStyle(Vec3 accent, float fontSize = 22)", "Look of the game UI"},
     {S::Behaviour, "drawTextCentered", "void drawTextCentered(text, centerX, y, size = 24, color, alpha)", "HUD text centred on x"},
     {S::Behaviour, "drawTextRight", "void drawTextRight(text, rightX, y, size = 24, color, alpha)", "HUD text ending at x"},
+    {S::Behaviour, "drawImage", "void drawImage(texture, x, y, w, h, Vec3 color = white, alpha = 1)", "HUD picture (a project texture)"},
+    {S::Behaviour, "drawTextFont", "void drawTextFont(text, font, x, y, size = 24, color, alpha)", "HUD text in a project font (.ttf/.otf)"},
     {S::Behaviour, "mousePosition", "Vec3 mousePosition()", "Mouse in HUD pixels"},
     {S::Behaviour, "mousePressed", "bool mousePressed(MouseButton b)", "Went down since the last step"},
     {S::Behaviour, "mouseReleased", "bool mouseReleased(MouseButton b)", "Came up since the last step"},
@@ -128,6 +130,7 @@ constexpr ScriptApiEntry kApi[] = {
     {S::Behaviour, "playSoundOn", "void playSoundOn(Entity e)", "Play another entity's Audio Source"},
     {S::Behaviour, "setBusVolume", "void setBusVolume(bus, float volume)", "Mixer bus volume (Master, Music, SFX, UI, Voice, Ambience)"},
     {S::Behaviour, "busVolume", "float busVolume(bus)", "A mixer bus's volume"},
+    {S::Behaviour, "busMuted", "bool busMuted(bus)", "Whether a mixer bus is muted"},
     {S::Behaviour, "setBusMuted", "void setBusMuted(bus, bool muted)", "Mute or unmute a mixer bus"},
     // Input, time, parameters, log
     {S::Behaviour, "keyDown", "bool keyDown(Key key)", "Is a key held (Key::W ...)"},

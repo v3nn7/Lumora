@@ -7,6 +7,7 @@
 #include "assets/MaterialGraph.hpp"
 #include "assets/MeshLod.hpp"
 
+#include "core/FileSystem.hpp"
 #include "core/JobSystem.hpp"
 #include "core/Log.hpp"
 #include "renderer/FrameResources.hpp"
@@ -412,6 +413,7 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
 SceneRenderer::~SceneRenderer() {
     releaseGraphPrograms(true);
     if (hudAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(hudAtlasIndex_);
+    for (const RetiredAtlas& r : retiredHudAtlases_) ctx_.bindless().releaseTexture(r.index);
     if (spriteAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(spriteAtlasIndex_);
     if (vsmPoolIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(vsmPoolIndex_);
     if (vsmPageTableIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(vsmPageTableIndex_);
@@ -2584,46 +2586,75 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
     }
     // ---- HUD: the game's text and rectangles, on top of everything.
     if (settings.hud != nullptr && !settings.hud->empty()) {
-        if (!hudFont_) {
-            hudFont_ = std::make_unique<HudFont>();
+        if (!hudFont_) hudFont_ = std::make_unique<HudFont>();
+        std::vector<HudVertex> vertices;
+        std::vector<HudFont::Batch> batches;
+        AssetLibrary* assets = settings.assets;
+        const bool block = settings.blockOnAssets;
+        auto image = [&](const std::string& key) -> std::uint32_t {
+            if (assets == nullptr || key.empty()) return UINT32_MAX;
+            const std::uint32_t index = ctx_.textures().index(*assets, key, TextureKind::Color, block);
+            return index == kNoTexture ? UINT32_MAX : index;
+        };
+        auto font = [&](const std::string& key) -> int {
+            if (const int id = hudFont_->findFont(key); id >= 0) return id;
+            std::vector<std::byte> bytes;  // empty: not a font, the built-in one (remembered)
+            if (assets != nullptr) {
+                if (auto path = assets->filePath(key)) {
+                    if (auto read = fs::readBinaryFile(*path)) bytes = std::move(*read);
+                }
+            }
+            if (bytes.empty()) log::warn("Renderer", "HUD font '{}' could not be read; using the built-in one", key);
+            return hudFont_->addFont(key, std::move(bytes));
+        };
+        hudFont_->layout(*settings.hud, vertices, batches, image, font);
+        if (hudFont_->takeDirty() || !hudAtlas_) {
+            // New glyphs: a fresh atlas texture (the old one may still be in flight).
+            if (hudAtlas_) retiredHudAtlases_.push_back({hudAtlas_, hudAtlasIndex_, frameCounter_});
             const auto& atlas = hudFont_->atlas();
             const std::span<const std::byte> bytes = std::as_bytes(std::span(atlas));
             hudAtlas_ = ctx_.createTexture(std::span(&bytes, 1), hudFont_->atlasWidth(), hudFont_->atlasHeight(),
-                                           nvrhi::Format::R8_UNORM, "HudFontAtlas");
+                                           nvrhi::Format::R8_UNORM, "HudGlyphAtlas");
             hudAtlasIndex_ = ctx_.bindless().registerTexture(hudAtlas_);
         }
-        std::vector<HudVertex> vertices;
-        hudFont_->layout(*settings.hud, vertices);
+        std::erase_if(retiredHudAtlases_, [&](const RetiredAtlas& r) {
+            if (r.frame + 8 > frameCounter_) return false;
+            ctx_.bindless().releaseTexture(r.index);
+            return true;
+        });
         // The canvas is laid out for its screen size; scale it to this target.
         const glm::vec2 scale(static_cast<float>(extent.width) / std::max(settings.hud->screenSize.x, 1.0f),
                               static_cast<float>(extent.height) / std::max(settings.hud->screenSize.y, 1.0f));
         for (HudVertex& v : vertices) v.position *= scale;
-        nvrhi::IBuffer* vb = frame.hudVertices.write(gpu, std::as_bytes(std::span(vertices)), DynamicBuffer::Kind::Vertex,
-                                                     sizeof(HudVertex), "HudVertices");
-        PipelineDesc hudDesc;
-        hudDesc.name = "HUD";
-        hudDesc.vertexShader = "hud.vert";
-        hudDesc.pixelShader = "hud.frag";
-        hudDesc.input = VertexInput::Hud;
-        hudDesc.blend = BlendMode::Alpha;
-        nvrhi::IGraphicsPipeline* hud = outputPipeline(hud_, hudDesc, outputFormat);
-        const auto count = static_cast<std::uint32_t>(vertices.size());
-        const std::uint32_t atlas = hudAtlasIndex_;
-        const bool unorm = !isSrgbFormat(outputFormat);
-        graph.addRasterPass(
-            "HUD", [&](PassBuilder& b) { b.writeColor(output, LoadOp::Load); },
-            [=](PassContext& ctx) {
-                nvrhi::GraphicsState state = stateFor(hud, ctx);
-                state.vertexBuffers = {nvrhi::VertexBufferBinding().setBuffer(vb).setSlot(0)};
-                ctx.cmd->setGraphicsState(state);
-                PushConstants pc;
-                pc.index0 = atlas;
-                pc.index1 = sampler;
-                pc.flags = unorm ? 1u : 0u;
-                push(ctx.cmd, pc);
-                ctx.cmd->draw(nvrhi::DrawArguments().setVertexCount(count));
-            });
-        ++stats.drawCalls;
+        if (!vertices.empty()) {
+            nvrhi::IBuffer* vb = frame.hudVertices.write(gpu, std::as_bytes(std::span(vertices)), DynamicBuffer::Kind::Vertex,
+                                                         sizeof(HudVertex), "HudVertices");
+            PipelineDesc hudDesc;
+            hudDesc.name = "HUD";
+            hudDesc.vertexShader = "hud.vert";
+            hudDesc.pixelShader = "hud.frag";
+            hudDesc.input = VertexInput::Hud;
+            hudDesc.blend = BlendMode::Alpha;
+            nvrhi::IGraphicsPipeline* hud = outputPipeline(hud_, hudDesc, outputFormat);
+            const std::uint32_t atlas = hudAtlasIndex_;
+            const bool unorm = !isSrgbFormat(outputFormat);
+            graph.addRasterPass(
+                "HUD", [&](PassBuilder& b) { b.writeColor(output, LoadOp::Load); },
+                [=](PassContext& ctx) {
+                    nvrhi::GraphicsState state = stateFor(hud, ctx);
+                    state.vertexBuffers = {nvrhi::VertexBufferBinding().setBuffer(vb).setSlot(0)};
+                    ctx.cmd->setGraphicsState(state);
+                    for (const HudFont::Batch& batch : batches) {  // in order: later ones on top
+                        PushConstants pc;
+                        pc.index0 = batch.picture ? batch.texture : atlas;
+                        pc.index1 = sampler;
+                        pc.flags = (unorm ? 1u : 0u) | (batch.picture ? 2u : 0u);
+                        push(ctx.cmd, pc);
+                        ctx.cmd->draw(nvrhi::DrawArguments().setVertexCount(batch.count).setStartVertexLocation(batch.first));
+                    }
+                });
+            stats.drawCalls += static_cast<std::uint32_t>(batches.size());
+        }
     }
     // Last frame's state for the next frame's motion vectors.
     previousViewProjection_ = unjittered;

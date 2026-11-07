@@ -222,6 +222,21 @@ function Behaviour:drawTextRight(text, x, y, size, color, alpha)
     color = color or white
     engine.drawTextAligned(tostring(text), x, y, 0, size or 24, 2, color.x, color.y, color.z, alpha or 1)
 end
+-- A picture: a texture of the project ("Content/UI/Heart.png"), tinted by color
+function Behaviour:drawImage(texture, x, y, w, h, color, alpha)
+    color = color or white
+    engine.drawImage(texture, x, y, w, h, color.x, color.y, color.z, alpha or 1)
+end
+-- Text in a font of the project ("Content/Fonts/Title.ttf")
+function Behaviour:drawTextFont(text, font, x, y, size, color, alpha)
+    color = color or white
+    engine.drawTextFont(tostring(text), x, y, 0, size or 24, 0, color.x, color.y, color.z, alpha or 1, font)
+end
+-- Audio mixer buses ("Master", "Music", "SFX", "UI", "Voice")
+function Behaviour:setBusVolume(bus, volume) engine.audioBus(bus, 0, volume) end
+function Behaviour:busVolume(bus) return engine.audioBus(bus, 1, 0) end
+function Behaviour:setBusMuted(bus, muted) engine.audioBus(bus, 2, muted and 1 or 0) end
+function Behaviour:busMuted(bus) return engine.audioBus(bus, 3, 0) ~= 0 end
 -- Game UI widgets (immediate mode: call every update)
 function Behaviour:button(text, x, y, w, h) return (engine.ui(0, text, x, y, w or 220, h or 48, 0, 0, 0)) end
 function Behaviour:checkbox(text, value, x, y, w, h)

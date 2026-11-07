@@ -284,6 +284,12 @@ private:
     std::unordered_map<int, nvrhi::GraphicsPipelineHandle> fxaa_;
     std::unordered_map<int, nvrhi::GraphicsPipelineHandle> hud_;
     std::unique_ptr<HudFont> hudFont_;  // built on first use
+    struct RetiredAtlas {
+        nvrhi::TextureHandle texture;
+        std::uint32_t index = UINT32_MAX;
+        std::uint64_t frame = 0;
+    };
+    std::vector<RetiredAtlas> retiredHudAtlases_;  // replaced glyph atlases, released once surely unused
     nvrhi::TextureHandle hudAtlas_;
     std::uint32_t hudAtlasIndex_ = UINT32_MAX;
     nvrhi::TextureHandle spriteAtlas_;

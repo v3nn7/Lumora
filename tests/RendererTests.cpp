@@ -1142,18 +1142,72 @@ TEST_F(RendererTest, DecalsTintTheSurfacesInsideTheirBox) {
 #include "renderer/HudRenderer.hpp"
 
 TEST(HudFont, MeasuresTextFromTheEmbeddedFont) {
-    const HudFont font;
+    HudFont font;
     EXPECT_GT(font.measure("Hello", 24.0f), 40.0f);
     EXPECT_NEAR(font.measure("Hello", 48.0f), 2.0f * font.measure("Hello", 24.0f), 0.01f) << "scales with size";
     EXPECT_GT(font.measure("WWW", 24.0f), font.measure("iii", 24.0f));
     EXPECT_GT(font.measure("Zażółć gęślą jaźń", 24.0f), 0.0f) << "Polish letters are in the font";
     EXPECT_NEAR(font.measure("ab\nabcd", 24.0f), font.measure("abcd", 24.0f), 0.01f) << "widest line";
     std::vector<HudVertex> vertices;
+    std::vector<HudFont::Batch> batches;
     HudCanvas canvas;
     canvas.addRect({0, 0}, {10, 10}, {1, 1, 1, 1});
     canvas.addText({0, 0}, 20.0f, {1, 1, 1, 1}, "A b");
-    font.layout(canvas, vertices);
+    font.layout(canvas, vertices, batches);
     EXPECT_EQ(vertices.size(), 6u * 3u) << "one quad for the rectangle, one per visible glyph (A, b)";
+    EXPECT_EQ(batches.size(), 1u) << "rectangles and glyphs share the atlas";
+}
+
+TEST(HudFont, DistanceFieldsForManyScriptsMadeOnFirstUse) {
+    HudFont font;
+    font.takeDirty();
+    const std::size_t before = font.glyphCount();
+    EXPECT_GT(font.measure("Привет мир", 24.0f), 50.0f) << "Cyrillic";
+    EXPECT_GT(font.measure("Καλημέρα", 24.0f), 50.0f) << "Greek";
+    EXPECT_GT(font.glyphCount(), before) << "glyphs are made when first needed";
+    EXPECT_TRUE(font.takeDirty()) << "and the atlas must be uploaded again";
+    EXPECT_FALSE(font.takeDirty());
+    // A glyph no font has: a question mark (same width), not nothing.
+    EXPECT_NEAR(font.measure("\u4E2D", 24.0f), font.measure("?", 24.0f), 0.01f);
+    // Sharp at any size: the quads grow with the text, from one field per glyph.
+    std::vector<HudVertex> small, large;
+    std::vector<HudFont::Batch> b1, b2;
+    HudCanvas a, b;
+    a.addText({0, 0}, 12.0f, {1, 1, 1, 1}, "W");
+    b.addText({0, 0}, 96.0f, {1, 1, 1, 1}, "W");
+    font.layout(a, small, b1);
+    font.layout(b, large, b2);
+    ASSERT_EQ(small.size(), 6u);
+    ASSERT_EQ(large.size(), 6u);
+    EXPECT_NEAR((large[2].position.x - large[0].position.x) / (small[2].position.x - small[0].position.x), 8.0f, 0.01f);
+    EXPECT_EQ(large[0].uv, small[0].uv);
+    // A project font: bytes that are not a font fall back to the built-in one.
+    EXPECT_EQ(font.addFont("Content/Fonts/Broken.ttf", std::vector<std::byte>(16)), 0);
+    EXPECT_EQ(font.findFont("Content/Fonts/Broken.ttf"), 0);
+    EXPECT_EQ(font.findFont("Content/Fonts/Unknown.ttf"), -1);
+}
+
+TEST(HudFont, PicturesSplitBatchesByTexture) {
+    HudFont font;
+    HudCanvas canvas;
+    canvas.addImage({0, 0}, {10, 10}, "a.png");
+    canvas.addImage({10, 0}, {10, 10}, "a.png");
+    canvas.addRect({0, 0}, {5, 5}, {1, 1, 1, 1});
+    canvas.addImage({20, 0}, {10, 10}, "b.png");
+    canvas.addText({0, 20}, 20.0f, {1, 1, 1, 1}, "x");
+    canvas.addImage({30, 0}, {10, 10}, "missing.png");
+    std::vector<HudVertex> vertices;
+    std::vector<HudFont::Batch> batches;
+    font.layout(canvas, vertices, batches, [](const std::string& key) -> std::uint32_t {
+        return key == "a.png" ? 7u : key == "b.png" ? 9u : UINT32_MAX;
+    });
+    ASSERT_EQ(batches.size(), 3u) << "a.png (both, and the rectangle after them), b.png, the text";
+    EXPECT_TRUE(batches[0].picture);
+    EXPECT_EQ(batches[0].texture, 7u);
+    EXPECT_EQ(batches[0].count, 18u);
+    EXPECT_EQ(batches[1].texture, 9u);
+    EXPECT_FALSE(batches[2].picture);
+    EXPECT_EQ(vertices.size(), 30u) << "the missing picture is skipped";
 }
 
 TEST_F(RendererTest, HudAlignsTextAndKeepsDrawingOrder) {
@@ -2594,4 +2648,42 @@ TEST_F(RendererTest, MaterialGraphWorldOffsetMovesTheMeshInEveryPass) {
         }
     }
     EXPECT_GT(red, 200) << "the sphere, moved and shaded";
+}
+
+TEST_F(RendererTest, HudPicturesFromProjectTexturesAndCyrillicText) {
+    test::TempDir project;
+    std::filesystem::create_directories(project.path() / "Content" / "Textures");
+    const auto png = test::solidPng(8, 8, 40, 220, 60);
+    std::ofstream(project.path() / "Content" / "Textures" / "icon.png", std::ios::binary)
+        .write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    AssetLibrary assets(project.path());
+    auto scene = sceneWithSun();
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 1.0f, 5.0f});
+    HudCanvas hud;
+    hud.screenSize = {200.0f, 100.0f};
+    hud.addRect({0.0f, 0.0f}, {200.0f, 100.0f}, {0.0f, 0.0f, 0.0f, 1.0f});
+    hud.addImage({10.0f, 10.0f}, {40.0f, 40.0f}, "Content/Textures/icon.png");
+    hud.addImage({60.0f, 10.0f}, {40.0f, 40.0f}, "Content/Textures/icon.png", {1.0f, 0.0f, 1.0f, 1.0f});  // tinted: green x magenta = black
+    hud.addText({110.0f, 20.0f}, 40.0f, {1.0f, 1.0f, 1.0f, 1.0f}, "Жд");
+    RenderSettings settings;
+    settings.bloom = false;
+    settings.assets = &assets;
+    settings.blockOnAssets = true;
+    settings.hud = &hud;
+    auto image = renderer_->capture(*scene, cam.view(2.0f), {200, 100}, settings);
+    ASSERT_TRUE(image.has_value());
+    const auto picture = pixel(*image, 30, 30);
+    EXPECT_GT(picture.g, 180) << "the picture's green";
+    EXPECT_LT(picture.r, 80);
+    const auto tinted = pixel(*image, 80, 30);
+    EXPECT_LT(int(tinted.g) + tinted.r + tinted.b, 120) << "tinted by the colour";
+    int glyphPixels = 0;
+    for (std::uint32_t y = 15; y < 75; ++y) {
+        for (std::uint32_t x = 108; x < 200; ++x) {
+            if (luminance(pixel(*image, x, y)) > 200.0f) ++glyphPixels;
+        }
+    }
+    EXPECT_GT(glyphPixels, 80) << "Cyrillic glyphs drawn";
 }

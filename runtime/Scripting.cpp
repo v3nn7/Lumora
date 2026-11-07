@@ -512,6 +512,21 @@ void apiDrawTextAligned(void* c, const char* text, const float* box, int align, 
     hud->addText({box[0], box[1]}, box[3], {rgba[0], rgba[1], rgba[2], rgba[3]}, text, a, box[2]);
 }
 
+void apiDrawImage(void* c, const char* texture, const float* rect, const float* uv, const float* rgba) {
+    HudCanvas* hud = context(c).hud;
+    if (hud == nullptr || texture == nullptr || rect == nullptr) return;
+    const glm::vec4 tint = rgba != nullptr ? glm::vec4(rgba[0], rgba[1], rgba[2], rgba[3]) : glm::vec4(1.0f);
+    const glm::vec4 part = uv != nullptr ? glm::vec4(uv[0], uv[1], uv[2], uv[3]) : glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
+    hud->addImage({rect[0], rect[1]}, {rect[2], rect[3]}, texture, tint, part);
+}
+
+void apiDrawTextFont(void* c, const char* text, const float* box, int align, const float* rgba, const char* font) {
+    HudCanvas* hud = context(c).hud;
+    if (hud == nullptr || text == nullptr || box == nullptr || rgba == nullptr) return;
+    const auto a = static_cast<HudCanvas::Align>(std::clamp(align, 0, 2));
+    hud->addText({box[0], box[1]}, box[3], {rgba[0], rgba[1], rgba[2], rgba[3]}, text, a, box[2], font != nullptr ? font : "");
+}
+
 int apiParticles(void* c, script::Entity entity, int command, int count) {
     const entt::entity e = liveEntity(c, entity);
     if (e == entt::null) return 0;
@@ -774,6 +789,8 @@ ScriptRunner::ScriptRunner(Scene& scene, std::shared_ptr<ScriptModule> module, c
     api_.animatorParameter = apiAnimatorParameter;
     api_.animatorState = apiAnimatorState;
     api_.audioBus = apiAudioBus;
+    api_.drawImage = apiDrawImage;
+    api_.drawTextFont = apiDrawTextFont;
 }
 
 

@@ -1,5 +1,6 @@
 #include "TestUtils.hpp"
 
+#include "runtime/AudioWorld.hpp"
 #include "runtime/Simulation.hpp"
 #include "scene/Hud.hpp"
 #include "scene/Scene.hpp"
@@ -182,4 +183,36 @@ TEST(LuaScript, DrawsOnTheHud) {
     ASSERT_EQ(w.sim->hud().texts.size(), 1u);
     EXPECT_EQ(w.sim->hud().texts[0].utf8, "Score: 3");
     EXPECT_FLOAT_EQ(w.sim->hud().rects[0].color.a, 0.5f);
+}
+
+TEST(LuaScript, PicturesFontsAndMixerBuses) {
+    LuaWorld w;
+    write(w.dir.path() / "Scripts/Hud.lua", R"(
+        local H = Behaviour:extend()
+        function H:update()
+            self:drawImage("Content/UI/Heart.png", 10, 10, 32, 32, vec3(1, 0.5, 0.5), 0.75)
+            self:drawTextFont("Ready", "Content/Fonts/Title.ttf", 50, 10, 30)
+            self:setBusVolume("Music", 0.25)
+            self:setBusMuted("SFX", true)
+            self.music = self:busVolume("Music")
+            self.muted = self:busMuted("SFX")
+            if self.music > 0.2 and self.muted then self:drawText("ok", 0, 0) end
+        end
+        return H
+    )");
+    w.add("Hud", "Scripts/Hud.lua");
+    w.start();
+    w.sim->step();
+    const HudCanvas& hud = w.sim->hud();
+    ASSERT_EQ(hud.images.size(), 1u);
+    EXPECT_EQ(hud.images[0].texture, "Content/UI/Heart.png");
+    EXPECT_EQ(hud.images[0].size, glm::vec2(32.0f));
+    EXPECT_FLOAT_EQ(hud.images[0].color.a, 0.75f);
+    ASSERT_GE(hud.texts.size(), 1u);
+    EXPECT_EQ(hud.texts[0].font, "Content/Fonts/Title.ttf");
+    EXPECT_FLOAT_EQ(hud.texts[0].size, 30.0f);
+    if (w.sim->audio() != nullptr && w.sim->audio()->busVolume("Music") >= 0.0f) {
+        EXPECT_FLOAT_EQ(w.sim->audio()->busVolume("Music"), 0.25f);
+        ASSERT_EQ(hud.texts.size(), 2u) << "the script read the bus back";
+    }
 }

@@ -39,7 +39,7 @@
 #include <string_view>
 #include <vector>
 
-#define LUMORA_SCRIPT_ABI 4u
+#define LUMORA_SCRIPT_ABI 5u
 
 namespace lumora::script {
 
@@ -159,6 +159,12 @@ struct EngineApi {
     // Mixer bus ("Master", "Music", "SFX", "UI", "Voice"): command 0 set volume (returns it),
     // 1 get volume, 2 mute (value != 0), 3 muted? (1/0)
     float (*audioBus)(void* context, const char* bus, int command, float value);
+    // ABI 5
+    // A picture on the HUD: a project texture key; rect x, y, w, h; uv u0, v0, u1, v1 (null = all).
+    void (*drawImage)(void* context, const char* texture, const float* rect, const float* uv, const float* rgba);
+    // Text in a project font (.ttf / .otf key; "" = built-in): box x, y, width, size; align 0-2.
+    void (*drawTextFont)(void* context, const char* utf8, const float* xyWidthSize, int align, const float* rgba,
+                         const char* font);
 };
 
 class Behaviour;
@@ -268,6 +274,21 @@ protected:
         const float p[3] = {x, y, size};
         const float c[4] = {color.x, color.y, color.z, alpha};
         api_->drawText(api_->context, std::string(text).c_str(), p, c);
+    }
+    /// A picture (a texture of the project, e.g. "Content/UI/Heart.png") tinted by colour.
+    void drawImage(std::string_view texture, float x, float y, float w, float h, Vec3 color = Vec3{1, 1, 1},
+                   float alpha = 1.0f) const {
+        const float r[4] = {x, y, w, h};
+        const float c[4] = {color.x, color.y, color.z, alpha};
+        api_->drawImage(api_->context, std::string(texture).c_str(), r, nullptr, c);
+    }
+    /// Text in a font of the project ("Content/Fonts/Title.ttf"); glyphs it lacks come from the
+    /// built-in font.
+    void drawTextFont(std::string_view text, std::string_view font, float x, float y, float size = 24.0f,
+                      Vec3 color = Vec3{1, 1, 1}, float alpha = 1.0f) const {
+        const float box[4] = {x, y, 0.0f, size};
+        const float c[4] = {color.x, color.y, color.z, alpha};
+        api_->drawTextFont(api_->context, std::string(text).c_str(), box, 0, c, std::string(font).c_str());
     }
     /// Text aligned in a box: centred (align 1) or right-aligned (align 2) within [x, x + width].
     void drawTextCentered(std::string_view text, float centerX, float y, float size = 24.0f, Vec3 color = Vec3{1, 1, 1},
@@ -559,6 +580,9 @@ protected:
     }
     void setBusMuted(std::string_view bus, bool muted) const {
         api_->audioBus(api_->context, std::string(bus).c_str(), 2, muted ? 1.0f : 0.0f);
+    }
+    [[nodiscard]] bool busMuted(std::string_view bus) const {
+        return api_->audioBus(api_->context, std::string(bus).c_str(), 3, 0.0f) != 0.0f;
     }
 
     /// A number from the Script component's Parameters field ("speed=4, jump=6").

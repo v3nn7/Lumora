@@ -680,6 +680,17 @@ std::vector<NodeDef> buildLibrary() {
                              const float rgba[4] = {c.x, c.y, c.z, static_cast<float>(x.number(6))};
                              x.api().drawText(x.ctx(), text.c_str(), xys, rgba);
                          }));
+    lib.push_back(action("hud.image", "Draw Image", "HUD", "Draws a picture (a texture of the project) over the game this step.",
+                         {str("texture", "Content/", PinHint::Asset), num("x", 20.0), num("y", 20.0), num("width", 64.0),
+                          num("height", 64.0), vec("color", "1,1,1"), num("alpha", 1.0)},
+                         {}, [](Exec& x) {
+                             const std::string texture = x.text(1);
+                             const float r[4] = {static_cast<float>(x.number(2)), static_cast<float>(x.number(3)),
+                                                 static_cast<float>(x.number(4)), static_cast<float>(x.number(5))};
+                             const Vec3 c = x.vec(6);
+                             const float rgba[4] = {c.x, c.y, c.z, static_cast<float>(x.number(7))};
+                             x.api().drawImage(x.ctx(), texture.c_str(), r, nullptr, rgba);
+                         }));
     lib.push_back(action("hud.rect", "Draw Rectangle", "HUD", "Draws a filled rectangle over the game this step.",
                          {num("x", 20.0), num("y", 20.0), num("width", 100.0), num("height", 20.0), vec("color", "1,1,1"),
                           num("alpha", 1.0)},

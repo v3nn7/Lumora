@@ -16,7 +16,7 @@
 #define LUMORA_COMPUTE 1
 #include "common.hlsli"
 
-[[vk::binding(0, 1)]] [[spv::format_rgba16f]] RWTexture2D<float4> gHistoryOut;
+[[vk::binding(0, 1)]] [[spv::format_rgba16f]] RWTexture2D<float4> gHistoryOut DX_REGISTER_SPACE(u0, space1);
 
 float luma(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
 float3 weightIn(float3 c) { return c / (1.0 + luma(c)); }     // HDR -> bounded

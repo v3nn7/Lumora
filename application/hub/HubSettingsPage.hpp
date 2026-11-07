@@ -34,6 +34,7 @@ private:
 
     AppContext& app_;
     Preferences prefs_;
+    QComboBox* backend_ = nullptr;
     QComboBox* gpu_ = nullptr;
     QComboBox* validation_ = nullptr;
     QCheckBox* vsync_ = nullptr;

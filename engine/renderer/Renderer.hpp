@@ -5,6 +5,7 @@
 #include "renderer/FrameResources.hpp"
 #include "renderer/GpuProfiler.hpp"
 #include "renderer/SceneRenderer.hpp"
+#include "renderer/d3d12/D3D12Context.hpp"
 #include "renderer/vulkan/Device.hpp"
 #include "renderer/vulkan/Swapchain.hpp"
 
@@ -34,17 +35,21 @@ struct CapturedImage {
     std::vector<std::uint8_t> rgba;  // sRGB-encoded RGBA8, rows top to bottom
 };
 
-/// A presentable surface (window) the renderer can draw into.
+/// A presentable surface (window) the renderer can draw into: a Vulkan swapchain over a
+/// VkSurfaceKHR, or a DXGI swapchain over a window handle (Direct3D 12).
 class PresentTarget {
 public:
     PresentTarget(RenderContext& context, VkSurfaceKHR surface, VkExtent2D extent, rhi::PresentPolicy policy);
+    /// Direct3D 12: `window` is the HWND.
+    PresentTarget(RenderContext& context, void* window, VkExtent2D extent, rhi::PresentPolicy policy);
     ~PresentTarget();
     PresentTarget(const PresentTarget&) = delete;
     PresentTarget& operator=(const PresentTarget&) = delete;
 
     void resize(VkExtent2D extent) noexcept;
     void setPolicy(rhi::PresentPolicy policy) noexcept;
-    [[nodiscard]] const rhi::Swapchain& swapchain() const noexcept { return *swapchain_; }
+    /// Whether presenting waits for the display (FIFO / vsync): then the caller need not pace.
+    [[nodiscard]] bool presentBlocks() const noexcept;
 
 private:
     friend class Renderer;
@@ -53,7 +58,8 @@ private:
     void releaseImages();
 
     RenderContext& ctx_;
-    std::unique_ptr<rhi::Swapchain> swapchain_;
+    std::unique_ptr<rhi::Swapchain> swapchain_;          // Vulkan
+    std::unique_ptr<d3d12::Swapchain> d3d12Swapchain_;   // Direct3D 12
     std::vector<nvrhi::TextureHandle> images_;
     VkExtent2D desired_{};
     bool dirty_ = false;
@@ -102,6 +108,7 @@ private:
                                                  const RenderSettings& settings, const ImportedImage& output,
                                                  const std::function<void(RenderGraph&, RGImage)>& extraPasses);
     void submit(FrameResources& frame, std::vector<nvrhi::CommandListHandle>& lists);
+    FrameResult renderD3D12(PresentTarget& target, const Scene& scene, const CameraView& camera, const RenderSettings& settings);
     void finish(FrameResources& frame);
     void advance() noexcept;
 

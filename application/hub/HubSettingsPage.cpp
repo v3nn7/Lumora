@@ -4,6 +4,7 @@
 #include "common/ProjectUi.hpp"
 #include "common/Theme.hpp"
 #include "renderer/RenderContext.hpp"
+#include "renderer/d3d12/D3D12Context.hpp"
 #include "renderer/vulkan/Device.hpp"
 #include "renderer/vulkan/Instance.hpp"
 
@@ -66,16 +67,29 @@ HubSettingsPage::HubSettingsPage(AppContext& app, QWidget* parent)
 
     // Graphics
     QFormLayout* graphics = nullptr;
-    layout->addWidget(card(tr("Graphics"), tr("Device and debugging options for the Vulkan renderer. Command-line flags "
-                                              "(--gpu, --validation, --no-vsync) take precedence."),
+    layout->addWidget(card(tr("Graphics"), tr("Graphics API, device and debugging options. Command-line flags "
+                                              "(--backend, --gpu, --validation, --no-vsync) take precedence."),
                            graphics));
+    backend_ = new QComboBox;
+    backend_->setObjectName(QStringLiteral("backend"));
+    backend_->addItem(tr("Vulkan"), QStringLiteral("vulkan"));
+    backend_->addItem(tr("Direct3D 12"), QStringLiteral("d3d12"));
+    if (!render::d3d12::compiledIn()) {
+        // Only Windows builds have it.
+        auto* model = qobject_cast<QStandardItemModel*>(backend_->model());
+        if (model != nullptr) model->item(1)->setEnabled(false);
+        backend_->setItemText(1, tr("Direct3D 12 (Windows only)"));
+    }
     gpu_ = new QComboBox;
+    gpu_->setObjectName(QStringLiteral("gpu"));
     gpu_->setMinimumWidth(360);
     activeGpu_ = new QLabel;
     activeGpu_->setProperty("muted", true);
     validation_ = new QComboBox;
+    validation_->setObjectName(QStringLiteral("validation"));
     validation_->addItems({tr("Automatic (on in Debug builds)"), tr("Always on"), tr("Off")});
     vsync_ = new QCheckBox(tr("Pace frames to the display refresh rate"));
+    graphics->addRow(tr("Graphics API"), backend_);
     graphics->addRow(tr("GPU"), gpu_);
     graphics->addRow(QString(), activeGpu_);
     graphics->addRow(tr("Validation layers"), validation_);
@@ -107,10 +121,12 @@ HubSettingsPage::HubSettingsPage(AppContext& app, QWidget* parent)
 
     loading_ = true;
     validation_->setCurrentIndex(static_cast<int>(prefs_.validation));
+    backend_->setCurrentIndex(std::max(backend_->findData(prefs_.backend), 0));
     vsync_->setChecked(prefs_.vsync);
     location_->setText(prefs_.projectsDirectory);
     loading_ = false;
 
+    connect(backend_, &QComboBox::currentIndexChanged, this, &HubSettingsPage::commit);
     connect(gpu_, &QComboBox::currentIndexChanged, this, &HubSettingsPage::commit);
     connect(validation_, &QComboBox::currentIndexChanged, this, &HubSettingsPage::commit);
     connect(vsync_, &QCheckBox::toggled, this, &HubSettingsPage::commit);
@@ -188,11 +204,12 @@ void HubSettingsPage::commit() {
     const Preferences before = prefs_;
     const int gpu = gpu_->currentData().toInt();
     if (gpu_->isEnabled() && populated_) prefs_.gpuIndex = gpu >= 0 ? std::optional<std::uint32_t>(gpu) : std::nullopt;
+    prefs_.backend = backend_->currentData().toString();
     prefs_.validation = static_cast<Preferences::Validation>(validation_->currentIndex());
     prefs_.vsync = vsync_->isChecked();
     prefs_.projectsDirectory = location_->text().trimmed();
     prefs_.save();
-    const bool restart = before.gpuIndex != prefs_.gpuIndex || before.validation != prefs_.validation ||
+    const bool restart = before.backend != prefs_.backend || before.gpuIndex != prefs_.gpuIndex || before.validation != prefs_.validation ||
                          before.vsync != prefs_.vsync;
     status_->setText(restart ? tr("Saved. Graphics changes take effect the next time Lumora starts.") : tr("Saved."));
 }

@@ -6,8 +6,8 @@
 #define LUMORA_COMPUTE 1
 #include "common.hlsli"
 
-[[vk::binding(0, 1)]] [[spv::format_rgba16f]] RWTexture3D<float4> gOut;
-[[vk::binding(1, 1)]] [[spv::format_rgba16f]] RWTexture3D<float4> gInjected;
+[[vk::binding(0, 1)]] [[spv::format_rgba16f]] RWTexture3D<float4> gOut DX_REGISTER_SPACE(u0, space1);
+[[vk::binding(1, 1)]] [[spv::format_rgba16f]] RWTexture3D<float4> gInjected DX_REGISTER_SPACE(u1, space1);
 
 [numthreads(8, 8, 1)]
 void CSMain(uint3 id : SV_DispatchThreadID) {

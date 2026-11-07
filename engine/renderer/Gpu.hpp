@@ -24,7 +24,8 @@ class BindlessTable {
 public:
     static constexpr std::uint32_t kCapacity = 16384;
 
-    explicit BindlessTable(nvrhi::IDevice* device);
+    /// `d3d12`: the table is also mapped to register space 2 (Texture3D views, see common.hlsli).
+    BindlessTable(nvrhi::IDevice* device, bool d3d12);
     [[nodiscard]] nvrhi::IBindingLayout* layout() const noexcept { return layout_; }
     [[nodiscard]] nvrhi::IDescriptorTable* table() const noexcept { return table_; }
 
@@ -45,13 +46,15 @@ private:
 /// SPIR-V shaders from the build's shader folder, created once per (file, entry point).
 class ShaderLibrary {
 public:
-    ShaderLibrary(nvrhi::IDevice* device, std::filesystem::path directory);
+    /// Loads <directory>/<name><extension>: ".spv" (Vulkan) or ".dxil" (D3D12).
+    ShaderLibrary(nvrhi::IDevice* device, std::filesystem::path directory, std::string extension = ".spv");
     /// `name` is the file without ".spv", e.g. "mesh.vert"; the stage follows its suffix.
     [[nodiscard]] nvrhi::IShader* get(std::string_view name, const char* entry);
 
 private:
     nvrhi::IDevice* device_;
     std::filesystem::path directory_;
+    std::string extension_;
     std::mutex mutex_;
     std::unordered_map<std::string, nvrhi::ShaderHandle> shaders_;
 };

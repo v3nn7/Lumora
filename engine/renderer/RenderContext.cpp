@@ -13,6 +13,7 @@
 #include <nvrhi/vulkan.h>
 
 #include <algorithm>
+#include <cctype>
 #include <format>
 
 namespace lumora::render {
@@ -81,7 +82,17 @@ nvrhi::SamplerHandle makeSampler(nvrhi::IDevice* gpu, const nvrhi::SamplerDesc& 
 
 } // namespace
 
-RenderContext::RenderContext(const RenderContextConfig& config) {
+const char* backendName(GraphicsBackend backend) noexcept { return backend == GraphicsBackend::D3D12 ? "Direct3D 12" : "Vulkan"; }
+
+std::optional<GraphicsBackend> parseBackend(std::string_view name) noexcept {
+    std::string lower(name);
+    for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower == "vulkan" || lower == "vk") return GraphicsBackend::Vulkan;
+    if (lower == "d3d12" || lower == "dx12" || lower == "direct3d12") return GraphicsBackend::D3D12;
+    return std::nullopt;
+}
+
+void RenderContext::createVulkan(const RenderContextConfig& config) {
     rhi::InstanceConfig ic;
     ic.applicationName = "Lumora";
     ic.enableValidation = config.enableValidation;
@@ -123,14 +134,32 @@ RenderContext::RenderContext(const RenderContextConfig& config) {
     if (!vulkanDevice_) throw rhi::VulkanError("NVRHI could not use the Vulkan device", VK_ERROR_INITIALIZATION_FAILED);
     vulkanGpu_ = static_cast<nvrhi::vulkan::IDevice*>(vulkanDevice_.Get());
     gpu_ = vulkanDevice_;
+
+    caps_ = device_->caps();
+}
+
+RenderContext::RenderContext(const RenderContextConfig& config) : backend_(config.backend) {
+    static LogMessages d3dMessages;
+    if (backend_ == GraphicsBackend::D3D12) {
+        d3d12::Options options;
+        options.validation = config.enableValidation;
+        options.adapterIndex = config.gpuIndex;
+        options.warp = config.warp;
+        d3d12_ = std::make_unique<d3d12::Context>(options, &d3dMessages, BindlessTable::kCapacity);
+        gpu_ = d3d12_->device();
+        caps_ = d3d12_->caps();
+    } else {
+        createVulkan(config);
+    }
     if (config.enableValidation) {
-        validated_ = nvrhi::validation::createValidationLayer(vulkanDevice_);
+        validated_ = nvrhi::validation::createValidationLayer(gpu_);
         gpu_ = validated_;
     }
 
-    bindless_ = std::make_unique<BindlessTable>(gpu_);
+    bindless_ = std::make_unique<BindlessTable>(gpu_, backend_ == GraphicsBackend::D3D12);
     shaders_ = std::make_unique<ShaderLibrary>(gpu_, config.shaderDirectory.empty() ? paths::shaderDir()
-                                                                                    : config.shaderDirectory);
+                                                                                    : config.shaderDirectory,
+                                               backend_ == GraphicsBackend::D3D12 ? ".dxil" : ".spv");
     // Set 0 keeps the shaders' binding numbers: no per-type offsets.
     nvrhi::BindingLayoutDesc frame;
     frame.visibility = nvrhi::ShaderType::All;
@@ -142,6 +171,8 @@ RenderContext::RenderContext(const RenderContextConfig& config) {
                       nvrhi::BindingLayoutItem::StructuredBuffer_SRV(4),
                       nvrhi::BindingLayoutItem::Sampler(5).setSize(4),
                       nvrhi::BindingLayoutItem::PushConstants(1, sizeof(PushConstants))};  // b1: b0 is the frame CB
+    // D3D12 cannot alias a comparison-sampler array onto s5: the same samplers again at s9.
+    if (backend_ == GraphicsBackend::D3D12) frame.bindings.push_back(nvrhi::BindingLayoutItem::Sampler(9).setSize(4));
     frameLayout_ = gpu_->createBindingLayout(frame);
     if (!frameLayout_) throw rhi::VulkanError("could not create the frame binding layout", VK_ERROR_INITIALIZATION_FAILED);
     // Compute: storage images u0..u3 in set 1 (NVRHI places the bindless table after the regular
@@ -180,7 +211,7 @@ RenderContext::RenderContext(const RenderContextConfig& config) {
     shadowCompareIndex_ = 1;
     samplers_[1] = makeSampler(gpu_, compare);
     auto material = nvrhi::SamplerDesc().setAllFilters(true).setAllAddressModes(nvrhi::SamplerAddressMode::Wrap);
-    if (device_->caps().samplerAnisotropy) material.setMaxAnisotropy(std::min(8.0f, device_->caps().maxAnisotropy));
+    if (caps_.samplerAnisotropy) material.setMaxAnisotropy(std::min(8.0f, caps_.maxAnisotropy));
     materialSamplerIndex_ = 2;
     samplers_[2] = makeSampler(gpu_, material);
     samplers_[3] = samplers_[0];  // spare
@@ -209,6 +240,12 @@ RenderContext::~RenderContext() {
     gpu_ = nullptr;
     vulkanGpu_ = nullptr;
     vulkanDevice_ = nullptr;
+    d3d12_.reset();
+}
+
+rhi::Device::MemoryUsage RenderContext::memoryUsage() const {
+    if (backend_ == GraphicsBackend::D3D12) return d3d12_->memoryUsage();
+    return device_->deviceLocalMemoryUsage();
 }
 
 nvrhi::GraphicsPipelineHandle RenderContext::createPipeline(const PipelineDesc& d) {

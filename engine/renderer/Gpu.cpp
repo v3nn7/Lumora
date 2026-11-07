@@ -28,13 +28,15 @@ bool isSrgbFormat(nvrhi::Format format) noexcept {
 
 // ---- Bindless ------------------------------------------------------------------------------
 
-BindlessTable::BindlessTable(nvrhi::IDevice* device) : device_(device) {
+BindlessTable::BindlessTable(nvrhi::IDevice* device, bool d3d12) : device_(device) {
     nvrhi::BindlessLayoutDesc desc;
     desc.visibility = nvrhi::ShaderType::All;
     desc.firstSlot = 0;
     desc.maxCapacity = kCapacity;
-    // Binding 0: Texture2D gTextures[] (register space 1 for D3D12).
+    // Binding 0: Texture2D gTextures[] (D3D12: t0 in register space 1); D3D12 maps the table to
+    // space 2 as well, for Texture3D gVolumes[] (Vulkan aliases them on one binding).
     desc.registerSpaces = {nvrhi::BindingLayoutItem::Texture_SRV(1)};
+    if (d3d12) desc.registerSpaces.push_back(nvrhi::BindingLayoutItem::Texture_SRV(2));
     layout_ = device_->createBindlessLayout(desc);
     if (!layout_) throw rhi::VulkanError("could not create the bindless descriptor layout", VK_ERROR_INITIALIZATION_FAILED);
     table_ = device_->createDescriptorTable(layout_);
@@ -63,14 +65,14 @@ void BindlessTable::releaseTexture(std::uint32_t index) {
 
 // ---- Shaders ---------------------------------------------------------------------------------
 
-ShaderLibrary::ShaderLibrary(nvrhi::IDevice* device, std::filesystem::path directory)
-    : device_(device), directory_(std::move(directory)) {}
+ShaderLibrary::ShaderLibrary(nvrhi::IDevice* device, std::filesystem::path directory, std::string extension)
+    : device_(device), directory_(std::move(directory)), extension_(std::move(extension)) {}
 
 nvrhi::IShader* ShaderLibrary::get(std::string_view name, const char* entry) {
     const std::string key = std::string(name) + "|" + entry;
     std::scoped_lock lock(mutex_);
     if (auto it = shaders_.find(key); it != shaders_.end()) return it->second;
-    const auto path = directory_ / (std::string(name) + ".spv");
+    const auto path = directory_ / (std::string(name) + extension_);
     std::ifstream in(path, std::ios::binary);
     if (!in) throw rhi::VulkanError("shader not found: " + path.string(), VK_ERROR_INITIALIZATION_FAILED);
     const std::vector<char> code((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());

@@ -58,22 +58,33 @@ bool AppContext::initRenderer() {
         render::RenderContextConfig config;
         config.enableValidation = validationEnabled();
         config.gpuIndex = options_.gpuIndex;
-        config.instanceExtensions = surfaceExtensions();
-        if (std::ranges::find(config.instanceExtensions, "VK_KHR_surface") == config.instanceExtensions.end()) {
-            throw rhi::UnsupportedHardwareError("the Vulkan loader offers no VK_KHR_surface; cannot present to windows");
+        if (auto backend = render::parseBackend(options_.backend)) config.backend = *backend;
+        if (auto backend = render::parseBackend(qEnvironmentVariable("LUMORA_BACKEND").toStdString())) config.backend = *backend;
+        config.warp = qEnvironmentVariableIntValue("LUMORA_WARP") == 1;
+        if (config.backend == render::GraphicsBackend::D3D12 && !render::d3d12::compiledIn()) {
+            log::warn("Renderer", "this build has no Direct3D 12 back end; using Vulkan");
+            config.backend = render::GraphicsBackend::Vulkan;
+        }
+        if (config.backend == render::GraphicsBackend::Vulkan) {
+            config.instanceExtensions = surfaceExtensions();
+            if (std::ranges::find(config.instanceExtensions, "VK_KHR_surface") == config.instanceExtensions.end()) {
+                throw rhi::UnsupportedHardwareError("the Vulkan loader offers no VK_KHR_surface; cannot present to windows");
+            }
         }
         renderContext_ = std::make_unique<render::RenderContext>(config);
         renderer_ = std::make_unique<render::Renderer>(*renderContext_);
 
-        qvk_ = std::make_unique<QVulkanInstance>();
-        qvk_->setVkInstance(renderContext_->instance().handle());
-        if (!qvk_->create()) {
-            throw rhi::VulkanError("QVulkanInstance could not adopt the Vulkan instance", VK_ERROR_INITIALIZATION_FAILED);
+        if (config.backend == render::GraphicsBackend::Vulkan) {  // Direct3D 12 presents through window handles
+            qvk_ = std::make_unique<QVulkanInstance>();
+            qvk_->setVkInstance(renderContext_->instance().handle());
+            if (!qvk_->create()) {
+                throw rhi::VulkanError("QVulkanInstance could not adopt the Vulkan instance", VK_ERROR_INITIALIZATION_FAILED);
+            }
         }
         return true;
     } catch (const std::exception& e) {
         rendererError_ = QString::fromUtf8(e.what());
-        log::error("Renderer", "Vulkan initialisation failed: {}", e.what());
+        log::error("Renderer", "graphics initialisation failed: {}", e.what());
         qvk_.reset();
         renderer_.reset();
         renderContext_.reset();

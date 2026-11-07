@@ -88,6 +88,7 @@ lumora_engine_module(renderer
         renderer/HudRenderer.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/generated/HudFont.cpp
         renderer/RenderContext.cpp
+        renderer/d3d12/D3D12Context.cpp
         renderer/Renderer.cpp
         renderer/SceneRenderer.cpp
         renderer/Overlay.cpp
@@ -111,3 +112,9 @@ const std::size_t kHudFontSize = sizeof(kHudFont);
 ")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LUMORA_HUD_FONT})
 target_link_libraries(lumora_renderer PRIVATE stb)
+
+# Direct3D 12 back end (Windows): NVRHI's D3D12 library and the system's D3D12 / DXGI.
+if(LUMORA_WITH_D3D12)
+    target_compile_definitions(lumora_renderer PRIVATE LUMORA_WITH_D3D12=1)
+    target_link_libraries(lumora_renderer PRIVATE nvrhi_d3d12 d3d12 dxgi dxguid)
+endif()

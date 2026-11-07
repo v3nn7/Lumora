@@ -19,7 +19,9 @@
 #include <QString>
 
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
+#include <string_view>
 #include <format>
 #include <filesystem>
 
@@ -67,6 +69,8 @@ int renderProject(const AppOptions& o, const Project& project, Scene& scene) {
     render::RenderContextConfig config;
     config.requirePresentation = false;
     config.gpuIndex = o.gpuIndex;
+    if (auto backend = render::parseBackend(o.backend)) config.backend = *backend;
+    config.warp = std::getenv("LUMORA_WARP") != nullptr && std::string_view(std::getenv("LUMORA_WARP")) == "1";
 #if defined(LUMORA_DEBUG)
     config.enableValidation = o.validation.value_or(true);
 #else

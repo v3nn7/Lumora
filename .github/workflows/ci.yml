@@ -1,7 +1,8 @@
 name: CI
 
-# Builds and tests every pull request (and pushes to branches other than main) on Linux. GPU
-# tests run on Mesa's software Vulkan (lavapipe); nothing is packaged or published.
+# Builds and tests every pull request (and pushes to branches other than main) on Linux, where
+# GPU tests run on Mesa's software Vulkan (lavapipe), and on Windows with the Direct3D 12 back
+# end, whose GPU tests run on WARP (D3D12's software rasterizer). Nothing is packaged or published.
 on:
   pull_request:
   push:
@@ -76,3 +77,59 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: ctest --preset release --output-on-failure
+
+  windows-d3d12:
+    name: Build and test (Windows, Direct3D 12 on WARP)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      # The SDK brings glslc (SPIR-V) and dxc (DXIL); the installer also puts the Vulkan loader
+      # into System32, so it always runs (a restored C:\VulkanSDK would lack it).
+      - name: Vulkan SDK
+        shell: pwsh
+        run: |
+          $installer = "$env:RUNNER_TEMP\vulkan-sdk.exe"
+          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$env:VULKAN_SDK_VERSION/windows/VulkanSDK-$env:VULKAN_SDK_VERSION-Installer.exe" -OutFile $installer
+          Start-Process -Wait -FilePath $installer -ArgumentList '--root','C:\VulkanSDK','--accept-licenses','--default-answer','--confirm-command','install'
+          "VULKAN_SDK=C:\VulkanSDK" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "C:\VulkanSDK\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+
+      - name: MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Compiler cache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ci-windows-d3d12
+          variant: sccache
+          max-size: 1G
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake --preset release -DLUMORA_WITH_D3D12=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+
+      - name: Build
+        run: cmake --build --preset release
+
+      # The machine has no GPU: Vulkan GPU tests skip; the renderer tests then run again on
+      # Direct3D 12's software rasterizer.
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --preset release --output-on-failure
+
+      - name: Renderer tests on Direct3D 12 (WARP)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          LUMORA_BACKEND: d3d12
+          LUMORA_WARP: "1"
+        run: ctest --preset release --output-on-failure -R "RendererTest\."

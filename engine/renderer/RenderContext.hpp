@@ -4,6 +4,7 @@
 #include "renderer/Gpu.hpp"
 #include "renderer/MeshCache.hpp"
 #include "renderer/TextureCache.hpp"
+#include "renderer/d3d12/D3D12Context.hpp"
 #include "renderer/vulkan/Device.hpp"
 #include "renderer/vulkan/Instance.hpp"
 
@@ -14,11 +15,20 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lumora::render {
 
+/// The graphics API under NVRHI. Vulkan everywhere; Direct3D 12 on Windows builds that have it.
+enum class GraphicsBackend { Vulkan, D3D12 };
+[[nodiscard]] const char* backendName(GraphicsBackend backend) noexcept;
+/// "vulkan" / "d3d12" (case-insensitive) -> backend; anything else -> nullopt.
+[[nodiscard]] std::optional<GraphicsBackend> parseBackend(std::string_view name) noexcept;
+
 struct RenderContextConfig {
+    GraphicsBackend backend = GraphicsBackend::Vulkan;
+    bool warp = false;  // D3D12: the software rasterizer (machines without a GPU)
     bool enableValidation = false;
     /// Platform surface extensions needed by the windowing layer (empty for headless).
     std::vector<std::string> instanceExtensions;
@@ -28,9 +38,10 @@ struct RenderContextConfig {
     std::filesystem::path pipelineCacheFile;   // unused (NVRHI keeps no pipeline cache file)
 };
 
-/// Process-wide GPU context shared by every viewport: the Vulkan instance and device (chosen
-/// and created by Lumora), the NVRHI device on top of them, binding layouts, the bindless
-/// table, shaders, samplers and the asset caches (meshes, textures, environments).
+/// Process-wide GPU context shared by every viewport: the device (Vulkan instance and device, or a
+/// Direct3D 12 adapter and device, chosen and created by Lumora), the NVRHI device on top of it,
+/// binding layouts, the bindless table, shaders, samplers and the asset caches (meshes, textures,
+/// environments). Everything above NVRHI is the same on both back ends.
 /// Construction throws rhi::UnsupportedHardwareError / rhi::VulkanError with a clear message.
 class RenderContext {
 public:
@@ -39,9 +50,15 @@ public:
     RenderContext(const RenderContext&) = delete;
     RenderContext& operator=(const RenderContext&) = delete;
 
+    [[nodiscard]] GraphicsBackend backend() const noexcept { return backend_; }
+    /// Vulkan only: the instance and device Lumora created.
     [[nodiscard]] rhi::Instance& instance() noexcept { return *instance_; }
     [[nodiscard]] rhi::Device& device() noexcept { return *device_; }
-    [[nodiscard]] const rhi::GpuCapabilities& caps() const noexcept { return device_->caps(); }
+    /// Direct3D 12 only.
+    [[nodiscard]] d3d12::Context& d3d12() noexcept { return *d3d12_; }
+    [[nodiscard]] const rhi::GpuCapabilities& caps() const noexcept { return caps_; }
+    /// Device-local memory in use and the budget (0 when unknown).
+    [[nodiscard]] rhi::Device::MemoryUsage memoryUsage() const;
     /// NVRHI device (with NVRHI's validation layer when validation is on).
     [[nodiscard]] nvrhi::IDevice* gpu() const noexcept { return gpu_; }
     /// The Vulkan backend itself (swapchain semaphores).
@@ -103,8 +120,12 @@ public:
     [[nodiscard]] static std::string describeDevices(bool requirePresentation);
 
 private:
+    void createVulkan(const RenderContextConfig& config);
+    GraphicsBackend backend_ = GraphicsBackend::Vulkan;
+    rhi::GpuCapabilities caps_;
     std::unique_ptr<rhi::Instance> instance_;
     std::unique_ptr<rhi::Device> device_;
+    std::unique_ptr<d3d12::Context> d3d12_;
     nvrhi::DeviceHandle vulkanDevice_;  // owns the backend
     nvrhi::vulkan::IDevice* vulkanGpu_ = nullptr;
     nvrhi::DeviceHandle validated_;     // NVRHI validation wrapper (optional)

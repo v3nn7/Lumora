@@ -8,7 +8,7 @@
 #define LUMORA_COMPUTE 1
 #include "common.hlsli"
 
-[[vk::binding(0, 1)]] [[spv::format_r32ui]] RWTexture2D<uint> gRequests;
+[[vk::binding(0, 1)]] [[spv::format_r32ui]] RWTexture2D<uint> gRequests DX_REGISTER_SPACE(u0, space1);
 
 void mark(uint level, float2 pageCoords, float pages) {
     float2 page = floor(pageCoords);

@@ -6,7 +6,7 @@
 
 // Storage images name their format with glslang's [[spv::format_*]] (rgba8, rgba16f, r32f...);
 // without it glslc assumes rgba32f.
-[[vk::binding(0, 1)]] [[spv::format_rgba8]] RWTexture2D<float4> gOut;
+[[vk::binding(0, 1)]] [[spv::format_rgba8]] RWTexture2D<float4> gOut DX_REGISTER_SPACE(u0, space1);
 
 [numthreads(8, 8, 1)]
 void CSMain(uint3 id : SV_DispatchThreadID) {

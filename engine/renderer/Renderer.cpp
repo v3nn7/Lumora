@@ -38,6 +38,14 @@ PresentTarget::PresentTarget(RenderContext& context, VkSurfaceKHR surface, VkExt
     : ctx_(context), swapchain_(std::make_unique<rhi::Swapchain>(context.device(), surface, extent, policy)),
       desired_(extent) {}
 
+PresentTarget::PresentTarget(RenderContext& context, void* window, VkExtent2D extent, rhi::PresentPolicy policy)
+    : ctx_(context), d3d12Swapchain_(std::make_unique<d3d12::Swapchain>(context.d3d12(), window, extent, policy)),
+      desired_(extent) {}
+
+bool PresentTarget::presentBlocks() const noexcept {
+    return d3d12Swapchain_ ? d3d12Swapchain_->presentBlocks() : swapchain_->presentBlocks();
+}
+
 PresentTarget::~PresentTarget() {
     // NVRHI's views of the swapchain images go before the swapchain does.
     ctx_.gpu()->waitForIdle();
@@ -50,6 +58,23 @@ void PresentTarget::releaseImages() {
 }
 
 nvrhi::ITexture* PresentTarget::image(std::uint32_t index) {
+    if (d3d12Swapchain_) {
+        if (images_.size() != d3d12Swapchain_->imageCount()) images_.assign(d3d12Swapchain_->imageCount(), nullptr);
+        nvrhi::TextureHandle& texture = images_[index];
+        if (!texture) {
+            nvrhi::TextureDesc desc;
+            desc.width = d3d12Swapchain_->extent().width;
+            desc.height = d3d12Swapchain_->extent().height;
+            desc.format = d3d12::Swapchain::format();
+            desc.debugName = std::format("Swapchain{}", index);
+            desc.isRenderTarget = true;
+            desc.initialState = nvrhi::ResourceStates::Present;
+            desc.keepInitialState = true;
+            texture = ctx_.gpu()->createHandleForNativeTexture(nvrhi::ObjectTypes::D3D12_Resource,
+                                                               nvrhi::Object(d3d12Swapchain_->image(index)), desc);
+        }
+        return texture;
+    }
     if (images_.size() != swapchain_->imageCount()) images_.assign(swapchain_->imageCount(), nullptr);
     nvrhi::TextureHandle& texture = images_[index];
     if (!texture) {
@@ -75,6 +100,10 @@ void PresentTarget::resize(VkExtent2D extent) noexcept {
 }
 
 void PresentTarget::setPolicy(rhi::PresentPolicy policy) noexcept {
+    if (d3d12Swapchain_) {
+        d3d12Swapchain_->setPolicy(policy);  // per present: nothing to rebuild
+        return;
+    }
     if (policy != swapchain_->policy()) {
         swapchain_->setPolicy(policy);
         dirty_ = true;
@@ -86,7 +115,7 @@ Renderer::Renderer(RenderContext& context)
     nvrhi::IDevice* gpu = ctx_.gpu();
     for (FrameResources& f : frames_) {
         f.done = gpu->createEventQuery();
-        f.acquired = rhi::createBinarySemaphore(ctx_.device(), "ImageAcquired");
+        if (ctx_.backend() == GraphicsBackend::Vulkan) f.acquired = rhi::createBinarySemaphore(ctx_.device(), "ImageAcquired");
         f.transients = std::make_unique<TransientImagePool>(gpu, ctx_.bindless());
         f.profiler = std::make_unique<GpuProfiler>(gpu, ctx_.caps().timestamps);
     }
@@ -187,8 +216,34 @@ void Renderer::submit(FrameResources& frame, std::vector<nvrhi::CommandListHandl
     frame.pending = true;
 }
 
+FrameResult Renderer::renderD3D12(PresentTarget& target, const Scene& scene, const CameraView& camera,
+                                  const RenderSettings& settings) {
+    d3d12::Swapchain& swapchain = *target.d3d12Swapchain_;
+    if (target.dirty_) {
+        waitIdle();
+        framebuffers_.clear();
+        target.releaseImages();
+        if (!swapchain.resize(target.desired_)) return FrameResult::Skipped;  // minimized
+        target.dirty_ = false;
+    }
+    FrameResources& frame = beginFrame();
+    Stopwatch cpu;
+    ImportedImage output;
+    output.texture = target.image(swapchain.currentImage());
+    std::vector<nvrhi::CommandListHandle> lists = record(frame, scene, camera, settings, output, {});
+    submit(frame, lists);
+    stats_.cpuRecordMs = cpu.elapsedMs();
+    stats_.extent = swapchain.extent();
+    stats_.frameNumber = ++frameNumber_;
+    stats_.vram = ctx_.memoryUsage();
+    const bool presented = swapchain.present();
+    advance();
+    return presented ? FrameResult::Rendered : FrameResult::SurfaceLost;
+}
+
 FrameResult Renderer::render(PresentTarget& target, const Scene& scene, const CameraView& camera,
                              const RenderSettings& settings) {
+    if (target.d3d12Swapchain_) return renderD3D12(target, scene, camera, settings);
     rhi::Swapchain& swapchain = *target.swapchain_;
     if (target.dirty_ || !swapchain.valid()) {
         waitIdle();
@@ -220,7 +275,7 @@ FrameResult Renderer::render(PresentTarget& target, const Scene& scene, const Ca
     stats_.cpuRecordMs = cpu.elapsedMs();
     stats_.extent = swapchain.extent();
     stats_.frameNumber = ++frameNumber_;
-    stats_.vram = ctx_.device().deviceLocalMemoryUsage();
+    stats_.vram = ctx_.memoryUsage();
 
     const rhi::SwapchainStatus presented = swapchain.present(imageIndex);
     advance();

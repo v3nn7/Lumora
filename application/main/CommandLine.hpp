@@ -26,6 +26,7 @@ struct AppOptions {
 
     std::optional<bool> validation;     // --validation / --no-validation (default: on in Debug)
     std::optional<std::uint32_t> gpuIndex;
+    std::string backend;                // --backend vulkan|d3d12 (default: preferences, then Vulkan)
     std::optional<bool> vsync;          // --no-vsync (default: preferences, then on)
     std::optional<LogLevel> logLevel;
 

@@ -27,6 +27,9 @@ TAA, VSM na GPU, mgła wolumetryczna, GI, cząsteczki na GPU ani streaming tekst
 - **Sprawdzenie:** test: obiekt przesunięty o 1 m daje oczekiwaną prędkość w pikselach.
 
 ### 0.3 Odpięcie Vulkana od wspólnego kodu (M)
+- **Stan: zrobione w zakresie potrzebnym D3D12.** `GraphicsBackend` w `RenderContext` (caps, pamięć,
+  bindless, layouty, `ShaderLibrary` z `.spv`/`.dxil`), `PresentTarget` z HWND. `VkExtent2D` i
+  `rhi::VulkanError` zostały jako zwykłe typy we wspólnym kodzie.
 Przygotowanie pod D3D12 i WebGPU.
 - **Gdzie:** `Renderer.cpp` (`PresentTarget` z `VkSurfaceKHR`), `SceneRenderer::build`
   (`VkExtent2D`), `rhi::VulkanError` w kodzie wspólnym, nagłówki Vulkana w `TransientImagePool`,
@@ -116,6 +119,11 @@ Warunek dla kompresji tekstur (1.7).
   nieużywanych (`TextureCache.cpp` dziś trzyma wszystko do końca).
 
 ### 1.8 Backend D3D12 (L), zależy od 0.3
+- **Stan: napisany, nieprzetestowany na Windows.** `d3d12/D3D12Context` (adapter DXGI lub WARP, urządzenie,
+  kolejka, swapchain flip-model), rejestry D3D12 w shaderach (`DX_REGISTER`, tylko DXIL), DXIL przez
+  `dxc` w CMake, wybór w Hubie / `--backend` / `LUMORA_BACKEND`. Opcja `LUMORA_WITH_D3D12` domyślnie OFF,
+  dopóki job CI `windows-d3d12` (testy renderera na WARP) nie przejdzie. Kod sprawdzony lokalnie tylko
+  kompilatorem mingw (składnia); shadery DXIL jeszcze nie kompilowane.
 - **Jak:** `NVRHI_WITH_DX12 ON`, kompilacja DXC do DXIL obok SPIR-V (atrybuty `[[vk::...]]` za makrami),
   wybór backendu w `RenderContext`, wybór w ustawieniach (Vulkan zostaje domyślny).
 - **Sprawdzenie:** zestaw testów `RendererTest` na obu backendach w CI (Windows).

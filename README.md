@@ -75,6 +75,9 @@ cmake --build --preset release
 The executables are in `build/release/bin/` (`Lumora`, `lumora-editor`, `lumora-hub`, all thin
 launchers) with compiled shaders in `bin/shaders/`; the modules are `build/release/lib/liblumora_*.so`.
 `-DLUMORA_SHARED_MODULES=OFF` builds static modules instead.
+On Windows, `-DLUMORA_WITH_D3D12=ON` adds the **Direct3D 12 back end** (experimental: shaders are
+compiled to DXIL by `dxc` from the Vulkan SDK as well). Choose it with `--backend d3d12`, the Hub's
+Graphics settings or `LUMORA_BACKEND=d3d12`; `LUMORA_WARP=1` uses D3D12's software rasterizer.
 Use `debug` instead of `release` for a Debug build, which also enables Vulkan validation by default.
 
 Run the tests (the GPU tests are skipped, not faked, when no Vulkan 1.4 device exists):

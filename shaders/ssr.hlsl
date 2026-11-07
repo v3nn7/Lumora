@@ -25,7 +25,7 @@
 #define LUMORA_COMPUTE 1
 #include "lighting.hlsli"
 
-[[vk::binding(0, 1)]] [[spv::format_rgba16f]] RWTexture2D<float4> gOut;
+[[vk::binding(0, 1)]] [[spv::format_rgba16f]] RWTexture2D<float4> gOut DX_REGISTER_SPACE(u0, space1);
 
 static const int kSteps = 40;
 static const int kRefine = 6;

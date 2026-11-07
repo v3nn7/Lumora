@@ -54,8 +54,11 @@ nvrhi::IBindingSet* FrameResources::bindingSet(nvrhi::IDevice* device, nvrhi::IB
                          nvrhi::BindingSetItem::StructuredBuffer_SRV(3, pointLights.buffer),
                          nvrhi::BindingSetItem::StructuredBuffer_SRV(4, lightGrid.buffer),
                          nvrhi::BindingSetItem::PushConstants(1, sizeof(PushConstants))};
+        const bool d3d12 = device->getGraphicsAPI() == nvrhi::GraphicsAPI::D3D12;
         for (std::uint32_t i = 0; i < samplers.size(); ++i) {
             desc.bindings.push_back(nvrhi::BindingSetItem::Sampler(5, samplers[i]).setArrayElement(i));
+            // D3D12: again as the comparison samplers (s9, see RenderContext's frame layout).
+            if (d3d12) desc.bindings.push_back(nvrhi::BindingSetItem::Sampler(9, samplers[i]).setArrayElement(i));
         }
         bindings = device->createBindingSet(desc, layout);
         if (!bindings) throw rhi::VulkanError("could not create the frame binding set", VK_ERROR_INITIALIZATION_FAILED);

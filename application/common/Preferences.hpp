@@ -14,6 +14,7 @@ struct Preferences {
     enum class Validation : int { Automatic = 0, On = 1, Off = 2 };
 
     std::optional<std::uint32_t> gpuIndex;  // nullopt = pick the best suitable GPU
+    QString backend;                        // "vulkan" (default) or "d3d12" (Windows builds with it)
     Validation validation = Validation::Automatic;
     bool vsync = true;
     QString projectsDirectory;              // empty = platform default

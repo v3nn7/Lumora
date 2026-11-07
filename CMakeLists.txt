@@ -45,6 +45,14 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(LUMORA_SHADER_OUTPUT_DIR ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/shaders)
 
+# Direct3D 12 back end next to Vulkan (Windows only; Vulkan stays the default).
+if(WIN32)
+    # Experimental until the Windows CI job (D3D12 on WARP) passes; then on by default.
+    option(LUMORA_WITH_D3D12 "Build the Direct3D 12 back end (experimental)" OFF)
+else()
+    set(LUMORA_WITH_D3D12 OFF)
+endif()
+
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 include(LumoraCompilerOptions)
 include(LumoraModules)

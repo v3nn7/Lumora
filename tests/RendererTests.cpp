@@ -24,6 +24,11 @@ protected:
         config.requirePresentation = false;
         config.enableValidation = std::getenv("LUMORA_TEST_VALIDATION") != nullptr;
         if (const char* gpu = std::getenv("LUMORA_GPU")) config.gpuIndex = static_cast<std::uint32_t>(std::atoi(gpu));
+        // LUMORA_BACKEND=d3d12 runs the GPU tests on Direct3D 12 (LUMORA_WARP=1: the software one).
+        if (const char* backend = std::getenv("LUMORA_BACKEND")) {
+            if (auto b = parseBackend(backend)) config.backend = *b;
+        }
+        config.warp = std::getenv("LUMORA_WARP") != nullptr;
         try {
             context_ = std::make_unique<RenderContext>(config);
             renderer_ = std::make_unique<Renderer>(*context_);
@@ -36,7 +41,7 @@ protected:
         context_.reset();
     }
     void SetUp() override {
-        if (!renderer_) GTEST_SKIP() << "no suitable Vulkan 1.4 GPU: " << skipReason_;
+        if (!renderer_) GTEST_SKIP() << "no suitable GPU: " << skipReason_;
     }
 
     static glm::u8vec4 pixel(const CapturedImage& img, std::uint32_t x, std::uint32_t y) {

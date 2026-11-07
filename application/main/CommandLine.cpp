@@ -66,6 +66,10 @@ Result<AppOptions> parseCommandLine(const std::vector<std::string>& args) {
             auto n = parseNumber<std::uint32_t>(a, *v);
             if (!n) return std::unexpected(n.error());
             o.gpuIndex = *n;
+        } else if (a == "--backend") {
+            LUMORA_TRY_VALUE(v);
+            if (*v != "vulkan" && *v != "d3d12") return makeError("unknown graphics backend '{}' (vulkan|d3d12)", *v);
+            o.backend = *v;
         } else if (a == "--no-vsync") {
             o.vsync = false;
         } else if (a == "--log-level") {
@@ -187,6 +191,7 @@ Headless actions:
 
 Options:
   --gpu <index>                            Select the physical device
+  --backend <vulkan|d3d12>                 Graphics API (Direct3D 12: Windows builds that have it)
   --validation | --no-validation           Toggle Vulkan validation layers (default: on in Debug)
   --no-vsync                               Prefer MAILBOX/IMMEDIATE presentation
   --log-level <trace|debug|info|warn|error>

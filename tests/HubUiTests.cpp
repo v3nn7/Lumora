@@ -59,10 +59,13 @@ TEST(HubSettings, ChangesAreSavedImmediately) {
     EXPECT_TRUE(vsync->isChecked()) << "default preference";
     vsync->setChecked(false);
     EXPECT_FALSE(Preferences::load().vsync);
-    auto combos = page.findChildren<QComboBox*>();
-    ASSERT_GE(combos.size(), 2);
-    combos[1]->setCurrentIndex(1);  // validation: always on
+    auto* validation = page.findChild<QComboBox*>(QStringLiteral("validation"));
+    ASSERT_NE(validation, nullptr);
+    validation->setCurrentIndex(1);  // always on
     EXPECT_EQ(Preferences::load().validation, Preferences::Validation::On);
+    auto* backend = page.findChild<QComboBox*>(QStringLiteral("backend"));
+    ASSERT_NE(backend, nullptr);
+    EXPECT_EQ(Preferences::load().backend, QStringLiteral("vulkan")) << "Vulkan by default";
     if (const QString dir = qEnvironmentVariable("LUMORA_TEST_SNAPSHOT_DIR"); !dir.isEmpty()) {
         page.show();
         QApplication::processEvents();

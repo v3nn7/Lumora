@@ -93,18 +93,29 @@ struct GpuObject {
 
 static const uint NO_TEXTURE = 0xFFFFFFFFu;
 
-[[vk::binding(0, 0)]] cbuffer FrameCB { FrameData gFrame; };
-[[vk::binding(1, 0)]] StructuredBuffer<GpuObject> gObjects;
+// D3D12 registers, only for DXIL (glslang turns a register on the push constants into a binding).
+#if defined(LUMORA_DXIL)
+#define DX_REGISTER(r) : register(r)
+#define DX_REGISTER_SPACE(r, space) : register(r, space)
+#else
+#define DX_REGISTER(r)
+#define DX_REGISTER_SPACE(r, space)
+#endif
+
+// Every resource names its Vulkan binding ([[vk::binding(binding, set)]], SPIR-V) and its D3D12
+// register (register(...), DXIL); the C++ binding layouts match both (RenderContext.cpp).
+[[vk::binding(0, 0)]] cbuffer FrameCB DX_REGISTER(b0) { FrameData gFrame; };
+[[vk::binding(1, 0)]] StructuredBuffer<GpuObject> gObjects DX_REGISTER(t1);
 // Point lights, binned into screen tiles on the CPU: gLightGrid holds (first, count) per tile,
 // then the light indices those ranges point into.
-[[vk::binding(3, 0)]] StructuredBuffer<GpuLight> gPointLights;
-[[vk::binding(4, 0)]] StructuredBuffer<uint> gLightGrid;
+[[vk::binding(3, 0)]] StructuredBuffer<GpuLight> gPointLights DX_REGISTER(t3);
+[[vk::binding(4, 0)]] StructuredBuffer<uint> gLightGrid DX_REGISTER(t4);
 
 // Skinning palettes: GpuObject.flags.z is where an object's joint matrices start.
 struct GpuJoint {
     column_major float4x4 transform;
 };
-[[vk::binding(2, 0)]] StructuredBuffer<GpuJoint> gJoints;
+[[vk::binding(2, 0)]] StructuredBuffer<GpuJoint> gJoints DX_REGISTER(t2);
 
 /// Blend of up to four joint matrices (skinned meshes).
 float4x4 skinMatrix(uint4 joints, float4 weights, uint first) {
@@ -115,16 +126,19 @@ float4x4 skinMatrix(uint4 joints, float4 weights, uint first) {
 // Set 1 in graphics pipelines; compute shaders define LUMORA_COMPUTE first, which moves it to set
 // 2 (NVRHI puts bindless layouts after the regular sets, and compute has its storage images in 1).
 // The bindless table also holds 3D textures (light probe volumes), read through gVolumes.
+// D3D12: the table is t0 in space 1 for 2D views and again in space 2 for 3D ones (registers do
+// not alias), in graphics and compute alike.
 #if defined(LUMORA_COMPUTE)
-[[vk::binding(0, 2)]] Texture2D gTextures[];
-[[vk::binding(0, 2)]] Texture3D gVolumes[];
+[[vk::binding(0, 2)]] Texture2D gTextures[] DX_REGISTER_SPACE(t0, space1);
+[[vk::binding(0, 2)]] Texture3D gVolumes[] DX_REGISTER_SPACE(t0, space2);
 #else
-[[vk::binding(0, 1)]] Texture2D gTextures[];
-[[vk::binding(0, 1)]] Texture3D gVolumes[];
+[[vk::binding(0, 1)]] Texture2D gTextures[] DX_REGISTER_SPACE(t0, space1);
+[[vk::binding(0, 1)]] Texture3D gVolumes[] DX_REGISTER_SPACE(t0, space2);
 #endif
-[[vk::binding(5, 0)]] SamplerState gSamplers[4];
-// Same descriptors viewed as comparison samplers (descriptor aliasing of VK_DESCRIPTOR_TYPE_SAMPLER).
-[[vk::binding(5, 0)]] SamplerComparisonState gShadowSamplers[4];
+[[vk::binding(5, 0)]] SamplerState gSamplers[4] DX_REGISTER(s5);
+// Same descriptors viewed as comparison samplers (Vulkan: aliasing VK_DESCRIPTOR_TYPE_SAMPLER;
+// D3D12: the same four samplers bound again at s9).
+[[vk::binding(5, 0)]] SamplerComparisonState gShadowSamplers[4] DX_REGISTER(s9);
 
 struct PushConstants {
     uint index0;
@@ -138,7 +152,7 @@ struct PushConstants {
 };
 // Note: glslang only honours vk::push_constant on ConstantBuffer<T>/cbuffer declarations; a
 // plain struct global silently lands in the $Global uniform block instead.
-[[vk::push_constant]] ConstantBuffer<PushConstants> gPush;
+[[vk::push_constant]] ConstantBuffer<PushConstants> gPush DX_REGISTER(b1);  // D3D12: root constants
 
 // Clip-space position for the rasterizer. Lumora's matrices use Vulkan's clip space (+Y down);
 // the GPU layer (NVRHI) presents D3D's (+Y up) on every API, flipping Vulkan's viewport, so

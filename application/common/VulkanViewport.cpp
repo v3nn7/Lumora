@@ -126,11 +126,19 @@ std::optional<MouseButton> mapButton(Qt::MouseButton b) {
 
 VulkanViewport::VulkanViewport(AppContext& app, ViewportClient& client)
     : app_(app), client_(client), emptyScene_(std::make_unique<Scene>("Empty")) {
-    setSurfaceType(QSurface::VulkanSurface);
-    if (QVulkanInstance* inst = app_.vulkanInstance()) {
-        setVulkanInstance(inst);
+    render::RenderContext* context = app_.renderContext();
+    if (context != nullptr && context->backend() == render::GraphicsBackend::D3D12) {
+        // Direct3D 12 presents through the native window handle (a DXGI swapchain).
+#if defined(Q_OS_WIN)
+        setSurfaceType(QSurface::Direct3DSurface);
+#endif
     } else {
-        failed_ = true;
+        setSurfaceType(QSurface::VulkanSurface);
+        if (QVulkanInstance* inst = app_.vulkanInstance()) {
+            setVulkanInstance(inst);
+        } else {
+            failed_ = true;
+        }
     }
     // Wayland does not allow clients to warp the pointer; elsewhere we recenter while looking.
     canWarpCursor_ = !QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
@@ -213,7 +221,7 @@ void VulkanViewport::scheduleNextFrame() {
     // Presentation never blocks this (UI) thread, so with vsync we pace to the screen refresh
     // rate ourselves; FIFO presents already throttle and uncapped mode runs flat out.
     double waitMs = 0.0;
-    if (vsync_ && target_ && !target_->swapchain().presentBlocks()) {
+    if (vsync_ && target_ && !target_->presentBlocks()) {
         const double hz = screen() != nullptr && screen()->refreshRate() > 1.0 ? screen()->refreshRate() : 60.0;
         waitMs = std::max(0.0, 1000.0 / hz - static_cast<double>(paceTimer_.nsecsElapsed()) * 1e-6);
     }
@@ -243,11 +251,16 @@ bool VulkanViewport::ensureTarget() {
         fail(app_.rendererError());
         return false;
     }
-    const VkSurfaceKHR surface = QVulkanInstance::surfaceForWindow(this);
-    if (surface == VK_NULL_HANDLE) {
-        return false;  // platform window not ready yet; retried on the next expose
-    }
     try {
+        if (renderer->context().backend() == render::GraphicsBackend::D3D12) {
+            target_ = std::make_unique<render::PresentTarget>(renderer->context(), reinterpret_cast<void*>(winId()), pixelExtent(),
+                                                              policy());
+            return true;
+        }
+        const VkSurfaceKHR surface = QVulkanInstance::surfaceForWindow(this);
+        if (surface == VK_NULL_HANDLE) {
+            return false;  // platform window not ready yet; retried on the next expose
+        }
         target_ = std::make_unique<render::PresentTarget>(renderer->context(), surface, pixelExtent(), policy());
     } catch (const std::exception& e) {
         fail(QStringLiteral("Cannot create swapchain: %1").arg(QString::fromUtf8(e.what())));

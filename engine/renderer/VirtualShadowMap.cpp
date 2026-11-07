@@ -70,6 +70,28 @@ float VirtualShadowMap::pageSize(int level) noexcept {
 
 void VirtualShadowMap::invalidateAll() {
     for (auto& [key, page] : resident_) page.valid = false;
+    ++generation_;
+}
+
+VsmFeedback VirtualShadowMap::decodeRequests(std::span<const std::uint32_t> bits, std::size_t rowPitch, int levels,
+                                             const std::array<glm::ivec2, 12>& windowMin, std::uint64_t generation) {
+    VsmFeedback out;
+    out.generation = generation;
+    levels = std::clamp(levels, 0, kMaxLevels);
+    for (int l = 0; l < levels; ++l) {
+        for (int sy = 0; sy < kPagesPerLevel; ++sy) {
+            const std::size_t row = static_cast<std::size_t>(l * kPagesPerLevel + sy) * rowPitch;
+            for (int sx = 0; sx < kPagesPerLevel; ++sx) {
+                if (row + static_cast<std::size_t>(sx) >= bits.size() || bits[row + static_cast<std::size_t>(sx)] == 0) continue;
+                // The window's page whose slot this is.
+                const glm::ivec2 base = windowMin[static_cast<std::size_t>(l)];
+                const int x = base.x + slotOf(sx - base.x);
+                const int y = base.y + slotOf(sy - base.y);
+                out.pages.emplace_back(l, x, y);
+            }
+        }
+    }
+    return out;
 }
 
 void VirtualShadowMap::invalidateRect(glm::vec2 min, glm::vec2 max) {
@@ -83,7 +105,7 @@ void VirtualShadowMap::invalidateRect(glm::vec2 min, glm::vec2 max) {
 }
 
 VsmFrame VirtualShadowMap::update(const CameraView& camera, const glm::vec3& lightTravel, float shadowDistance,
-                                  std::span<const VsmCaster> casters, std::uint32_t budget) {
+                                  std::span<const VsmCaster> casters, std::uint32_t budget, const VsmFeedback* feedback) {
     ++frame_;
     VsmFrame out;
     if (free_.empty() && resident_.empty()) {
@@ -109,6 +131,9 @@ VsmFrame VirtualShadowMap::update(const CameraView& camera, const glm::vec3& lig
         out.invalidatedAll = true;
     }
     initialised_ = true;
+    out.generation = generation_;
+    if (feedback != nullptr && feedback->generation != generation_) feedback = nullptr;  // another light space
+    out.fromFeedback = feedback != nullptr;
     out.lightView = glm::mat4(1.0f);
     out.lightView = glm::row(out.lightView, 0, glm::vec4(right_, 0.0f));
     out.lightView = glm::row(out.lightView, 1, glm::vec4(up_, 0.0f));
@@ -172,7 +197,24 @@ VsmFrame VirtualShadowMap::update(const CameraView& camera, const glm::vec3& lig
     };
     std::vector<Need> needs;
     const Vec2 eyeXY = lightXY(eye);
+    // Visible surfaces' requests for the finer levels (within this frame's windows).
+    const int frustumFrom = feedback != nullptr ? std::max(out.levels - kFrustumLevels, 0) : 0;
     for (int l = 0; l < out.levels; ++l) {
+        const float size = pageSize(l);
+        out.windowMin[static_cast<std::size_t>(l)] =
+            glm::ivec2(floorDiv(eyeXY.x, size) - kPagesPerLevel / 2, floorDiv(eyeXY.y, size) - kPagesPerLevel / 2);
+    }
+    if (feedback != nullptr) {
+        for (const glm::ivec3& p : feedback->pages) {
+            if (p.x >= frustumFrom) continue;
+            const glm::ivec2 base = out.windowMin[static_cast<std::size_t>(p.x)];
+            if (p.y < base.x || p.y >= base.x + kPagesPerLevel || p.z < base.y || p.z >= base.y + kPagesPerLevel) continue;
+            const float size = pageSize(p.x);
+            const Vec2 center((static_cast<float>(p.y) + 0.5f) * size, (static_cast<float>(p.z) + 0.5f) * size);
+            needs.push_back({p.x, p.y, p.z, glm::length(center - eyeXY)});
+        }
+    }
+    for (int l = frustumFrom; l < out.levels; ++l) {
         const float size = pageSize(l);
         const float far = std::min(kFirstHalf * std::exp2(static_cast<float>(l)) * out.levelReach, shadowDistance);
         std::vector<Vec2> points;
@@ -184,11 +226,10 @@ VsmFrame VirtualShadowMap::update(const CameraView& camera, const glm::vec3& lig
             }
         }
         const std::vector<Vec2> hull = convexHull(points);
-        const int cx = floorDiv(eyeXY.x, size);
-        const int cy = floorDiv(eyeXY.y, size);
+        const glm::ivec2 base = out.windowMin[static_cast<std::size_t>(l)];
         const float margin = size * 0.05f;  // filter and normal offset near a page's edge
-        for (int y = cy - kPagesPerLevel / 2; y < cy + kPagesPerLevel / 2; ++y) {
-            for (int x = cx - kPagesPerLevel / 2; x < cx + kPagesPerLevel / 2; ++x) {
+        for (int y = base.y; y < base.y + kPagesPerLevel; ++y) {
+            for (int x = base.x; x < base.x + kPagesPerLevel; ++x) {
                 const Vec2 min(static_cast<float>(x) * size - margin, static_cast<float>(y) * size - margin);
                 const Vec2 max(static_cast<float>(x + 1) * size + margin, static_cast<float>(y + 1) * size + margin);
                 if (!overlaps(min, max, hull)) continue;

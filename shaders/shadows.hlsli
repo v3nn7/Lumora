@@ -1,4 +1,4 @@
-// Shadow lookups shared by the shading passes and volumetric fog: spot and point lights (4x4
+// Shadow lookups shared by the shading passes and volumetric fog: spot and point lights (8x8
 // atlas tiles), sun cascades (2x2 atlas) and the sun's virtual shadow map.
 // Push constants: index1 = sun shadow map (cascade atlas or VSM pool), param0 = asfloat(local
 // shadow atlas), param1 = asfloat(VSM page table), flags bit0 = sun shadows on.
@@ -7,7 +7,7 @@
 
 #include "common.hlsli"
 
-// ---- Spot and point light shadows: 4x4 tiles of a second depth atlas ----------------------
+// ---- Spot and point light shadows: 8x8 tiles of a second depth atlas ----------------------
 
 /// Visibility from a shadowed spot or point light. A point light's six cube faces are six tiles
 /// starting at its first one (+X, -X, +Y, -Y, +Z, -Z). 3x3 PCF from four bilinear comparisons.
@@ -32,10 +32,11 @@ float localShadow(GpuLight light, float3 position, float3 normal, float distance
         return 1.0;
     }
     float texel = gFrame.localShadowParams.y;
-    float2 tileOrigin = float2(tile % 4, tile / 4) * 0.25;
-    // Stay a texel inside the tile so the filter never reads the neighbour.
-    float2 inTile = clamp(ndc.xy * 0.5 + 0.5, texel * 6.0, 1.0 - texel * 6.0);
-    float2 uv = tileOrigin + inTile * 0.25;
+    float grid = gFrame.localShadowParams.z;
+    float2 tileOrigin = float2(tile % (int)grid, tile / (int)grid) / grid;
+    // Stay 1.5 texels inside the tile so the filter never reads the neighbour.
+    float2 inTile = clamp(ndc.xy * 0.5 + 0.5, texel * grid * 1.5, 1.0 - texel * grid * 1.5);
+    float2 uv = tileOrigin + inTile / grid;
     uint atlas = asuint(gPush.param0);
     uint smp = (uint)gFrame.shadowParams.y;
     float depth = ndc.z - 0.0005;

@@ -1878,3 +1878,117 @@ TEST_F(RendererTest, VolumetricFogGlowsAroundLights) {
     EXPECT_GT(luminance(pixel(*volumetric, near.x, near.y)), luminance(pixel(*volumetric, corner.x, corner.y)) + 20.0f)
         << "brightest near it, fading away";
 }
+
+TEST(VirtualShadowMap, VisibleSurfacesChooseTheFinePages) {
+    VirtualShadowMap vsm;
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 2.0f, 0.0f});
+    cam.setRotation(0.0f, -20.0f);
+    const CameraView view = cam.view(16.0f / 9.0f);
+    const glm::vec3 sun = glm::normalize(glm::vec3(0.3f, -1.0f, -0.4f));
+    const VsmFrame first = vsm.update(view, sun, 50.0f, {}, 0);
+    ASSERT_GE(first.levels, 4);
+
+    // Slots are absolute pages modulo 16 inside each level's window: decoding finds the page.
+    std::vector<std::uint32_t> bits(static_cast<std::size_t>(VirtualShadowMap::kPagesPerLevel * VirtualShadowMap::kPagesPerLevel * first.levels), 0u);
+    const glm::ivec2 base = first.windowMin[0];
+    const glm::ivec2 wanted = base + glm::ivec2(13, 2);
+    auto slot = [](int page) { return ((page % 16) + 16) % 16; };
+    bits[static_cast<std::size_t>(slot(wanted.y) * 16 + slot(wanted.x))] = 1u;
+    const VsmFeedback feedback = VirtualShadowMap::decodeRequests(bits, 16, first.levels, first.windowMin, first.generation);
+    ASSERT_EQ(feedback.pages.size(), 1u);
+    EXPECT_EQ(feedback.pages[0], glm::ivec3(0, wanted.x, wanted.y));
+
+    const VsmFrame second = vsm.update(view, sun, 50.0f, {}, 0, &feedback);
+    EXPECT_TRUE(second.fromFeedback);
+    EXPECT_LT(second.requested, first.requested) << "fine levels: only the requested page";
+    int fine = 0;
+    for (int l = 0; l < second.levels - VirtualShadowMap::kFrustumLevels; ++l) {
+        for (int i = 0; i < 256; ++i) {
+            fine += second.pageTable[(static_cast<std::size_t>(l * 256 + i)) * 4 + 3] > 0.5f ? 1 : 0;
+        }
+    }
+    EXPECT_GE(fine, 1);
+
+    VsmFeedback stale = feedback;
+    stale.generation += 1;
+    EXPECT_FALSE(vsm.update(view, sun, 50.0f, {}, 0, &stale).fromFeedback) << "requests from another light space are ignored";
+}
+
+TEST_F(RendererTest, VirtualShadowPagesFollowTheVisibleSurfaces) {
+    auto scene = shadowScene();
+    addCube(*scene, {0.0f, 2.0f, 0.0f});
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({4.0f, 3.0f, 4.0f});
+    cam.lookAt({0.0f, 0.0f, -2.0f});
+    const CameraView view = cam.view(4.0f / 3.0f);
+    RenderSettings settings;
+    settings.virtualShadowPageBudget = 0;
+    std::vector<CapturedImage> frames;
+    std::vector<SceneDrawStats> stats;
+    for (int i = 0; i < 4; ++i) {
+        auto image = renderer_->capture(*scene, view, {160, 120}, settings);
+        ASSERT_TRUE(image.has_value());
+        frames.push_back(std::move(*image));
+        stats.push_back(renderer_->stats().scene);
+    }
+    EXPECT_FALSE(stats[0].virtualPagesFromSurfaces) << "nothing read back yet";
+    EXPECT_TRUE(stats[3].virtualPagesFromSurfaces);
+    EXPECT_LT(stats[3].virtualPagesRequested, stats[0].virtualPagesRequested) << "fewer pages than the whole frustum";
+    std::size_t differing = 0;
+    for (std::size_t i = 0; i < frames[0].rgba.size(); ++i) differing += std::abs(int(frames[0].rgba[i]) - int(frames[3].rgba[i])) > 3 ? 1 : 0;
+    EXPECT_LT(differing, frames[0].rgba.size() / 200) << "the shadows look the same";
+}
+
+TEST_F(RendererTest, LocalShadowTilesAreKeptUntilTheirLightOrCastersChange) {
+    // Four shadowed point lights far apart (24 tiles), each over its own cube.
+    auto scene = std::make_unique<Scene>("Lamps");
+    scene->environment().ambientIntensity = 0.0f;
+    scene->environment().fogDensity = 0.0f;
+    const auto floor = scene->createEntity("Floor");
+    auto& fm = scene->registry().emplace<MeshRendererComponent>(floor);
+    fm.mesh = MeshPrimitive::Plane;
+    fm.baseColor = glm::vec3(0.8f);
+    scene->registry().get<TransformComponent>(floor).scale = glm::vec3(60.0f, 1.0f, 60.0f);
+    std::vector<entt::entity> cubes;
+    for (int i = 0; i < 4; ++i) {
+        const glm::vec3 at(static_cast<float>(i % 2) * 20.0f - 10.0f, 0.0f, static_cast<float>(i / 2) * 20.0f - 10.0f);
+        const auto cube = scene->createEntity("Cube");
+        scene->registry().emplace<MeshRendererComponent>(cube).baseColor = glm::vec3(0.8f);
+        scene->registry().get<TransformComponent>(cube).position = at + glm::vec3(0.0f, 1.5f, 0.0f);
+        cubes.push_back(cube);
+        const auto lamp = scene->createEntity("Lamp");
+        auto& light = scene->registry().emplace<LightComponent>(lamp);
+        light.type = LightType::Point;
+        light.intensity = 40.0f;
+        light.range = 8.0f;
+        light.castShadows = true;
+        scene->registry().get<TransformComponent>(lamp).position = at + glm::vec3(0.0f, 4.0f, 0.0f);
+    }
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 40.0f, 20.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const CameraView view = cam.view(1.0f);
+    RenderSettings settings;
+    settings.bloom = false;
+    auto first = renderer_->capture(*scene, view, {128, 128}, settings);
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(renderer_->stats().scene.localShadowTiles, 24u) << "more than the 16 tiles of old";
+    EXPECT_EQ(renderer_->stats().scene.localShadowTilesDrawn, 24u);
+
+    auto again = renderer_->capture(*scene, view, {128, 128}, settings);
+    ASSERT_TRUE(again.has_value());
+    EXPECT_EQ(renderer_->stats().scene.localShadowTilesDrawn, 0u) << "nothing changed: every tile cached";
+    EXPECT_EQ(first->rgba, again->rgba);
+
+    // One cube moves under its lamp: only that lamp's faces that see it are drawn again.
+    scene->registry().get<TransformComponent>(cubes[0]).position.x += 1.0f;
+    scene->updateWorldTransforms();
+    auto moved = renderer_->capture(*scene, view, {128, 128}, settings);
+    ASSERT_TRUE(moved.has_value());
+    EXPECT_GT(renderer_->stats().scene.localShadowTilesDrawn, 0u);
+    EXPECT_LE(renderer_->stats().scene.localShadowTilesDrawn, 6u);
+    EXPECT_NE(first->rgba, moved->rgba) << "its shadow moved";
+}

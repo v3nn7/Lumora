@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -309,6 +310,7 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     clear.depthFormat = depth;
     vsmClear_ = make(clear);
     taa_ = ctx_.createComputePipeline("taa.comp");
+    vsmMark_ = ctx_.createComputePipeline("vsm.mark.comp");
     fogInject_ = ctx_.createComputePipeline("fog.inject.comp", "CSInject");
     fogIntegrate_ = ctx_.createComputePipeline("fog.integrate.comp");
     ssrTrace_ = ctx_.createComputePipeline("ssr.trace.comp", "CSTrace");
@@ -406,6 +408,7 @@ SceneRenderer::~SceneRenderer() {
     if (spriteAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(spriteAtlasIndex_);
     if (vsmPoolIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(vsmPoolIndex_);
     if (vsmPageTableIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(vsmPageTableIndex_);
+    if (localAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(localAtlasIndex_);
     for (const std::uint32_t index : taaHistoryIndex_) {
         if (index != UINT32_MAX) ctx_.bindless().releaseTexture(index);
     }
@@ -695,45 +698,92 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             fc.sunShafts = glm::vec4(ndc * 0.5f + 0.5f, env.sunShafts, visibility);
         }
     }
-    // Spot and point light shadows: tiles of the local atlas to the lights nearest the camera.
+    // Spot and point light shadows: tiles of the local atlas to the lights nearest the camera. A
+    // light keeps the tiles it had (their contents may still be valid); new ones take free runs.
     struct LocalTile {
         glm::mat4 viewProjection;
         glm::vec3 lightPosition;
         float range;
+        std::uint32_t index;  // in the atlas
     };
     std::vector<LocalTile> localTiles;
     std::ranges::sort(shadowCandidates, std::less<>{}, &ShadowCandidate::distance);
-    for (const ShadowCandidate& c : shadowCandidates) {
-        const std::uint32_t needed = c.type == LightType::Spot ? 1u : 6u;
-        if (localTiles.size() + needed > kLocalShadowTiles) continue;
-        GpuLight& gl = pointLights[c.light];
-        const glm::vec3 position(gl.positionRange);
-        const float range = std::max(gl.positionRange.w, 0.1f);
-        const float nearPlane = std::clamp(range * 0.005f, 0.02f, 0.5f);
-        gl.spot.z = static_cast<float>(localTiles.size());
-        auto add = [&](const glm::vec3& forward, const glm::vec3& up, float fov) {
-            const glm::mat4 view = glm::lookAt(position, position + forward, up);
-            const glm::mat4 projection = glm::perspective(fov, 1.0f, nearPlane, range);
-            fc.localShadowMatrices[localTiles.size()] = projection * view;
-            localTiles.push_back({projection * view, position, range});
+    {
+        auto lightKey = [&](const ShadowCandidate& c) {
+            const GpuLight& gl = pointLights[c.light];
+            std::uint64_t h = static_cast<std::uint64_t>(c.type) + 1;
+            for (const float v : {gl.positionRange.x, gl.positionRange.y, gl.positionRange.z, gl.positionRange.w, gl.directionType.x,
+                                  gl.directionType.y, gl.directionType.z, c.outerAngle}) {
+                h = h * 1099511628211ull ^ std::bit_cast<std::uint32_t>(v);
+            }
+            return h;
         };
-        if (c.type == LightType::Spot) {
-            const glm::vec3 dir = glm::normalize(glm::vec3(gl.directionType));
-            add(dir, std::abs(dir.y) > 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0),
-                std::min(2.0f * c.outerAngle + glm::radians(4.0f), glm::radians(170.0f)));
-        } else {
-            const float quarter = glm::half_pi<float>();
-            add({1, 0, 0}, {0, 1, 0}, quarter);
-            add({-1, 0, 0}, {0, 1, 0}, quarter);
-            add({0, 1, 0}, {0, 0, 1}, quarter);
-            add({0, -1, 0}, {0, 0, 1}, quarter);
-            add({0, 0, 1}, {0, 1, 0}, quarter);
-            add({0, 0, -1}, {0, 1, 0}, quarter);
+        std::vector<LocalAllocation> kept;
+        std::vector<std::pair<std::size_t, std::uint32_t>> chosen;  // candidate, first tile
+        std::uint64_t used = 0;  // tiles taken (bit per tile)
+        std::uint32_t total = 0;
+        std::vector<std::size_t> waiting;
+        for (std::size_t i = 0; i < shadowCandidates.size(); ++i) {
+            const std::uint32_t needed = shadowCandidates[i].type == LightType::Spot ? 1u : 6u;
+            if (total + needed > kLocalShadowTiles) continue;
+            total += needed;
+            const std::uint64_t key = lightKey(shadowCandidates[i]);
+            const auto it = std::ranges::find_if(localAllocations_, [&](const LocalAllocation& a) { return a.light == key && a.count == needed; });
+            if (it != localAllocations_.end()) {
+                kept.push_back(*it);
+                chosen.emplace_back(i, it->first);
+                used |= (needed == 64 ? ~0ull : ((1ull << needed) - 1)) << it->first;
+            } else {
+                waiting.push_back(i);
+            }
+        }
+        for (const std::size_t i : waiting) {
+            const std::uint32_t needed = shadowCandidates[i].type == LightType::Spot ? 1u : 6u;
+            const std::uint64_t run = (1ull << needed) - 1;
+            for (std::uint32_t first = 0; first + needed <= kLocalShadowTiles; ++first) {
+                if ((used & (run << first)) != 0) continue;
+                used |= run << first;
+                kept.push_back({lightKey(shadowCandidates[i]), first, needed});
+                chosen.emplace_back(i, first);
+                break;
+            }
+        }
+        localAllocations_ = std::move(kept);
+        for (const auto& [i, first] : chosen) {
+            const ShadowCandidate& c = shadowCandidates[i];
+            GpuLight& gl = pointLights[c.light];
+            const glm::vec3 position(gl.positionRange);
+            const float range = std::max(gl.positionRange.w, 0.1f);
+            const float nearPlane = std::clamp(range * 0.005f, 0.02f, 0.5f);
+            gl.spot.z = static_cast<float>(first);
+            std::uint32_t index = first;
+            auto add = [&](const glm::vec3& forward, const glm::vec3& up, float fov) {
+                const glm::mat4 view = glm::lookAt(position, position + forward, up);
+                const glm::mat4 projection = glm::perspective(fov, 1.0f, nearPlane, range);
+                fc.localShadowMatrices[index] = projection * view;
+                localTiles.push_back({projection * view, position, range, index});
+                ++index;
+            };
+            if (c.type == LightType::Spot) {
+                const glm::vec3 dir = glm::normalize(glm::vec3(gl.directionType));
+                add(dir, std::abs(dir.y) > 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0),
+                    std::min(2.0f * c.outerAngle + glm::radians(4.0f), glm::radians(170.0f)));
+            } else {
+                const float quarter = glm::half_pi<float>();
+                add({1, 0, 0}, {0, 1, 0}, quarter);
+                add({-1, 0, 0}, {0, 1, 0}, quarter);
+                add({0, 1, 0}, {0, 0, 1}, quarter);
+                add({0, -1, 0}, {0, 0, 1}, quarter);
+                add({0, 0, 1}, {0, 1, 0}, quarter);
+                add({0, 0, -1}, {0, 1, 0}, quarter);
+            }
         }
     }
     const bool localShadows = !localTiles.empty();
-    const std::uint32_t localAtlasSize = std::min(4096u, ctx_.caps().maxImageDimension2D);
-    if (localShadows) fc.localShadowParams = glm::vec4(1.0f, 1.0f / static_cast<float>(localAtlasSize), 0.0f, 0.0f);
+    const std::uint32_t localAtlasSize = std::min(4096u, ctx_.caps().maxImageDimension2D) / kLocalShadowGrid * kLocalShadowGrid;
+    if (localShadows) {
+        fc.localShadowParams = glm::vec4(1.0f, 1.0f / static_cast<float>(localAtlasSize), static_cast<float>(kLocalShadowGrid), 0.0f);
+    }
     fc.shadowParams.y = static_cast<float>(ctx_.shadowCompareSampler());  // local shadows use it without a sun
     const bool anyShadows = shadows || localShadows;
     fc.counts = glm::uvec4(lightCount, shadows ? sunIndex : UINT32_MAX, ctx_.materialSampler(), 0);
@@ -1087,12 +1137,38 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
 
     // ---- Virtual shadow map: pages the view needs, what changed, the page table --------------
     VsmFrame vsmFrame;
+    // This frame's slot of GPU page requests: read what it holds (written two frames ago, if
+    // that frame marked any), then it is free for this frame's marks.
+    VsmRequests& previous = vsmRequests_[vsmRequestFrame_ % vsmRequests_.size()];
+    std::optional<VsmFeedback> feedback;
     if (virtualShadows) {
         std::vector<VsmCaster> vsmCasters;
         vsmCasters.reserve(casters.size());
         for (const Draw& d : casters) vsmCasters.push_back({d.key, d.center, d.extent, d.state, d.mesh->skinned()});
         const std::uint32_t budget = settings.blockOnAssets ? 0u : settings.virtualShadowPageBudget;
-        vsmFrame = vsm_.update(camera, sunTravel, settings.shadowDistance, vsmCasters, budget);
+        // Requests the visible surfaces made two frames ago (that frame has finished).
+        // Only for (nearly) the same view: another camera's requests (a thumbnail, a bake) would
+        // leave this view's pages out. Single captures always take the whole frustum.
+        auto sameView = [&](const glm::mat4& a, const glm::mat4& b) {
+            for (int c = 0; c < 4; ++c) {
+                if (glm::length(a[c] - b[c]) > 0.02f * (glm::length(b[c]) + 1.0f)) return false;
+            }
+            return true;
+        };
+        if (previous.pending && settings.virtualShadowGpuRequests && !settings.blockOnAssets &&
+            sameView(previous.viewProjection, fc.viewProjection)) {
+            std::size_t pitch = 0;
+            const auto* mapped = static_cast<const std::uint8_t*>(
+                gpu->mapStagingTexture(previous.staging, nvrhi::TextureSlice(), nvrhi::CpuAccessMode::Read, &pitch));
+            if (mapped != nullptr) {
+                const std::size_t rows = static_cast<std::size_t>(VirtualShadowMap::kPagesPerLevel) * static_cast<std::size_t>(previous.levels);
+                feedback = VirtualShadowMap::decodeRequests(
+                    std::span(reinterpret_cast<const std::uint32_t*>(mapped), (rows - 1) * (pitch / 4) + VirtualShadowMap::kPagesPerLevel),
+                    pitch / 4, previous.levels, previous.windowMin, previous.generation);
+                gpu->unmapStagingTexture(previous.staging);
+            }
+        }
+        vsmFrame = vsm_.update(camera, sunTravel, settings.shadowDistance, vsmCasters, budget, feedback ? &*feedback : nullptr);
         fc.vsmLightView = vsmFrame.lightView;
         fc.vsmParams = glm::vec4(static_cast<float>(vsmFrame.levels), vsmFrame.firstHalf, vsmFrame.levelReach,
                                  static_cast<float>(VirtualShadowMap::kPagesPerLevel));
@@ -1102,6 +1178,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         stats.virtualPagesCached = vsmFrame.cached;
         stats.virtualPagesRendered = static_cast<std::uint32_t>(vsmFrame.render.size());
     }
+    previous.pending = false;  // consumed, or stale
     frame.constants.write(gpu, std::as_bytes(std::span(&fc, 1)), DynamicBuffer::Kind::Constant, sizeof(FrameConstants),
                           "FrameConstants");
 
@@ -1292,50 +1369,91 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
 
     RGImage localAtlas{};
     if (localShadows) {
-        // Casters per tile: inside the light's range and the tile's frustum.
+        if (!localAtlas_) {
+            nvrhi::TextureDesc desc;
+            desc.width = desc.height = localAtlasSize;
+            desc.format = ctx_.depthFormat();
+            desc.debugName = "LocalShadowAtlas";
+            desc.isRenderTarget = true;
+            desc.setClearValue(nvrhi::Color(1.0f));
+            desc.initialState = nvrhi::ResourceStates::ShaderResource;
+            desc.keepInitialState = true;
+            localAtlas_ = gpu->createTexture(desc);
+            if (!localAtlas_) throw rhi::VulkanError("could not create the local shadow atlas", VK_ERROR_OUT_OF_DEVICE_MEMORY);
+            localAtlasIndex_ = ctx_.bindless().registerTexture(localAtlas_);
+            localTileContents_.fill(0);
+        }
+        localAtlas = graph.importImage("LocalShadowAtlas", {localAtlas_, localAtlasIndex_});
+        // Casters per tile: inside the light's range and the tile's frustum; tiles whose light and
+        // casters are as they were keep their contents.
         std::vector<std::vector<Draw>> tileCasters(localTiles.size());
+        std::vector<std::uint64_t> contents(localTiles.size());
         JobSystem::global().parallelFor(localTiles.size(), 1, [&](std::size_t begin, std::size_t end) {
             for (std::size_t t = begin; t < end; ++t) {
                 const LocalTile& localTile = localTiles[t];
                 const Frustum frustumOfTile = Frustum::fromViewProjection(localTile.viewProjection);
+                std::uint64_t h = 1469598103934665603ull;
+                for (int c = 0; c < 4; ++c) {
+                    for (int r = 0; r < 4; ++r) h = h * 1099511628211ull ^ std::bit_cast<std::uint32_t>(localTile.viewProjection[c][r]);
+                }
                 for (const Draw& d : casters) {
                     if (glm::length(d.center - localTile.lightPosition) - glm::length(d.extent) > localTile.range) continue;
-                    if (frustumOfTile.intersectsAabb(d.center, d.extent)) tileCasters[t].push_back(d);
+                    if (!frustumOfTile.intersectsAabb(d.center, d.extent)) continue;
+                    tileCasters[t].push_back(d);
+                    h = (h ^ d.state) * 1099511628211ull;
+                    h = (h ^ d.key) * 1099511628211ull;
+                    if (d.mesh->skinned()) h ^= static_cast<std::uint64_t>(frameCounter_) * 0x9E3779B97F4A7C15ull;  // animated
                 }
+                contents[t] = h == 0 ? 1 : h;
                 tileCasters[t] = instanced(tileCasters[t]);
             }
         });
-        for (const auto& list : tileCasters) stats.drawCalls += static_cast<std::uint32_t>(list.size());
-        localAtlas = graph.createImage("LocalShadowAtlas", {ctx_.depthFormat(), localAtlasSize, localAtlasSize});
-        const std::uint32_t tileSize = localAtlasSize / 4;
-        graph.addRasterPass(
-            "LocalShadows", [&](PassBuilder& b) { b.writeDepth(localAtlas, LoadOp::Clear, 1.0f); },
-            [this, stateFor, shadowPipeline, prepassPipeline, opaquePipeline, tileSize, tileCasters = std::move(tileCasters)](PassContext& ctx) {
-                for (std::size_t t = 0; t < tileCasters.size(); ++t) {
-                    const float x = static_cast<float>((t % 4) * tileSize);
-                    const float y = static_cast<float>((t / 4) * tileSize);
-                    nvrhi::GraphicsState state = stateFor(shadow_, ctx);
-                    state.viewport = nvrhi::ViewportState().addViewportAndScissorRect(
-                        nvrhi::Viewport(x, x + static_cast<float>(tileSize), y, y + static_cast<float>(tileSize), 0.0f, 1.0f));
-                    const GpuMesh* mesh = nullptr;
-                    std::uint8_t variant = 0xff;
-                    for (const Draw& d : tileCasters[t]) {
-                        if (d.mesh != mesh || d.variant != variant) {
-                            variant = d.variant;
-                            mesh = d.mesh;
-                            state.pipeline = shadowPipeline(d);
-                            bindMesh(state, *mesh);
-                            ctx.cmd->setGraphicsState(state);
+        std::vector<std::size_t> redraw;
+        for (std::size_t t = 0; t < localTiles.size(); ++t) {
+            std::uint64_t& held = localTileContents_[localTiles[t].index];
+            if (held == contents[t]) continue;
+            held = contents[t];
+            redraw.push_back(t);
+            stats.drawCalls += static_cast<std::uint32_t>(tileCasters[t].size()) + 1;
+        }
+        stats.localShadowTiles = static_cast<std::uint32_t>(localTiles.size());
+        stats.localShadowTilesDrawn = static_cast<std::uint32_t>(redraw.size());
+        if (!redraw.empty()) {
+            const std::uint32_t tileSize = localAtlasSize / kLocalShadowGrid;
+            std::vector<std::pair<std::uint32_t, std::vector<Draw>>> work;
+            for (const std::size_t t : redraw) work.emplace_back(localTiles[t].index, std::move(tileCasters[t]));
+            graph.addRasterPass(
+                "LocalShadows", [&](PassBuilder& b) { b.writeDepth(localAtlas, LoadOp::Load); },  // cached tiles stay
+                [this, stateFor, shadowPipeline, tileSize, work = std::move(work)](PassContext& ctx) {
+                    for (const auto& [index, tileDraws] : work) {
+                        const float x = static_cast<float>((index % kLocalShadowGrid) * tileSize);
+                        const float y = static_cast<float>((index / kLocalShadowGrid) * tileSize);
+                        nvrhi::GraphicsState state = stateFor(vsmClear_, ctx);  // clear the tile to the far depth
+                        state.viewport = nvrhi::ViewportState().addViewportAndScissorRect(
+                            nvrhi::Viewport(x, x + static_cast<float>(tileSize), y, y + static_cast<float>(tileSize), 0.0f, 1.0f));
+                        ctx.cmd->setGraphicsState(state);
+                        push(ctx.cmd, PushConstants{});
+                        ctx.cmd->draw(nvrhi::DrawArguments().setVertexCount(3));
+                        const GpuMesh* mesh = nullptr;
+                        std::uint8_t variant = 0xff;
+                        for (const Draw& d : tileDraws) {
+                            if (d.mesh != mesh || d.variant != variant) {
+                                variant = d.variant;
+                                mesh = d.mesh;
+                                state.pipeline = shadowPipeline(d);
+                                bindMesh(state, *mesh);
+                                ctx.cmd->setGraphicsState(state);
+                            }
+                            PushConstants pc;
+                            pc.index0 = d.object;
+                            pc.index1 = index;
+                            pc.flags = 1u;  // a local shadow tile
+                            push(ctx.cmd, pc);
+                            ctx.cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount).setInstanceCount(d.count));
                         }
-                        PushConstants pc;
-                        pc.index0 = d.object;
-                        pc.index1 = static_cast<std::uint32_t>(t);
-                        pc.flags = 1u;  // a local shadow tile
-                        push(ctx.cmd, pc);
-                        ctx.cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh->indexCount).setInstanceCount(d.count));
                     }
-                }
-            });
+                });
+        }
     }
 
     // ---- Depth prepass, then ambient occlusion from it ---------------------------------------
@@ -1373,6 +1491,52 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
 
     RGImage ao{};
     const bool ambientOcclusion = settings.ambientOcclusion && !draws.empty() && extent.width >= 8 && extent.height >= 8;
+    // Virtual shadow map pages the visible surfaces sample, for a later frame to keep resident.
+    if (virtualShadows && vsmMark_ && settings.virtualShadowGpuRequests) {
+        VsmRequests& requests = vsmRequests_[vsmRequestFrame_ % vsmRequests_.size()];
+        if (!requests.staging) {
+            nvrhi::TextureDesc desc;
+            desc.width = VirtualShadowMap::kPagesPerLevel;
+            desc.height = VirtualShadowMap::kPagesPerLevel * VirtualShadowMap::kMaxLevels;
+            desc.format = nvrhi::Format::R32_UINT;
+            desc.debugName = "VsmRequestsReadback";
+            requests.staging = gpu->createStagingTexture(desc, nvrhi::CpuAccessMode::Read);
+        }
+        const auto rows = static_cast<std::uint32_t>(VirtualShadowMap::kPagesPerLevel * vsmFrame.levels);
+        const RGImage marks = graph.createImage("VsmRequests", {nvrhi::Format::R32_UINT, VirtualShadowMap::kPagesPerLevel, rows, true});
+        nvrhi::IDescriptorTable* bindlessTable = ctx_.bindless().table();
+        graph.addComputePass(
+            "VsmMarkPages",
+            [&](PassBuilder& b) {
+                b.writeStorage(marks);
+                b.sample(depth);
+            },
+            [this, marks, depth, bindlessTable, extent](PassContext& ctx) {
+                ctx.cmd->clearTextureUInt(ctx.texture(marks), nvrhi::AllSubresources, 0u);
+                ctx.cmd->setComputeState(nvrhi::ComputeState().setPipeline(vsmMark_).addBindingSet(ctx.frameBindings())
+                                             .addBindingSet(bindlessTable).addBindingSet(ctx.storageBindings()));
+                PushConstants pc;
+                pc.index0 = ctx.bindlessIndex(depth);
+                push(ctx.cmd, pc);
+                ctx.cmd->dispatch((extent.width + 7) / 8, (extent.height + 7) / 8, 1);
+            });
+        graph.addPass(
+            "VsmRequestsReadback", [&](PassBuilder& b) { b.copyFrom(marks); },
+            [marks, staging = requests.staging, rows](PassContext& ctx) {
+                nvrhi::TextureSlice slice;
+                slice.width = VirtualShadowMap::kPagesPerLevel;
+                slice.height = rows;
+                ctx.cmd->copyTexture(staging, slice, ctx.texture(marks), slice);
+            });
+        requests.pending = true;
+        requests.levels = vsmFrame.levels;
+        requests.windowMin = vsmFrame.windowMin;
+        requests.generation = vsmFrame.generation;
+        requests.viewProjection = fc.viewProjection;
+        stats.virtualPagesFromSurfaces = vsmFrame.fromFeedback;
+    }
+    ++vsmRequestFrame_;
+
     if (ambientOcclusion) {
         const RGImage aoRaw = graph.createImage("SSAORaw", {kAoFormat, std::max(extent.width / 2, 1u),
                                                               std::max(extent.height / 2, 1u)});

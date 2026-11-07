@@ -17,6 +17,7 @@ lumora_add_shader(LUMORA_SHADER_FILES SOURCE fog.hlsl       STAGE comp ENTRY CSI
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE fog_integrate.hlsl STAGE comp ENTRY CSMain OUTPUT fog.integrate.comp.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE mesh_reflections.hlsl STAGE frag ENTRY PSMain OUTPUT mesh.reflections.frag.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE vsm_clear.hlsl STAGE vert ENTRY VSMain OUTPUT vsm.clear.vert.spv)
+lumora_add_shader(LUMORA_SHADER_FILES SOURCE vsm_mark.hlsl  STAGE comp ENTRY CSMain OUTPUT vsm.mark.comp.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE pattern.hlsl   STAGE comp ENTRY CSMain OUTPUT pattern.comp.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE mesh_skinned.hlsl   STAGE vert ENTRY VSMain OUTPUT mesh.skinned.vert.spv)
 lumora_add_shader(LUMORA_SHADER_FILES SOURCE depth_skinned.hlsl  STAGE vert ENTRY VSMain OUTPUT depth.skinned.vert.spv)

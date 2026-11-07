@@ -42,6 +42,9 @@ struct RenderSettings {
     bool virtualShadows = true;
     /// Virtual shadow map pages drawn per frame at most (the rest follow); 0 = all of them.
     std::uint32_t virtualShadowPageBudget = 256;
+    /// The visible surfaces choose the virtual shadow map's fine pages (marked on the GPU, read
+    /// back two frames later) instead of everything under the view frustum.
+    bool virtualShadowGpuRequests = true;
     entt::entity selected = entt::null;
     std::vector<entt::entity> alsoSelected;  // the rest of a multi-selection (outlined too)
     const OverlayGeometry* overlay = nullptr;  // drawn on top after tone mapping (gizmos)
@@ -98,6 +101,9 @@ struct SceneDrawStats {
     std::uint32_t reflectionProbes = 0;       // baked probes the frame used
     std::uint32_t lightProbeVolumes = 0;      // baked light probe volumes the frame used
     bool volumetricFog = false;               // froxel fog injected and integrated this frame
+    bool virtualPagesFromSurfaces = false;    // the VSM's fine pages came from GPU requests
+    std::uint32_t localShadowTiles = 0;       // spot / point light shadow tiles in use
+    std::uint32_t localShadowTilesDrawn = 0;  // of those, drawn this frame (the rest cached)
     std::uint32_t virtualPagesRequested = 0;  // pages the view needed
     std::uint32_t virtualPagesCached = 0;     // of those, kept from earlier frames
     std::uint32_t virtualPagesRendered = 0;   // drawn this frame
@@ -192,6 +198,30 @@ private:
     std::uint32_t taaHeight_ = 0;
     VirtualShadowMap vsm_;
     nvrhi::TextureHandle vsmPool_;       // physical pages (depth), kept across frames
+    nvrhi::ComputePipelineHandle vsmMark_;
+    /// Spot and point light shadows: a depth atlas of kLocalShadowGrid^2 tiles kept across frames.
+    /// A light keeps its tiles while it is among the shadowed ones; a tile is drawn again only
+    /// when what it shows could have changed (the light, or a caster in it).
+    nvrhi::TextureHandle localAtlas_;
+    std::uint32_t localAtlasIndex_ = UINT32_MAX;
+    struct LocalAllocation {
+        std::uint64_t light = 0;  // identity: the light's position, direction, range, kind
+        std::uint32_t first = 0;
+        std::uint32_t count = 0;
+    };
+    std::vector<LocalAllocation> localAllocations_;
+    std::array<std::uint64_t, 64> localTileContents_{};  // per tile, a hash of what it holds (0 = nothing)
+    /// GPU page requests in flight: written by frame n, read by frame n + 2 (done by then).
+    struct VsmRequests {
+        nvrhi::StagingTextureHandle staging;
+        bool pending = false;
+        int levels = 0;
+        std::array<glm::ivec2, 12> windowMin{};
+        std::uint64_t generation = 0;
+        glm::mat4 viewProjection{1.0f};  // the view they were made for
+    };
+    std::array<VsmRequests, 2> vsmRequests_;
+    std::uint64_t vsmRequestFrame_ = 0;
     nvrhi::TextureHandle vsmPageTable_;  // RGBA32F, see VsmFrame::pageTable
     std::uint32_t vsmPoolIndex_ = UINT32_MAX;
     std::uint32_t vsmPageTableIndex_ = UINT32_MAX;

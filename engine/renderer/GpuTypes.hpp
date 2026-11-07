@@ -14,7 +14,8 @@ namespace lumora::render {
 
 inline constexpr std::uint32_t kMaxLights = 16;
 /// Shadow atlas tiles for spot (one each) and point lights (six each, a cube's faces).
-inline constexpr std::uint32_t kLocalShadowTiles = 16;          // directional lights in FrameConstants
+inline constexpr std::uint32_t kLocalShadowGrid = 8;   // spot / point light shadow tiles per atlas side
+inline constexpr std::uint32_t kLocalShadowTiles = kLocalShadowGrid * kLocalShadowGrid;          // directional lights in FrameConstants
 inline constexpr std::uint32_t kMaxPointLights = 4096;    // point lights (storage buffer, tiled)
 inline constexpr std::uint32_t kLightTileSize = 32;       // pixels per light-grid tile side
 /// Sun shadow cascades, rendered as the 2x2 tiles of one depth atlas.
@@ -74,7 +75,7 @@ struct FrameConstants {
     glm::vec4 irradianceSh[9]{};            // SH9 irradiance / pi (rgb)
     glm::uvec4 lightGrid{0u};               // x tiles across, y tiles down, z tile size (px), w point lights
     glm::mat4 localShadowMatrices[kLocalShadowTiles]{};  // spot / point-face view-projections (atlas tiles)
-    glm::vec4 localShadowParams{0.0f};      // x enabled, y 1/atlas size (texels)
+    glm::vec4 localShadowParams{0.0f};      // x enabled, y 1/atlas size (texels), z tiles per side
     glm::vec4 grading{1.0f, 1.0f, 0.0f, 0.0f};  // x contrast, y saturation, z temperature, w tint
     glm::vec4 depthOfField{0.0f};           // x focus distance, y focus range, z max blur (px), w near plane
     glm::vec4 sunShafts{0.0f};              // xy sun on screen (uv), z intensity, w visibility

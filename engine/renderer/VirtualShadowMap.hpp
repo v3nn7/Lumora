@@ -6,6 +6,7 @@
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 
+#include <array>
 #include <cstdint>
 #include <span>
 #include <unordered_map>
@@ -47,6 +48,17 @@ struct VsmFrame {
     std::uint32_t requested = 0;  // pages the view needs
     std::uint32_t cached = 0;     // of those, still valid from earlier frames
     bool invalidatedAll = false;
+    /// Per level, the lowest absolute page x and y of its window (kPagesPerLevel wide, around
+    /// the camera); with `generation`, what GPU page requests of this frame are decoded with.
+    std::array<glm::ivec2, 12> windowMin{};
+    std::uint64_t generation = 0;  // changes whenever every page is invalidated
+    bool fromFeedback = false;     // fine levels requested from the visible surfaces
+};
+
+/// Pages the visible surfaces of an earlier frame asked for (read back from the GPU).
+struct VsmFeedback {
+    std::uint64_t generation = 0;
+    std::vector<glm::ivec3> pages;  // level, absolute page x, y
 };
 
 /// Virtual shadow map for the sun (in the spirit of Unreal's): a clipmap of square levels, each
@@ -66,15 +78,27 @@ public:
     static constexpr int kPagesPerLevel = 16;
     static constexpr int kPageTexels = 128;
     static constexpr int kPoolPages = 32;  // per side
-    static constexpr int kMaxLevels = 12;
+    static constexpr int kMaxLevels = 12;  // (VsmFrame::windowMin's size)
     static constexpr float kFirstHalf = 4.0f;  // level 0 is 8 m across: 4 mm texels
     [[nodiscard]] static constexpr std::uint32_t poolSize() noexcept { return kPoolPages * kPageTexels; }
 
+    /// Coarsest levels always requested from the view frustum (the fallback for what the GPU
+    /// requests have not caught up with: new views, transparent surfaces, fog).
+    static constexpr int kFrustumLevels = 2;
+
     /// `lightTravel` is the direction the sunlight travels. At most `budget` pages are drawn
-    /// (coarse levels first); the rest follow in later frames. 0 = no limit.
+    /// (coarse levels first); the rest follow in later frames. 0 = no limit. With `feedback`
+    /// (of the current generation) the finer levels request only the pages it lists - the ones
+    /// visible surfaces sample - instead of everything under the view frustum.
     VsmFrame update(const CameraView& camera, const glm::vec3& lightTravel, float shadowDistance,
-                    std::span<const VsmCaster> casters, std::uint32_t budget);
+                    std::span<const VsmCaster> casters, std::uint32_t budget, const VsmFeedback* feedback = nullptr);
     void invalidateAll();
+
+    /// GPU page requests -> absolute pages. `bits` holds one uint per page slot (non-zero =
+    /// requested), kPagesPerLevel wide and kPagesPerLevel * levels high, slots being absolute
+    /// pages modulo kPagesPerLevel within the frame's windows.
+    [[nodiscard]] static VsmFeedback decodeRequests(std::span<const std::uint32_t> bits, std::size_t rowPitch, int levels,
+                                                    const std::array<glm::ivec2, 12>& windowMin, std::uint64_t generation);
 
     [[nodiscard]] std::size_t residentPages() const noexcept { return resident_.size(); }
 
@@ -107,6 +131,7 @@ private:
     float depthMin_ = 0.0f;
     float depthRange_ = 0.0f;
     std::uint64_t frame_ = 0;
+    std::uint64_t generation_ = 0;
     bool initialised_ = false;
 };
 

@@ -95,6 +95,11 @@ Warunek dla kompresji tekstur (1.7).
 - **Chmury:** warstwa raymarchingu w `sky.hlsl` z szumem 3D, ustawienia w środowisku sceny.
 
 ### 1.6 VSM sterowany przez GPU i cienie świateł lokalnych (L), zależy od 0.1
+- **Stan: zrobione inaczej niż w planie dla świateł lokalnych.** Sun VSM: `vsm_mark.hlsl` oznacza strony
+  z głębi, odczyt po 2 klatkach (tylko dla tej samej kamery, nie przy capture), 2 najgrubsze poziomy
+  nadal z frustum. Światła lokalne: zamiast wirtualnych map trwały atlas 8x8 (64 kafle, do 10 świateł
+  punktowych) ze stałym przydziałem kafli na światło i cache zawartości; prawdziwe wirtualne mapy
+  lokalne zostają na później.
 - **Jak:** compute oznacza strony z bufora głębi (tylko widoczne powierzchnie), odczyt na CPU z
   opóźnieniem 1-2 klatek, reszta jak dziś w `VirtualShadowMap.cpp` (pula, LRU, unieważnianie).
   Światła punktowe i reflektory: osobne wirtualne mapy zamiast atlasu 16 kafli.

@@ -4,7 +4,7 @@
 
 #define MAX_LIGHTS 16
 #define SHADOW_CASCADES 4
-#define LOCAL_SHADOW_TILES 16
+#define LOCAL_SHADOW_TILES 64
 #define MAX_REFLECTION_PROBES 8
 #define MAX_PROBE_VOLUMES 4
 #define LIGHT_DIRECTIONAL 0
@@ -57,8 +57,8 @@ struct FrameData {
     uint4 environmentTextures;  // x sky, y prefiltered specular (bindless), z sampler
     float4 irradianceSh[9];     // SH9 irradiance / pi
     uint4 lightGrid;            // x tiles across, y tiles down, z tile size (px), w point lights
-    column_major float4x4 localShadowMatrices[LOCAL_SHADOW_TILES];  // spot / point-face tiles (4x4 atlas)
-    float4 localShadowParams;   // x enabled, y 1/atlas size
+    column_major float4x4 localShadowMatrices[LOCAL_SHADOW_TILES];  // spot / point-face tiles (8x8 atlas)
+    float4 localShadowParams;   // x enabled, y 1/atlas size, z tiles per side
     float4 grading;             // x contrast, y saturation, z temperature, w tint
     float4 depthOfField;        // x focus distance, y focus range, z max blur (px), w near plane
     float4 sunShafts;           // xy sun on screen (uv), z intensity, w visibility

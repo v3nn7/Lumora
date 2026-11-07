@@ -284,7 +284,7 @@ void Application::joinSessionAt(const QString& addressText, const QString& name,
     }
 }
 
-bool Application::runPlayer(const QString& projectPath) {
+bool Application::runPlayer(const QString& projectPath, const GameNetworkOptions& network) {
     auto project = Project::load(toPath(projectPath));
     if (!project) {
         QMessageBox::critical(nullptr, tr("Lumora Player"), QString::fromStdString(project.error().message));
@@ -295,7 +295,7 @@ bool Application::runPlayer(const QString& projectPath) {
         QMessageBox::critical(nullptr, tr("Lumora Player"), QString::fromStdString(scene.error().message));
         return false;
     }
-    player_ = std::make_unique<PlayerWindow>(ctx_, std::move(*project), std::move(*scene));
+    player_ = std::make_unique<PlayerWindow>(ctx_, std::move(*project), std::move(*scene), network);
     connect(player_.get(), &PlayerWindow::closed, qApp, &QApplication::quit, Qt::QueuedConnection);
     player_->show();
     return true;

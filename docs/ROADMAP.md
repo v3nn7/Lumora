@@ -220,7 +220,7 @@ i `volume` (z 1.2), drugi zestaw UV, morph targets (dziś pomijane). Nowe pola w
   odległości SDF tworzonych na żądanie (wbudowany DejaVu Sans: łacina z rozszerzeniami, greka,
   cyrylica; czcionki projektu .ttf/.otf; brakujące znaki z wbudowanej), przycinanie w HUD.
   Dokumenty UI `.lui` (`runtime/UiDocument`, `UiScreens`): drzewo widżetów z kotwicami, kolumnami,
-  wierszami, siatką, przewijaniem i tekstami `@klucz` z lokalizacji; skrypty (ABI 5: C++, Lua, węzły)
+  wierszami, siatką, przewijaniem i tekstami `@klucz` z lokalizacji; skrypty (od ABI 5: C++, Lua, węzły)
   otwierają je i pytają o widżety po nazwie. Edytor UI (dok „UI Editor”): drzewo, płótno w wybranej
   rozdzielczości z przeciąganiem i uchwytem rozmiaru, presety kotwic zachowujące położenie, cofanie,
   zapis. Wiązania: Lua `audioBus`, węzły UI Checkbox / UI Slider, parametry i stan animatora, szyny audio.
@@ -238,6 +238,21 @@ Jest: `runtime/GameUi` (przycisk, pole wyboru, suwak, panel, etykieta, nawigacja
   parametrów animatora i szyn audio.
 
 ### 3.2 Sieć w grach (XL)
+- **Stan: zrobione.** `runtime/net`: gniazdo UDP (IPv4/IPv6, adresy jak w collab, tunele playit),
+  transport (uzgadnianie X25519 z hasłem w kluczach, pakiety XChaCha20-Poly1305, potwierdzenia
+  z polem bitowym, kanał niezawodny uporządkowany z ponawianiem i zawodny, keep-alive, limit czasu),
+  `NetSession` (host autorytatywny: komponent Network Identity, encje sceny dopasowane po UUID,
+  spawn/clone hosta odtwarzane u klientów z tymi samymi UUID, właściciel i autorytet, stany ~30/s
+  odtwarzane płynnie 0,1 s z tyłu, ciała dynamiczne kinematyczne tam, gdzie nie są symulowane,
+  RPC do hosta/wszystkich/pozostałych/właściciela, wartości współdzielone encji i gry, klienci
+  idą za zmianą sceny hosta, gracze dołączający później dostają cały stan). Skrypty ABI 6 (C++,
+  Lua, węzły): hostGame/joinGame, onRpc, onPlayerJoined/Left, onConnected/Disconnected.
+  Player: `--host-game [port]`, `--join-game <adres>`; host bez okna: `--headless --simulate
+  <s> --host-game`. Testy: transport (utrata 30%, złe hasło, fałszywe pakiety, rozłączenie) i dwie
+  symulacje przez loopback (ruch hosta u klienta, spawn i własność, RPC, wartości, zmiana sceny).
+  Brakuje: przewidywania po stronie klienta, kompresji delta stanów, replikacji innych pól
+  komponentów niż Transform (zostają wartości współdzielone), interfejsu w edytorze (gra w edytorze
+  jako host lub klient).
 - **Jak:** moduł `lumora_net` w `runtime/` bez Qt: UDP z kanałami niezawodnym i zawodnym,
   klient-serwer (host w grze), replikacja komponentów (Transform, fizyka, własne pola skryptów)
   z interpolacją, RPC ze skryptów (Lua, węzły, C++). Szyfrowanie: monocypher (już w projekcie),

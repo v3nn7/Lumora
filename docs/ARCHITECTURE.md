@@ -33,8 +33,9 @@ where the current design leaves room for them.
   automatically (`CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS`); QObject classes, whose `staticMetaObject`
   other modules reference, carry `LUMORA_<MODULE>_API`. Singletons (`Logger::instance`,
   `JobSystem::global`, `ComponentRegistry::builtin`) are defined out of line, so each exists
-  once; third-party static libraries (Jolt, miniz, Monocypher) are linked into exactly one
-  module. `LUMORA_SHARED_MODULES=OFF` builds static modules.
+  once; third-party static libraries (Jolt, miniz) are linked into exactly one module.
+  Monocypher, which has no state, is compiled with hidden symbols into each module that uses
+  it (collaboration, runtime). `LUMORA_SHARED_MODULES=OFF` builds static modules.
 
 ## Conventions
 
@@ -214,6 +215,33 @@ multithreaded command recording.
 number of steps per frame to avoid a spiral of death. Given the same number of steps the result
 is deterministic (tested). Editor play mode clones the edited scene through the serializer,
 simulates the copy and discards it on Stop, so play-mode changes never reach the saved scene.
+
+### Network games
+
+`runtime/net` has no Qt. `UdpSocket` is a non-blocking dual-stack socket. `Transport` runs one
+host and its clients over it. The handshake is a padded `Hello` (the client's ephemeral X25519
+key and a salt; a reply is never larger than the question) answered by `Welcome` (the client's
+id, the host's key and a proof sealed under the new keys). The keys are BLAKE2b of the shared
+secret, both public keys and the password's hash, split into one key per direction, so a wrong
+password cannot even read the welcome. Every later packet is `"LMNT" | version | type | id |
+nonce | MAC | XChaCha20-Poly1305(sequence, ack, ack bits, flags, messages)` with a random nonce
+and the header as associated data. Replays and duplicates fall out of the 32-packet receive
+window. Messages are unreliable or reliable-ordered (resent after 1.5 round trips until a
+packet that carried them is acknowledged, held back until the gap fills). Keep-alives go every
+0.1 s and a peer is gone after 10 s of silence. Time is passed in, so the logic is testable.
+
+`NetSession` is the game layer, owned by `Simulation`: `beginStep` applies what arrived before
+the behaviours run, and `endStep` (after physics) shares new entities and sends states, then
+smooths movement. The host gives every shared entity (`NetworkIdentityComponent`) a session
+id. Entities from the scene file are bound by UUID. Trees made during play are recognised by
+the `SpawnOrigin` the scripts' `spawn` and `clone` leave on them. They are sent as "instantiate
+this prefab" or "clone that entity", with the root's and descendants' UUIDs, so clients end up
+with the same UUIDs. A scene epoch, raised with every scene the host loads, drops messages of
+an older scene. States are sent at 30 Hz for what changed, and everything once a second. Each
+sender has its own playback clock, 0.1 s behind its latest state and nudged towards it. Where
+an entity's owner is elsewhere, its dynamic body is made kinematic (`PhysicsWorld::refreshBody`)
+and restored when ownership returns or the game ends. RPCs and value changes from clients go
+through the host, which checks that the sender owns the entity.
 
 ## Application layer
 

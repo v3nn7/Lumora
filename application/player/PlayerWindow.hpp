@@ -12,7 +12,10 @@
 
 #include <QObject>
 
+#include <cstdint>
 #include <memory>
+#include <optional>
+#include <string>
 
 namespace lumora {
 class Scene;
@@ -23,6 +26,13 @@ namespace lumora::app {
 
 class AppContext;
 
+/// A network game to start with the player (--host-game / --join-game).
+struct GameNetworkOptions {
+    std::optional<std::uint16_t> hostPort;
+    std::string joinAddress;
+    std::string password;
+};
+
 /// Standalone runtime (Lumora --project X --play): loads the default scene and runs the
 /// simulation, viewed through the scene's primary camera. Esc opens the built-in game menu
 /// (pause, settings: volume, graphics quality, fullscreen, vsync, language; quit) unless the
@@ -31,7 +41,7 @@ class AppContext;
 class LUMORA_PLAYER_API PlayerWindow final : public QObject, public ViewportClient {
     Q_OBJECT
 public:
-    PlayerWindow(AppContext& app, Project project, std::unique_ptr<Scene> scene);
+    PlayerWindow(AppContext& app, Project project, std::unique_ptr<Scene> scene, GameNetworkOptions network = {});
     ~PlayerWindow() override;
 
     void show();

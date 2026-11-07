@@ -561,6 +561,30 @@ lumora-editor --project ~/LumoraProjects/MyGame --play
 
 <kbd>Esc</kbd> quits (a game with behaviours gets <kbd>Esc</kbd> for its own menus; close the window to quit), <kbd>F11</kbd> toggles fullscreen, <kbd>F8</kbd> toggles a free camera, <kbd>F3</kbd> shows the behaviours' debug shapes.
 
+### Network games
+
+A game can be played by several people over the network. One player **hosts** (their game runs
+the rules), the others **join** the host's address. On a LAN that is the host's address and the
+port (`192.168.1.20:7778`); over the internet, a playit.gg UDP tunnel to the port works the same
+way as for live collaboration. Traffic is encrypted; with a password, players who do not know it
+cannot join.
+
+1. Add a **Network Identity** component to everything players should see the same: characters,
+   doors, moving platforms, crates. The rest runs on each machine by itself (decoration, effects).
+2. Start a game from the game's menu with *Host Game* / *Join Game* (visual nodes),
+   `hostGame()` / `joinGame(address)` (Lua and C++), or from the command line (`--host-game`,
+   `--join-game`).
+3. The host spawns each player's character when they join and gives it to them with
+   `setOwner(entity, player)` (in *On Player Joined*). Its owner moves it; check
+   `hasAuthority()` before moving something.
+
+Everything with a Network Identity is moved by its owner (the host unless given away) and
+played back smoothly on the other machines. Bodies with physics are simulated by their owner
+only. What the host spawns or clones appears everywhere, and what it destroys goes everywhere.
+When the host loads another scene, everyone follows. Behaviours tell each other things with
+**RPCs** (`rpc("open")`, *Call RPC*; handled in `onRpc` / *On RPC*) and keep shared numbers and
+texts (`setNetNumber("health", 80)`, `setGameNumber("score", 3)`). See [SCRIPTING.md](SCRIPTING.md#network-games).
+
 ### Export the game
 
 *File → Export Game…* writes a standalone copy of the game to an empty folder: the player
@@ -651,6 +675,9 @@ development build.
 | `lumora-editor --project <project> --play` | Run the project in the standalone player |
 | `lumora-editor --editor <project> --host <port>` | Open a project and host a session |
 | `lumora-editor --join <address>` | Join a session |
+| `lumora-editor --project <project> --play --host-game [port]` | Play and host a network game (port 7778 by default) |
+| `lumora-editor --project <project> --play --join-game <address>` | Play and join someone's network game |
+| `lumora-editor --headless --project <p> --simulate <s> --host-game [port]` | Host a network game without a window for `<s>` seconds |
 | `lumora-editor --headless --info` | Print GPUs, Vulkan support and why a GPU was rejected |
 | `lumora-editor --headless --create <dir> --template <name>` | Create a project (`empty`, `basic`, `showcase`, `physics`) |
 | `lumora-editor --headless --project <p> --import <file>` | Import a model or texture |

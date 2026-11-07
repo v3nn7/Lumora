@@ -107,6 +107,18 @@ Result<AppOptions> parseCommandLine(const std::vector<std::string>& args) {
             if (!n) return std::unexpected(n.error());
             if (*n == 0 || *n > 65535) return makeError("--host needs a port between 1 and 65535");
             o.hostPort = static_cast<std::uint16_t>(*n);
+        } else if (a == "--host-game") {
+            std::uint32_t port = 7778;
+            if (i + 1 < args.size() && !args[i + 1].starts_with("--")) {
+                auto n = parseNumber<std::uint32_t>(a, args[++i]);
+                if (!n) return std::unexpected(n.error());
+                port = *n;
+            }
+            if (port == 0 || port > 65535) return makeError("--host-game needs a port between 1 and 65535");
+            o.hostGamePort = static_cast<std::uint16_t>(port);
+        } else if (a == "--join-game") {
+            LUMORA_TRY_VALUE(v);
+            o.joinGameAddress = *v;
         } else if (a == "--user") {
             LUMORA_TRY_VALUE(v);
             o.userName = *v;
@@ -134,6 +146,11 @@ Result<AppOptions> parseCommandLine(const std::vector<std::string>& args) {
     }
     if (o.hostPort && (play || headless || join || o.projectPath.empty())) {
         return makeError("--host needs a project opened in the editor (--editor <project> --host <port>)");
+    }
+    if (o.hostGamePort && !o.joinGameAddress.empty()) return makeError("--host-game and --join-game are mutually exclusive");
+    if (!o.joinGameAddress.empty() && !play) return makeError("--join-game needs --project <path> --play");
+    if (o.hostGamePort && !play && !(headless && o.simulateSeconds > 0.0)) {
+        return makeError("--host-game needs --play, or --headless --simulate <seconds> for a host without a window");
     }
     if (join) {
         o.mode = AppMode::Join;
@@ -196,6 +213,13 @@ Options:
   --no-vsync                               Prefer MAILBOX/IMMEDIATE presentation
   --log-level <trace|debug|info|warn|error>
   --user <name>, --password <pw>           Name and session password for --join / --host
+                                           (--password also locks a network game)
+
+Network games (multiplayer of the game itself, UDP):
+  --project <p> --play --host-game [port]  Play and host a game others join (port 7778 by default)
+  --project <p> --play --join-game <addr>  Play and join a host (LAN address or a playit.gg tunnel)
+  --headless --project <p> --simulate <s> --host-game [port]
+                                           Host without a window for <s> seconds (in real time)
   --version, --help
 )";
 }

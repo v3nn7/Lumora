@@ -10,6 +10,7 @@
 #include "core/Version.hpp"
 #include "editor/EditorWindow.hpp"
 #include "main/Application.hpp"
+#include "player/PlayerWindow.hpp"
 #include "main/CommandLine.hpp"
 #include "main/Headless.hpp"
 #include "main/Launch.hpp"
@@ -74,7 +75,10 @@ int runGui(int argc, char** argv, lumora::app::AppOptions options, lumora::app::
             break;
         }
         case AppMode::Play:
-            if (!application.runPlayer(QString::fromStdString(options.projectPath))) return 1;
+            if (!application.runPlayer(QString::fromStdString(options.projectPath),
+                                       {options.hostGamePort, options.joinGameAddress, options.sessionPassword})) {
+                return 1;
+            }
             break;
         case AppMode::Headless:
             break;

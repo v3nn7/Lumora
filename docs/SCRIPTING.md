@@ -143,6 +143,67 @@ is stopped.
 An error disables only that behaviour. The Console shows the message with the file and line.
 Save a fix and the behaviour starts again.
 
+## Network games
+
+One player hosts a game (port 7778 by default), the others join its address: a LAN address
+(`192.168.1.20:7778`) or a playit.gg tunnel's. Entities with a **Network Identity** component
+are shared. Each has an **owner**: the host, or a player the host gave it to. The owner moves
+it; everyone else sees its transform about 30 times a second, played back smoothly 0.1 s behind.
+Offline, every call below works on this machine alone, so one script serves single-player too.
+
+```lua
+local Arena = Behaviour:extend()
+
+function Arena:start() self.characters = {} end
+
+function Arena:onPlayerJoined(player)          -- every machine hears it; the host acts
+    if not self:isServer() then return end
+    local c = self:spawn("Content/Prefabs/Player.lprefab", vec3(0, 1, 0))
+    self:setOwner(c, player)                   -- that player moves it
+    self.characters[player] = c
+end
+
+function Arena:onPlayerLeft(player)
+    if self:isServer() and self.characters[player] then self:destroy(self.characters[player]) end
+end
+
+function Arena:onRpc(name, data, sender)       -- self:rpcGame("scored", "", "host") on a client
+    if name == "scored" then self:setGameNumber("score", self:gameNumber("score") + 1) end
+end
+
+return Arena
+```
+
+The character's own script moves it only where it has authority:
+
+```lua
+function Player:update(dt)
+    if not self:hasAuthority() then return end
+    self:move(vec3(self:axis("MoveX"), 0, -self:axis("MoveY")) * 5)
+end
+```
+
+| | Lua / C++ | Visual nodes |
+|---|---|---|
+| Start, end | `hostGame(port, password)`, `joinGame(address, password)`, `leaveGame()` | Host Game, Join Game, Leave Game |
+| State | `networkState()`, `isServer()` (offline or host), `isClient()`, `playerId()`, `players()`, `ping()`, `networkError()` | Network State |
+| Events | `onPlayerJoined(player)`, `onPlayerLeft(player)`, `onConnected()`, `onDisconnected(reason)` | On Player Joined, On Player Left, On Connected, On Disconnected |
+| Ownership | `owner(e)`, `setOwner(e, player)` (host), `hasAuthority(e)`, `isNetworked(e)` | Owner, Set Owner, Has Authority |
+| Calls | `rpc(name, data, target)` on this entity, `rpcOn(e, ...)`, `rpcGame(...)` on every behaviour; handled by `onRpc(name, data, sender)` | Call RPC, Call Game RPC, On RPC |
+| Shared values | `setNetNumber` / `netNumber`, `setNetText` / `netText` (this entity; its owner sets them), `setGameNumber` / `gameNumber`, `setGameText` / `gameText` (the whole game; the host sets them) | Set Shared Number, Shared Number, Set Game Number, Game Number |
+
+An RPC's target is `"all"` (default: every player, the caller too), `"host"`, `"others"` or
+`"owner"` (whoever owns the entity). RPCs arrive reliably and in order at the start of the next
+step; their data is a string (C++: any bytes, up to about 1 KB). Position updates are not
+reliable: a lost one is replaced by the next.
+
+What the host does that others see: entities it spawns or clones (including their children),
+entities it destroys, scene changes (`loadScene`; clients cannot change scenes during a game),
+the owner of each entity. Everything else runs on each machine from the same scene and
+scripts, so keep the game's rules on the host (`if self:isServer()`) and send the results with
+RPCs or shared values. Dynamic bodies are simulated by their owner; elsewhere they move as
+kinematic bodies that still push what they touch.
+
 ## C++ (advanced)
 
 C++ behaviours are classes in `Scripts/*.cpp`, compiled by the editor into a game library. See

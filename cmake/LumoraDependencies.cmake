@@ -218,7 +218,8 @@ add_library(lumora_monocypher STATIC
     ${monocypher_SOURCE_DIR}/src/optional/monocypher-ed25519.c)
 target_include_directories(lumora_monocypher SYSTEM PUBLIC
     ${monocypher_SOURCE_DIR}/src ${monocypher_SOURCE_DIR}/src/optional)
-set_target_properties(lumora_monocypher PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Stateless, so modules that use it (collaboration, game networking) each keep a private copy.
+set_target_properties(lumora_monocypher PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
 
 # Basis Universal 2.50 transcoder (Apache-2.0) with its Zstandard decoder (BSD): KTX2 textures
 # (KHR_texture_basisu). The encoder is not needed.

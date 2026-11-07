@@ -13,12 +13,15 @@
 #include "renderer/Renderer.hpp"
 #include "runtime/Scripting.hpp"
 #include "runtime/Simulation.hpp"
+#include "runtime/net/NetSession.hpp"
 #include "scene/SceneSerializer.hpp"
 
 #include <QImage>
 #include <QString>
 
+#include <chrono>
 #include <cmath>
+#include <thread>
 #include <cstdlib>
 #include <cstdio>
 #include <string_view>
@@ -180,7 +183,24 @@ int runHeadless(const AppOptions& o) {
         sim.setScripts(gameLibrary, nullptr);  // also runs Lua and visual scripts
         const auto steps = static_cast<std::uint64_t>(std::ceil(o.simulateSeconds / sim.fixedStep()));
         Stopwatch timer;
-        for (std::uint64_t i = 0; i < steps; ++i) sim.step();
+        if (o.hostGamePort) {
+            // A host without a window: the game runs in real time while players come and go.
+            std::error_code ec;
+            const auto startScene = std::filesystem::relative(project->defaultScenePath(), project->rootDir(), ec);
+            if (!ec) sim.network().setScenePath(startScene.generic_string());
+            if (auto hosted = sim.network().host(*o.hostGamePort, o.sessionPassword); !hosted) {
+                log::error("Headless", "cannot host a game: {}", hosted.error().message);
+                return 1;
+            }
+            out("Hosting on port {} for {:.0f} s\n", sim.network().port(), o.simulateSeconds);
+            const auto begin = std::chrono::steady_clock::now();
+            for (std::uint64_t i = 0; i < steps; ++i) {
+                std::this_thread::sleep_until(begin + std::chrono::duration<double>(static_cast<double>(i) * sim.fixedStep()));
+                sim.step();
+            }
+        } else {
+            for (std::uint64_t i = 0; i < steps; ++i) sim.step();
+        }
         out("Simulated {:.3f} s ({} fixed steps) in {:.2f} ms\n", sim.simulatedSeconds(), steps, timer.elapsedMs());
     }
     if (!o.renderOutput.empty()) {

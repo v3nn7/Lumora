@@ -78,3 +78,27 @@ TEST(CommandLine, JoinAndHostSessions) {
     EXPECT_FALSE(parseCommandLine({"--join", "x:1", "--editor", "Game"}).has_value());    // exclusive
     EXPECT_FALSE(parseCommandLine({"--join"}).has_value());
 }
+
+TEST(CommandLine, NetworkGames) {
+    auto host = parseCommandLine({"--project", "Game", "--play", "--host-game"});
+    ASSERT_TRUE(host.has_value());
+    EXPECT_EQ(host->mode, AppMode::Play);
+    EXPECT_EQ(host->hostGamePort, std::optional<std::uint16_t>(7778));
+    host = parseCommandLine({"--project", "Game", "--play", "--host-game", "9000", "--password", "pw"});
+    ASSERT_TRUE(host.has_value());
+    EXPECT_EQ(host->hostGamePort, std::optional<std::uint16_t>(9000));
+    EXPECT_EQ(host->sessionPassword, "pw");
+
+    auto join = parseCommandLine({"--project", "Game", "--play", "--join-game", "bright-fox.at.ply.gg:23145"});
+    ASSERT_TRUE(join.has_value());
+    EXPECT_EQ(join->joinGameAddress, "bright-fox.at.ply.gg:23145");
+
+    auto server = parseCommandLine({"--headless", "--project", "Game", "--simulate", "60", "--host-game"});
+    ASSERT_TRUE(server.has_value());
+    EXPECT_EQ(server->mode, AppMode::Headless);
+
+    EXPECT_FALSE(parseCommandLine({"--project", "Game", "--host-game"}).has_value());  // the editor: no
+    EXPECT_FALSE(parseCommandLine({"--project", "Game", "--play", "--host-game", "0"}).has_value());
+    EXPECT_FALSE(parseCommandLine({"--project", "Game", "--play", "--host-game", "--join-game", "x:1"}).has_value());
+    EXPECT_FALSE(parseCommandLine({"--join-game", "x:1"}).has_value());
+}

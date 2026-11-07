@@ -20,6 +20,7 @@ namespace lumora::app {
 class AppContext;
 class HubWindow;
 class PlayerWindow;
+struct GameNetworkOptions;
 
 /// Owns the top-level windows and performs Hub <-> Editor transitions inside one process.
 class LUMORA_SHELL_API Application final : public QObject {
@@ -37,7 +38,7 @@ public:
     bool launchExternalEditor(const QString& projectPath);
     /// Validates and opens a project in the editor; on failure the Hub is shown with the error.
     bool openEditor(const QString& projectPath);
-    bool runPlayer(const QString& projectPath);
+    bool runPlayer(const QString& projectPath, const GameNetworkOptions& network);
 
     /// Asks for an address, connects, and opens the session in the editor (in a local copy of
     /// the host's project, so assets and saves have a home).

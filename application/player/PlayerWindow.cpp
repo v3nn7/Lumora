@@ -9,6 +9,7 @@
 #include "runtime/Localization.hpp"
 #include "runtime/Scripting.hpp"
 #include "runtime/Simulation.hpp"
+#include "runtime/net/NetSession.hpp"
 #include "scene/Scene.hpp"
 
 #include <QEvent>
@@ -19,7 +20,7 @@
 
 namespace lumora::app {
 
-PlayerWindow::PlayerWindow(AppContext& app, Project project, std::unique_ptr<Scene> scene)
+PlayerWindow::PlayerWindow(AppContext& app, Project project, std::unique_ptr<Scene> scene, GameNetworkOptions network)
     : app_(app), project_(std::move(project)), assets_(project_.rootDir()), scene_(std::move(scene)) {
     scene_->updateWorldTransforms();
     simulation_ = std::make_unique<Simulation>(*scene_);
@@ -60,6 +61,18 @@ PlayerWindow::PlayerWindow(AppContext& app, Project project, std::unique_ptr<Sce
         }
     }
     simulation_->setScripts(gameLibrary, &window_->input());  // also runs Lua and visual scripts
+    // A network game from the command line (games usually host and join from their menus).
+    std::error_code ec;
+    const auto startScene = std::filesystem::relative(project_.defaultScenePath(), project_.rootDir(), ec);
+    if (!ec) simulation_->network().setScenePath(startScene.generic_string());
+    if (network.hostPort || !network.joinAddress.empty()) {
+        auto started = network.hostPort ? simulation_->network().host(*network.hostPort, network.password)
+                                        : simulation_->network().join(network.joinAddress, network.password);
+        if (!started) {
+            QMessageBox::warning(nullptr, tr("Lumora Player"),
+                                 tr("The network game did not start: %1").arg(QString::fromStdString(started.error().message)));
+        }
+    }
     connect(window_.get(), &VulkanViewport::renderFailed, this, [this](const QString& message) {
         QMessageBox::critical(nullptr, tr("Lumora Player"), message);
         window_->close();

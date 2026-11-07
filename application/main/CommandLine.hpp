@@ -34,7 +34,11 @@ struct AppOptions {
     std::string joinAddress;             // --join <host:port> (LAN or tunnel address)
     std::optional<std::uint16_t> hostPort;  // --host <port>: host the opened project
     std::string userName;                // --user <name>
-    std::string sessionPassword;         // --password <pw>
+    std::string sessionPassword;         // --password <pw> (also a network game's)
+
+    // Network games (--play, or --headless --simulate as a dedicated host)
+    std::optional<std::uint16_t> hostGamePort;  // --host-game [port] (7778)
+    std::string joinGameAddress;                 // --join-game <host:port>
 
     // Headless actions
     bool printInfo = false;

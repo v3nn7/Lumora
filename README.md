@@ -29,6 +29,7 @@ works today from what is planned, and nothing listed as planned exists yet.
 | Particles | CPU-simulated emitters on the job system (rate, burst, cone, shapes, gravity, drag, size/colour over life), alpha or additive HDR billboards, depth-tested, previewed in the editor, scriptable |
 | Materials | Shared `.lmat` material assets with everything a glTF material has (maps incl. occlusion, cut-out or transparent alpha, two sides, UV tiling, clear coat, sheen, specular, transmission and volume), edited in the Inspector with a live sphere preview, drag & drop onto objects, hot-reloaded, switchable from scripts; **node-based material graphs** (`.lmgraph`: textures, UVs, math, layers and masks, noise, fresnel, wind for foliage) interpreted on the GPU, so edits show at once |
 | Game UI | Immediate widgets for scripts (button, checkbox, slider, panel, label; mouse and gamepad focus) and **UI documents** (`.lui`, built in the editor's **UI Editor**: panels, labels, buttons, checkboxes, sliders, pictures; anchors, columns, rows, grids, scrolled lists, localised texts), opened by scripts and used by widget name |
+| Network games | Multiplayer for the games themselves: one player hosts (or a host without a window), others join by LAN address or a playit.gg tunnel; encrypted UDP (X25519, XChaCha20-Poly1305, optional password) with reliable and unreliable channels; entities with a **Network Identity** are shared, moved by their owner and played back smoothly elsewhere, spawns and clones reach every player, RPCs and shared values from C++, Lua and visual scripts, clients follow the host's scene changes |
 | Prefabs | Entities with children saved as `.lprefab`, placed from the Content Browser (undoable) or spawned by scripts |
 | Game export | *File > Export Game*: player runtime, content, built game library and a launcher in a standalone folder |
 | HUD | Scripts draw text, rectangles and **pictures** (project textures) over the game; text from signed distance fields (sharp at any size) made on first use: the built-in DejaVu Sans covers Latin, Greek and Cyrillic, and project fonts (.ttf/.otf) can be used |
@@ -101,6 +102,8 @@ cmake --preset debug && cmake --build --preset debug && ctest --preset debug
 | `Lumora --headless [actions]` | Automation, no window |
 | `Lumora --join <host:port>` | Join a live session (LAN address or playit.gg address) |
 | `Lumora --editor <project> --host <port>` | Open a project and host a live session |
+| `Lumora --project <project> --play --host-game [port]` | Play and host a network game (port 7778 by default) |
+| `Lumora --project <project> --play --join-game <host:port>` | Play and join a network game |
 
 Headless examples:
 

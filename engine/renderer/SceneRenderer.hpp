@@ -102,6 +102,7 @@ struct SceneDrawStats {
     std::uint32_t lightProbeVolumes = 0;      // baked light probe volumes the frame used
     bool volumetricFog = false;               // froxel fog injected and integrated this frame
     bool autoExposure = false;                // exposure measured and adapted on the GPU
+    bool motionBlur = false;
     bool virtualPagesFromSurfaces = false;    // the VSM's fine pages came from GPU requests
     std::uint32_t localShadowTiles = 0;       // spot / point light shadow tiles in use
     std::uint32_t localShadowTilesDrawn = 0;  // of those, drawn this frame (the rest cached)
@@ -178,6 +179,7 @@ private:
     // Temporal anti-aliasing: the jitter sequence, last frame's matrices (camera and per object,
     // by entity) and two history images that swap every frame.
     nvrhi::ComputePipelineHandle taa_;
+    nvrhi::ComputePipelineHandle motionBlur_;
     nvrhi::ComputePipelineHandle exposureHistogram_;
     nvrhi::ComputePipelineHandle exposureAdapt_;
     nvrhi::TextureHandle exposure_;  // R32F 1x1: the adapted exposure, kept across frames

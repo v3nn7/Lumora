@@ -311,6 +311,7 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     vsmClear_ = make(clear);
     taa_ = ctx_.createComputePipeline("taa.comp");
     vsmMark_ = ctx_.createComputePipeline("vsm.mark.comp");
+    motionBlur_ = ctx_.createComputePipeline("motion.blur.comp");
     exposureHistogram_ = ctx_.createComputePipeline("exposure.histogram.comp");
     exposureAdapt_ = ctx_.createComputePipeline("exposure.adapt.comp");
     fogInject_ = ctx_.createComputePipeline("fog.inject.comp", "CSInject");
@@ -2055,6 +2056,36 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
                 pc.index2 = linearSampler;
                 fullscreen(ctx.cmd, stateFor(depthOfField_, ctx), pc);
             });
+    }
+
+    // ---- Motion blur along each pixel's motion (motion_blur.hlsl).
+    if (env.motionBlur > 0.0f && motionBlur_ && extent.width >= 8 && extent.height >= 8) {
+        const RGImage blurred = graph.createImage("MotionBlur", {ctx_.hdrFormat(), extent.width, extent.height, true});
+        nvrhi::IDescriptorTable* bindlessTable = ctx_.bindless().table();
+        graph.addComputePass(
+            "MotionBlur",
+            [&](PassBuilder& b) {
+                b.writeStorage(blurred);
+                b.sample(sceneColor);
+                b.sample(depth);
+                b.sample(motion);
+            },
+            [this, sceneColor, depth, motion, bindlessTable, extent, shutter = std::min(env.motionBlur, 2.0f),
+             longest = std::clamp(env.motionBlurMax, 1.0f, 256.0f), frame = taaFrame_](PassContext& ctx) {
+                ctx.cmd->setComputeState(nvrhi::ComputeState().setPipeline(motionBlur_).addBindingSet(ctx.frameBindings())
+                                             .addBindingSet(bindlessTable).addBindingSet(ctx.storageBindings()));
+                PushConstants pc;
+                pc.index0 = ctx.bindlessIndex(sceneColor);
+                pc.index1 = ctx.bindlessIndex(depth);
+                pc.index2 = ctx.bindlessIndex(motion);
+                pc.param0 = shutter;
+                pc.param1 = longest;
+                pc.param2 = static_cast<float>(frame % 1024u);
+                push(ctx.cmd, pc);
+                ctx.cmd->dispatch((extent.width + 7) / 8, (extent.height + 7) / 8, 1);
+            });
+        sceneColor = blurred;
+        stats.motionBlur = true;
     }
 
     // ---- Automatic exposure: histogram of the image, then adaptation (see exposure_*.hlsl).

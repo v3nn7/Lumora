@@ -426,6 +426,10 @@ struct EnvironmentSettings {
     float dofBlur = 0.0f;           // largest blur radius in pixels (0 = off)
     float focusDistance = 10.0f;    // metres from the camera
     float focusRange = 6.0f;        // metres around it that stay sharp
+    /// Motion blur: the share of a frame the shutter stays open (0 = off, 0.5 = a film camera's
+    /// 180 degrees). Blurs along each pixel's motion, at most motionBlurMax pixels.
+    float motionBlur = 0.0f;
+    float motionBlurMax = 32.0f;
     /// Light shafts from the sun through gaps in the scene (0 = off).
     float sunShafts = 0.0f;
     /// Sun shadows from a virtual shadow map: sharp up close, cached between frames. Off = the

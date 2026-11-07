@@ -2133,3 +2133,50 @@ TEST_F(RendererTest, AutoExposureMatchesBrightAndDimScenesAndAdaptsOverTime) {
     const double jumped = shoot(0.25f, live);
     EXPECT_LT(jumped, autoDim - 25.0) << "not adapted yet";
 }
+
+TEST_F(RendererTest, MotionBlurSmearsMovingObjectsOnly) {
+    entt::entity cube = entt::null;
+    auto scene = edgeScene(&cube);
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 0.0f, 3.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const CameraView view = cam.view(1.0f);
+    RenderSettings live;
+    live.antiAliasing = false;
+    live.bloom = false;
+    live.shadows = false;
+    live.temporalAntiAliasing = true;  // a live view: motion vectors from the previous frame
+    // The cube slides to the right, 0.12 m a frame; the last frame is compared.
+    auto run = [&](float blur) {
+        scene->environment().motionBlur = blur;
+        std::optional<CapturedImage> last;
+        for (int i = 0; i < 6; ++i) {
+            scene->registry().get<TransformComponent>(cube).position.x = -0.4f + 0.12f * static_cast<float>(i);
+            scene->updateWorldTransforms();
+            auto f = renderer_->capture(*scene, view, {96, 96}, live);
+            EXPECT_TRUE(f.has_value());
+            if (f) last = std::move(*f);
+        }
+        return last;
+    };
+    const auto sharp = run(0.0f);
+    EXPECT_FALSE(renderer_->stats().scene.motionBlur);
+    const auto blurred = run(1.0f);
+    EXPECT_TRUE(renderer_->stats().scene.motionBlur);
+    ASSERT_TRUE(sharp && blurred);
+    EXPECT_GT(partialPixels(*blurred), partialPixels(*sharp) + 20) << "the moving edges are smeared";
+
+    // Still: nothing moves, nothing blurs.
+    scene->environment().motionBlur = 1.0f;
+    std::optional<CapturedImage> still;
+    for (int i = 0; i < 4; ++i) {
+        auto f = renderer_->capture(*scene, view, {96, 96}, live);
+        ASSERT_TRUE(f.has_value());
+        still = std::move(*f);
+    }
+    scene->environment().motionBlur = 0.0f;
+    auto reference = renderer_->capture(*scene, view, {96, 96}, live);
+    ASSERT_TRUE(reference.has_value());
+    // (Consecutive TAA frames differ a little anyway: compare how much edge there is.)
+    EXPECT_NEAR(partialPixels(*still), partialPixels(*reference), 8) << "a still image stays sharp";
+}

@@ -3,21 +3,7 @@
 include(FetchContent)
 set(CMAKE_AUTOMOC ON)
 
-# Monocypher: Ed25519 signature checks (public domain / BSD).
-FetchContent_Declare(monocypher
-    URL https://github.com/LoupVaillant/Monocypher/archive/refs/tags/4.0.2.tar.gz
-    URL_HASH SHA256=bc1ca30b1b2654e4e7daf2492c0d204200e55137f23fda6b7142fd7d523bd6b4
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-FetchContent_MakeAvailable(monocypher)  # sources only (miniz: cmake/LumoraDependencies.cmake)
-
-enable_language(C)
-
-add_library(lumora_monocypher STATIC
-    ${monocypher_SOURCE_DIR}/src/monocypher.c
-    ${monocypher_SOURCE_DIR}/src/optional/monocypher-ed25519.c)
-target_include_directories(lumora_monocypher SYSTEM PUBLIC
-    ${monocypher_SOURCE_DIR}/src ${monocypher_SOURCE_DIR}/src/optional)
-set_target_properties(lumora_monocypher PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Monocypher and miniz: cmake/LumoraDependencies.cmake.
 
 set(LUMORA_RELEASE_PUBLIC_KEY "" CACHE STRING
     "Base64 Ed25519 public key release feeds must be signed with (empty: accept unsigned feeds)")

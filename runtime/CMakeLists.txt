@@ -16,7 +16,9 @@ add_library(lumora_runtime ${LUMORA_MODULE_TYPE}
     TimelineSystem.cpp
     AnimatorStateMachine.cpp
     LuaScript.cpp
-    VisualScript.cpp)
+    VisualScript.cpp
+    net/Socket.cpp
+    net/Transport.cpp)
 # The Lua API prelude is compiled into the module.
 set(lua_prelude_inc ${CMAKE_CURRENT_BINARY_DIR}/generated/LuaPrelude.inc)
 add_custom_command(OUTPUT ${lua_prelude_inc}
@@ -30,4 +32,7 @@ lumora_module_setup(lumora_runtime)
 add_library(Lumora::runtime ALIAS lumora_runtime)
 # The scripting ABI lives in the SDK header that game libraries compile against.
 target_include_directories(lumora_runtime PUBLIC ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/sdk/include)
-target_link_libraries(lumora_runtime PUBLIC lumora_scene lumora_input PRIVATE Jolt miniaudio lumora_lua Recast Detour DetourCrowd Threads::Threads lumora_compile_options ${CMAKE_DL_LIBS})
+target_link_libraries(lumora_runtime PUBLIC lumora_scene lumora_input PRIVATE Jolt miniaudio lumora_lua Recast Detour DetourCrowd Threads::Threads lumora_monocypher lumora_compile_options ${CMAKE_DL_LIBS})
+if(WIN32)
+    target_link_libraries(lumora_runtime PRIVATE ws2_32)
+endif()

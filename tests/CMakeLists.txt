@@ -33,7 +33,8 @@ add_executable(lumora_tests
     ImageFormatTests.cpp
     FbxObjTests.cpp
     MaterialGraphTests.cpp
-    UiDocumentTests.cpp)
+    UiDocumentTests.cpp
+    NetTests.cpp)
 # A KTX2 (Basis ETC1S) texture and its original PNG, from Basis Universal's test files.
 lumora_fetch_files(basisu_test_images https://raw.githubusercontent.com/BinomialLLC/basis_universal/v2_50
     test_files/kodim23.ktx2 0eb567d4e19be85562c74a77067631b7804d4042cc2ff78e161dc5915f8390a8

@@ -206,6 +206,20 @@ target_include_directories(lumora_miniz SYSTEM PUBLIC ${miniz_SOURCE_DIR})
 target_compile_definitions(lumora_miniz PUBLIC MINIZ_NO_STDIO MINIZ_NO_TIME MINIZ_NO_ZLIB_COMPATIBLE_NAMES)
 set_target_properties(lumora_miniz PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# Monocypher 4.0.2 (BSD-2-Clause or CC0): Ed25519 signatures (editor installer), X25519 and
+# XChaCha20-Poly1305 (collaboration and game networking).
+FetchContent_Declare(monocypher
+    URL https://github.com/LoupVaillant/Monocypher/archive/refs/tags/4.0.2.tar.gz
+    URL_HASH SHA256=bc1ca30b1b2654e4e7daf2492c0d204200e55137f23fda6b7142fd7d523bd6b4
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(monocypher)  # sources only
+add_library(lumora_monocypher STATIC
+    ${monocypher_SOURCE_DIR}/src/monocypher.c
+    ${monocypher_SOURCE_DIR}/src/optional/monocypher-ed25519.c)
+target_include_directories(lumora_monocypher SYSTEM PUBLIC
+    ${monocypher_SOURCE_DIR}/src ${monocypher_SOURCE_DIR}/src/optional)
+set_target_properties(lumora_monocypher PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # Basis Universal 2.50 transcoder (Apache-2.0) with its Zstandard decoder (BSD): KTX2 textures
 # (KHR_texture_basisu). The encoder is not needed.
 lumora_fetch_files(basisu https://raw.githubusercontent.com/BinomialLLC/basis_universal/v2_50

@@ -90,6 +90,10 @@ json SceneSerializer::environmentToJson(const EnvironmentSettings& env) {
         {"groundColor", vec3ToJson(env.groundColor)},
         {"ambientIntensity", env.ambientIntensity},
         {"exposure", env.exposure},
+        {"autoExposure", env.autoExposure},
+        {"autoExposureMin", env.autoExposureMin},
+        {"autoExposureMax", env.autoExposureMax},
+        {"adaptationSpeed", env.adaptationSpeed},
         {"fogDensity", env.fogDensity},
         {"fogHeightFalloff", env.fogHeightFalloff},
         {"volumetricFog", env.volumetricFog},
@@ -133,6 +137,10 @@ void SceneSerializer::applyEnvironment(EnvironmentSettings& env, const json& j) 
     colour("groundColor", env.groundColor);
     number("ambientIntensity", env.ambientIntensity);
     number("exposure", env.exposure);
+    if (const auto it = j.find("autoExposure"); it != j.end() && it->is_boolean()) env.autoExposure = it->get<bool>();
+    number("autoExposureMin", env.autoExposureMin);
+    number("autoExposureMax", env.autoExposureMax);
+    number("adaptationSpeed", env.adaptationSpeed);
     number("fogDensity", env.fogDensity);
     number("fogHeightFalloff", env.fogHeightFalloff);
     if (const auto it = j.find("volumetricFog"); it != j.end() && it->is_boolean()) env.volumetricFog = it->get<bool>();

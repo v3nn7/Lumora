@@ -311,6 +311,8 @@ SceneRenderer::SceneRenderer(RenderContext& context) : ctx_(context) {
     vsmClear_ = make(clear);
     taa_ = ctx_.createComputePipeline("taa.comp");
     vsmMark_ = ctx_.createComputePipeline("vsm.mark.comp");
+    exposureHistogram_ = ctx_.createComputePipeline("exposure.histogram.comp");
+    exposureAdapt_ = ctx_.createComputePipeline("exposure.adapt.comp");
     fogInject_ = ctx_.createComputePipeline("fog.inject.comp", "CSInject");
     fogIntegrate_ = ctx_.createComputePipeline("fog.integrate.comp");
     ssrTrace_ = ctx_.createComputePipeline("ssr.trace.comp", "CSTrace");
@@ -409,6 +411,7 @@ SceneRenderer::~SceneRenderer() {
     if (vsmPoolIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(vsmPoolIndex_);
     if (vsmPageTableIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(vsmPageTableIndex_);
     if (localAtlasIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(localAtlasIndex_);
+    if (exposureIndex_ != UINT32_MAX) ctx_.bindless().releaseTexture(exposureIndex_);
     for (const std::uint32_t index : taaHistoryIndex_) {
         if (index != UINT32_MAX) ctx_.bindless().releaseTexture(index);
     }
@@ -2054,6 +2057,73 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             });
     }
 
+    // ---- Automatic exposure: histogram of the image, then adaptation (see exposure_*.hlsl).
+    RGImage exposureImage{};
+    if (env.autoExposure && exposureHistogram_ && exposureAdapt_ && !settings.linearOutput) {
+        if (!exposure_) {
+            nvrhi::TextureDesc desc;
+            desc.width = desc.height = 1;
+            desc.format = nvrhi::Format::R32_FLOAT;
+            desc.isUAV = true;
+            desc.debugName = "Exposure";
+            desc.initialState = nvrhi::ResourceStates::ShaderResource;
+            desc.keepInitialState = true;
+            exposure_ = ctx_.gpu()->createTexture(desc);
+            if (!exposure_) throw rhi::VulkanError("could not create the exposure texture", VK_ERROR_OUT_OF_DEVICE_MEMORY);
+            exposureIndex_ = ctx_.bindless().registerTexture(exposure_);
+        }
+        exposureImage = graph.importImage("Exposure", {exposure_, exposureIndex_});
+        const RGImage histogram = graph.createImage("ExposureHistogram", {nvrhi::Format::R32_UINT, 64, 1, true});
+        // A live view adapts over time; a single capture (or a jump in time) takes the target.
+        const double dt = exposureTime_ < 0.0 ? 1.0e9 : timeSeconds - exposureTime_;
+        exposureTime_ = timeSeconds;
+        const bool live = settings.temporalAntiAliasing && dt >= 0.0 && dt < 1.0;
+        const float adaptation = live ? 1.0f - std::exp(-static_cast<float>(dt) * std::max(env.adaptationSpeed, 0.01f)) : 1.0f;
+        constexpr float kLowEv = -10.0f, kRangeEv = 24.0f;
+        nvrhi::IDescriptorTable* bindlessTable = ctx_.bindless().table();
+        graph.addComputePass(
+            "ExposureHistogram",
+            [&](PassBuilder& b) {
+                b.writeStorage(histogram);
+                b.sample(sceneColor);
+            },
+            [this, histogram, sceneColor, bindlessTable, extent, kLowEv, kRangeEv](PassContext& ctx) {
+                ctx.cmd->clearTextureUInt(ctx.texture(histogram), nvrhi::AllSubresources, 0u);
+                ctx.cmd->setComputeState(nvrhi::ComputeState().setPipeline(exposureHistogram_).addBindingSet(ctx.frameBindings())
+                                             .addBindingSet(bindlessTable).addBindingSet(ctx.storageBindings()));
+                PushConstants pc;
+                pc.index0 = ctx.bindlessIndex(sceneColor);
+                pc.param0 = kLowEv;
+                pc.param1 = kRangeEv;
+                push(ctx.cmd, pc);
+                ctx.cmd->dispatch((extent.width / 2 + 7) / 8 + 1, (extent.height / 2 + 7) / 8 + 1, 1);
+            });
+        const float minimum = std::max(env.autoExposureMin, 1e-4f);
+        const float maximum = std::max(env.autoExposureMax, minimum);
+        graph.addComputePass(
+            "ExposureAdapt",
+            [&](PassBuilder& b) {
+                b.writeStorage(exposureImage);
+                b.writeStorage(histogram);  // u1, read
+            },
+            [this, bindlessTable, adaptation, minimum, maximum, compensation = std::max(env.exposure, 0.0f), kLowEv, kRangeEv](PassContext& ctx) {
+                ctx.cmd->setComputeState(nvrhi::ComputeState().setPipeline(exposureAdapt_).addBindingSet(ctx.frameBindings())
+                                             .addBindingSet(bindlessTable).addBindingSet(ctx.storageBindings()));
+                PushConstants pc;
+                pc.index0 = std::bit_cast<std::uint32_t>(minimum);
+                pc.index1 = std::bit_cast<std::uint32_t>(maximum);
+                pc.param0 = kLowEv;
+                pc.param1 = kRangeEv;
+                pc.param2 = adaptation;
+                pc.param3 = compensation;
+                push(ctx.cmd, pc);
+                ctx.cmd->dispatch(1, 1, 1);
+            });
+        stats.autoExposure = true;
+    } else {
+        exposureTime_ = -1.0;  // start from the target when it comes back
+    }
+
     // ---- Bloom: downsample chain, then additive tent upsample back to the half-res level.
     const std::uint32_t sampler = ctx_.linearClampSampler();
     std::vector<RGImage> bloomChain;
@@ -2130,6 +2200,7 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
         [&](PassBuilder& b) {
             b.sample(sceneColor);
             if (haveBloom) b.sample(bloomResult);
+            if (exposureImage.valid()) b.sample(exposureImage);
             b.writeColor(ldr, LoadOp::DontCare);
         },
         [=](PassContext& ctx) {
@@ -2137,8 +2208,9 @@ SceneDrawStats SceneRenderer::build(RenderGraph& graph, FrameResources& frame, c
             pc.index0 = ctx.bindlessIndex(sceneColor);
             pc.index1 = sampler;
             pc.index2 = haveBloom ? ctx.bindlessIndex(bloomResult) : 0u;
-            pc.flags = (shaderSrgb ? 1u : 0u) | (haveBloom ? 2u : 0u) | (fxaa ? 4u : 0u) | (linear ? 8u : 0u);
-            pc.param0 = exposure;
+            pc.flags = (shaderSrgb ? 1u : 0u) | (haveBloom ? 2u : 0u) | (fxaa ? 4u : 0u) | (linear ? 8u : 0u) |
+                       (exposureImage.valid() ? 16u : 0u);
+            pc.param0 = exposureImage.valid() ? std::bit_cast<float>(ctx.bindlessIndex(exposureImage)) : exposure;
             pc.param1 = bloomStrength;
             pc.param2 = vignette;
             pc.param3 = bloomNormalisation;

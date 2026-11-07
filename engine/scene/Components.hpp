@@ -390,6 +390,12 @@ struct EnvironmentSettings {
     glm::vec3 groundColor{0.16f, 0.14f, 0.12f};
     float ambientIntensity = 0.5f;
     float exposure = 0.9f;
+    /// Automatic exposure: the camera adapts to how bright the view is (like an eye), and
+    /// `exposure` becomes a compensation on top (1 = middle grey).
+    bool autoExposure = false;
+    float autoExposureMin = 0.05f;   // the darkest it may go (exposure multiplier)
+    float autoExposureMax = 20.0f;   // the brightest
+    float adaptationSpeed = 1.5f;    // per second
     float fogDensity = 0.008f;        // extinction per metre at height 0
     float fogHeightFalloff = 0.12f;   // fog thins out with altitude
     /// Volumetric fog: lit by the sun (with its shadows, so light shafts appear by themselves)

@@ -3,7 +3,8 @@
 
 // gPush: index0 = HDR scene, index1 = sampler, index2 = bloom texture, flags bit0 = encode sRGB,
 //        bit1 = bloom present, bit2 = perceptual luma into alpha (input of FXAA),
-//        bit3 = linear output: the scene's HDR radiance unchanged (probe baking);
+//        bit3 = linear output: the scene's HDR radiance unchanged (probe baking),
+//        bit4 = automatic exposure: param0 is asfloat(the R32F exposure texture);
 //        param0 = exposure, param1 = bloom strength, param2 = vignette,
 //        param3 = bloom normalisation (1 / number of summed chain levels).
 
@@ -47,7 +48,8 @@ float4 PSMain(FullscreenOut input) : SV_Target0 {
     float temperature = gFrame.grading.z;
     float tint = gFrame.grading.w;
     hdr *= float3(1.0 + 0.2 * temperature + 0.1 * tint, 1.0 - 0.2 * tint, 1.0 - 0.2 * temperature + 0.1 * tint);
-    float3 color = acesFilm(hdr * gPush.param0 * vignette);
+    float exposure = (gPush.flags & 16u) != 0u ? gTextures[asuint(gPush.param0)].Load(int3(0, 0, 0)).r : gPush.param0;
+    float3 color = acesFilm(hdr * exposure * vignette);
     // Contrast around middle grey, then saturation, on the display-referred image.
     color = saturate((color - 0.18) * gFrame.grading.x + 0.18);
     float luma = dot(color, float3(0.2126, 0.7152, 0.0722));

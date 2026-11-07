@@ -2086,3 +2086,50 @@ TEST_F(RendererTest, TexturesAreCompressedCachedAndStreamed) {
     context_->gpu()->waitForIdle();
     cache.invalidateFile((std::filesystem::weakly_canonical(project.path() / "Content" / "Textures" / "big.png")).generic_string());
 }
+
+TEST_F(RendererTest, AutoExposureMatchesBrightAndDimScenesAndAdaptsOverTime) {
+    auto scene = shadowScene();
+    addCube(*scene, {0.0f, 1.0f, 0.0f});
+    scene->environment().fogDensity = 0.0f;
+    scene->updateWorldTransforms();
+    FlyCameraController cam;
+    cam.setPosition({0.0f, 4.0f, 8.0f});
+    cam.lookAt({0.0f, 0.0f, 0.0f});
+    const CameraView view = cam.view(1.0f);
+    auto& env = scene->environment();
+    auto setLight = [&](float scale) {
+        for (auto [e, light] : scene->registry().view<LightComponent>().each()) light.intensity = 3.0f * scale;
+        env.ambientIntensity = 0.5f * scale;
+        env.skyZenithColor = glm::vec3(0.07f, 0.20f, 0.56f) * scale;
+        env.skyHorizonColor = glm::vec3(0.56f, 0.67f, 0.82f) * scale;
+    };
+    auto average = [&](const CapturedImage& image) {
+        double sum = 0.0;
+        for (std::size_t i = 0; i < image.rgba.size(); i += 4) sum += luminance({image.rgba[i], image.rgba[i + 1], image.rgba[i + 2], 255});
+        return sum / static_cast<double>(image.rgba.size() / 4);
+    };
+    RenderSettings settings;
+    settings.bloom = false;
+    auto shoot = [&](float scale, const RenderSettings& s) {
+        setLight(scale);
+        auto image = renderer_->capture(*scene, view, {64, 64}, s);
+        EXPECT_TRUE(image.has_value());
+        return image ? average(*image) : 0.0;
+    };
+    const double fixedDim = shoot(0.25f, settings), fixedBright = shoot(4.0f, settings);
+    EXPECT_GT(fixedBright, fixedDim + 60.0) << "a fixed exposure shows the difference";
+    env.autoExposure = true;
+    env.exposure = 1.0f;
+    const double autoDim = shoot(0.25f, settings);
+    EXPECT_TRUE(renderer_->stats().scene.autoExposure);
+    const double autoBright = shoot(4.0f, settings);
+    EXPECT_LT(std::abs(autoBright - autoDim), 25.0) << "automatic exposure brings both to a similar brightness";
+    EXPECT_GT(autoDim, fixedDim + 20.0) << "the dim scene is brightened";
+
+    // A live view adapts gradually: adapted to the bright scene, the first dim frame is still dark.
+    shoot(4.0f, settings);
+    RenderSettings live = settings;
+    live.temporalAntiAliasing = true;
+    const double jumped = shoot(0.25f, live);
+    EXPECT_LT(jumped, autoDim - 25.0) << "not adapted yet";
+}
